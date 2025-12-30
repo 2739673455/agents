@@ -28,29 +28,29 @@ llm:
   models: # 预定义模型
     siliconflow_bge_m3:
       base_url: https://api.siliconflow.cn/v1
-      api_key: ${env:SILICONFLOW_API_KEY}
+      api_key: ${oc.env:SILICONFLOW_API_KEY}
       model: BAAI/bge-m3
 
     default:
       base_url: https://openrouter.ai/api/v1
-      api_key: ${env:OPENROUTER_API_KEY}
+      api_key: ${oc.env:OPENROUTER_API_KEY}
       model: openai/gpt-4o-mini
 
     siliconflow_deepseek:
       base_url: https://api.siliconflow.cn/v1
-      api_key: ${env:SILICONFLOW_API_KEY}
+      api_key: ${oc.env:SILICONFLOW_API_KEY}
       model: deepseek-ai/DeepSeek-V3.2
       params:
         temperature: 0.2
 
     siliconflow_minimax:
       base_url: https://api.siliconflow.cn/v1
-      api_key: ${env:SILICONFLOW_API_KEY}
+      api_key: ${oc.env:SILICONFLOW_API_KEY}
       model: MiniMaxAI/MiniMax-M2
 
     mimo-v2-flash:
       base_url: https://openrouter.ai/api/v1
-      api_key: ${env:OPENROUTER_API_KEY}
+      api_key: ${oc.env:OPENROUTER_API_KEY}
       model: xiaomi/mimo-v2-flash:free
 
 use_db_code: mysql_sales # 指定使用那个数据库

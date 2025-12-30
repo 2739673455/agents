@@ -5,8 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "dynaconf>=3.2.12",
     "jieba>=0.42.1",
     "neo4j>=6.0.3",
+    "omegaconf>=2.3.0",
     "pydantic>=2.12.5",
 ]
