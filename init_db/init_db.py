@@ -40,12 +40,7 @@ class DBInit:
         """创建数据库"""
         raise NotImplementedError
 
-    async def exec_sql_file(
-        self,
-        db_name: str,
-        sql_file_path: Path,
-        progress_queue: asyncio.Queue | None = None,
-    ):
+    async def exec_sql_file(self, db_name: str, sql_file_path: Path):
         """执行 SQL 文件"""
         raise NotImplementedError
 
@@ -57,11 +52,7 @@ class DBInit:
             db_sql_mapping (dict[str, Path]): 数据库名称->对应的SQL文件路径
         """
 
-        logger.info("开始数据库初始化")
-
-        # 创建数据库
-        for db_name in db_sql_mapping.keys():
-            await self.create_db(db_name)
+        logger.info(f"开始初始化数据库 {list(db_sql_mapping.keys())}")
 
         with Progress(
             TextColumn("[progress.description]{task.description}"),
@@ -69,35 +60,25 @@ class DBInit:
             TextColumn("[cyan]{task.completed}/{task.total}"),
             console=Console(),
         ) as progress:
-            # 进度更新消息队列
-            progress_queue = asyncio.Queue()
-            task_ids = {}  # 存储在消费者协程中维护
+            progress_queue = asyncio.Queue()  # 进度更新消息队列
 
             async def progress_consumer():
                 """进度消费者协程，从队列中取出消息并更新进度条"""
+                total = len(db_sql_mapping)
+                current = 0
+                task_id = progress.add_task("Start", total=total)
                 while True:
                     msg = await progress_queue.get()
-                    if msg is None:  # 停止信号
+                    if msg is None:
                         progress_queue.task_done()
                         break
-
-                    db_name, current, total = msg
-
-                    # 获取或创建任务ID
-                    if db_name not in task_ids:
-                        task_ids[db_name] = progress.add_task(
-                            f"{db_name[:20]:20}", total=total
-                        )
-
-                    # 更新进度
-                    progress.update(task_ids[db_name], completed=current)
-
-                    # 任务完成时清理
+                    db_name, increment = msg
+                    current += increment
+                    progress.update(
+                        task_id, completed=current, description=f"{db_name[:20]:20}"
+                    )
                     if current >= total:
-                        progress.refresh()
-                        progress.remove_task(task_ids[db_name])
-                        del task_ids[db_name]
-
+                        progress.update(task_id, description="Complete")
                     progress_queue.task_done()
 
             # 启动进度消费者协程
@@ -109,17 +90,19 @@ class DBInit:
             async def process_database(db_name: str, sql_file_path: Path):
                 """处理单个数据库的异步任务"""
                 async with semaphore:
-                    await self.exec_sql_file(db_name, sql_file_path, progress_queue)
+                    await self.create_db(db_name)
+                    await self.exec_sql_file(db_name, sql_file_path)
+                    if progress_queue:
+                        await progress_queue.put((db_name, 1))
 
-            # 创建所有任务并并发执行
+            # 并发执行任务
             tasks = [
                 process_database(db_name, sql_file_path)
                 for db_name, sql_file_path in db_sql_mapping.items()
             ]
             await asyncio.gather(*tasks)
 
-            # 发送停止信号给消费者协程
-            await progress_queue.put(None)
+            await progress_queue.put(None)  # 发送停止信号给消费者协程
             await progress_queue.join()  # 等待队列中所有任务完成
             await consumer_task  # 等待消费者协程结束
 
@@ -131,35 +114,25 @@ class PGInit(DBInit):
         conn = await asyncpg.connect(**self.conn_conf, database="postgres")
         try:
             await conn.execute(f'CREATE DATABASE "{db_name}"')
-            logger.info(f"数据库 {db_name} 创建成功")
         except asyncpg.exceptions.DuplicateDatabaseError:
-            logger.info(f"数据库 {db_name} 已存在")
+            ...
         except Exception as e:
             logger.error(f"数据库 {db_name} 创建失败: {e}")
         finally:
             await conn.close()
 
-    async def exec_sql_file(
-        self,
-        db_name: str,
-        sql_file_path: Path,
-        progress_queue: asyncio.Queue | None = None,
-    ):
+    async def exec_sql_file(self, db_name: str, sql_file_path: Path):
         conn = await asyncpg.connect(**self.conn_conf, database=db_name)
         try:
             with open(sql_file_path, "r", encoding="utf-8") as f:
                 sql = f.read()
             async with conn.transaction():
                 await conn.execute(sql)
-            if progress_queue:
-                await progress_queue.put((db_name, 1, 1))
         except Exception as e:
             error_msg = str(e).lower().replace("\n", " ").replace("\r", " ")
             if not any(pattern.search(error_msg) for pattern in self.ERROR_PATTERNS):
                 logger.error(f"{sql_file_path.stem} 执行sql失败: {e}")
                 raise
-            if progress_queue:
-                await progress_queue.put((db_name, 1, 1))
         finally:
             await conn.close()
 
@@ -170,21 +143,15 @@ class MyInit(DBInit):
         try:
             async with conn.cursor() as cur:
                 await cur.execute(f"CREATE DATABASE {db_name} CHARACTER SET utf8mb4")
-            logger.info(f"数据库 {db_name} 创建成功")
         except Exception as e:
             if e.args[0] == 1007:
-                logger.info(f"数据库 {db_name} 已存在")
+                ...
             else:
                 logger.exception(f"数据库 {db_name} 创建失败: {e}")
         finally:
             conn.close()
 
-    async def exec_sql_file(
-        self,
-        db_name: str,
-        sql_file_path: Path,
-        progress_queue: asyncio.Queue | None = None,
-    ):
+    async def exec_sql_file(self, db_name: str, sql_file_path: Path):
         conn = await asyncmy.connect(**self.conn_conf, db=db_name)
         try:
             with open(sql_file_path, "r", encoding="utf-8") as f:
@@ -192,8 +159,6 @@ class MyInit(DBInit):
             await conn.begin()
             async with conn.cursor() as cur:
                 await cur.execute(sql)
-            if progress_queue:
-                await progress_queue.put((db_name, 1, 1))
             await conn.commit()
         except Exception as e:
             await conn.rollback()
@@ -201,8 +166,6 @@ class MyInit(DBInit):
             if not any(pattern.search(error_msg) for pattern in self.ERROR_PATTERNS):
                 logger.error(f"{sql_file_path.stem} 执行sql失败: {e}")
                 raise
-            if progress_queue:
-                await progress_queue.put((db_name, 1, 1))
         finally:
             conn.close()
 
