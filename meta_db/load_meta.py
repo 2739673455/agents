@@ -1,12 +1,11 @@
 import asyncio
 from dataclasses import dataclass
 
-from app.context.neo4j_schema import Column, Knowledge, TableInfo
 from db_pool import get_session
 from loguru import logger
 from sqlalchemy import inspect, text
 
-from config import DB_CONF, DBCfg, KnowledgeCfg, TableCfg
+from ..config import DB_CONF, DBCfg, KnowledgeCfg, TableCfg
 
 
 @dataclass
@@ -28,29 +27,31 @@ async def load_meta():
         if db_conf.table:
             # 加载表配置
             for tb_code, tb_conf in db_conf.table.items():
+                # 获取表信息
                 try:
-                    # 获取表信息
                     tb_info = await get_tb_info(db_conf, tb_code, tb_conf)
+                    logger.info(f"{db_conf.db_code}.{tb_code} load table info")
                 except Exception as e:
-                    logger.exception(f"{db_code}.{tb_code} get table info error: {e}")
+                    logger.exception(f"{db_code}.{tb_code} load table info error: {e}")
                     continue
-
+                # 获取字段示例数据
                 try:
-                    # 获取字段示例数据
-                    fewshot = await get_fewshot(db_conf, tb_code, tb_conf)
+                    fewshot = await get_fewshot(db_conf, tb_conf)
+                    logger.info(f"{db_conf.db_code}.{tb_code} load fewshot")
                 except Exception as e:
-                    logger.exception(f"{db_code}.{tb_code} get fewshot error: {e}")
+                    logger.exception(f"{db_code}.{tb_code} load fewshot error: {e}")
                     continue
-
+                # 获取表的字段属性
                 try:
-                    # 获取表的字段属性
                     columns = await get_column(db_conf, tb_code, tb_conf)
+                    logger.info(
+                        f"{db_conf.db_code}.{tb_code} load column ({len(columns)})"
+                    )
                 except Exception as e:
-                    logger.exception(f"{db_code}.{tb_code} get column error: {e}")
+                    logger.exception(f"{db_code}.{tb_code} load column error: {e}")
                     continue
-
+                # 合并字段信息
                 try:
-                    # 合并字段信息
                     tb_cols = await merge_tb_col(tb_code, tb_conf, columns, fewshot)
                 except Exception as e:
                     logger.exception(f"{db_code}.{tb_code} merge column error: {e}")
@@ -60,12 +61,13 @@ async def load_meta():
                 tb_col_list.extend(tb_cols)
 
         if db_conf.knowledge:
+            # 获取指标知识
             try:
-                # 获取指标知识
                 knowledges = await get_knowledge(db_conf, db_conf.knowledge)
+                logger.info(f"{db_conf.db_code} load knowledge ({len(knowledges)})")
                 kn_list.extend(knowledges)
             except Exception as e:
-                logger.exception(f"{db_code} process knowledge error: {e}")
+                logger.exception(f"{db_code} load knowledge error: {e}")
     return tb_info_list, tb_col_list, kn_list
 
 
@@ -82,9 +84,7 @@ async def get_tb_info(db_conf: DBCfg, tb_code: str, tb_conf: TableCfg) -> dict:
     }
 
 
-async def get_fewshot(
-    db_conf: DBCfg, tb_code: str, tb_info: TableCfg
-) -> dict[str, set[str]]:
+async def get_fewshot(db_conf: DBCfg, tb_info: TableCfg) -> dict[str, set[str]]:
     """查询字段示例数据，返回字段名到示例值的映射"""
     fewshot_sql = "SELECT * FROM %s LIMIT 10000" % tb_info.tb_name
     async with get_session(db_conf) as session:
@@ -107,13 +107,10 @@ async def get_fewshot(
             # 如果所有列都已收集满 5 个值，结束
             if not pending_cols:
                 break
-    logger.info(f"{db_conf.db_code}.{tb_code} load column fewshot")
     return column_value_map
 
 
-async def get_column(
-    db_conf: DBCfg, tb_code: str, tb_info: TableCfg
-) -> list[ColumnInfo]:
+async def get_column(db_conf: DBCfg, tb_code: str, tb_info: TableCfg) -> list[dict]:
     """获取字段属性"""
 
     def get_info_sync(sync_session):
@@ -122,16 +119,16 @@ async def get_column(
         fks = inspector.get_foreign_keys(tb_info.tb_name)  # 获取所有外键
         return cols, fks
 
-    async with db_pool.get_session(db_conf) as session:
+    async with get_session(db_conf) as session:
         cols, fks = await session.run_sync(get_info_sync)
-        # 创建 col_name->ColumnInfo 对象映射
+        # 创建 col_name->column 映射
         name_column_map = {
-            c["name"]: ColumnInfo(
-                name=c["name"],  # 字段名
-                data_type=c["type"],  # 数据类型
-                comment=c["comment"],  # 字段注释
-                relation=None,  # 关联关系
-            )
+            c["name"]: {
+                "name": c["name"],  # 字段名
+                "data_type": c["type"],  # 数据类型
+                "comment": c["comment"],  # 字段注释
+                "relation": None,  # 关联关系
+            }
             for c in cols
         }
         # 添加关联关系
@@ -140,56 +137,50 @@ async def get_column(
                 fk["constrained_columns"], fk["referred_columns"]
             ):
                 rel_col = f"{fk['referred_table']}.{ref_name}"
-                name_column_map[col_name].relation = rel_col
+                name_column_map[col_name]["relation"] = rel_col
 
         columns = list(name_column_map.values())
-    logger.info(f"{db_conf.db_code}.{tb_code} load column ({len(columns)})")
     return columns
 
 
 async def merge_tb_col(
-    tb_code: str,
-    tb_info: TableCfg,
-    columns: list[ColumnInfo],
-    fewshot: dict[str, set[str]],
-) -> list[Column]:
+    tb_code: str, tb_info: TableCfg, columns: list[dict], fewshot: dict[str, set[str]]
+) -> list[dict]:
     """整合 表信息、字段属性、字段示例数据"""
     col_info_map = tb_info.col_info or {}
     # 初始化表字段信息列表
-    tb_cols: list[Column] = []
+    tb_cols: list[dict] = []
     # 遍历所有表字段
     for column in columns:
-        col_info = col_info_map.get(column.name)
-        # 创建 Column 对象
-        column = Column(
-            tb_code=tb_code,  # 表编号
-            col_name=column.name,  # 字段名称
-            col_type=str(column.data_type),  # 数据类型
-            col_comment=column.comment,  # 字段注释
-            fewshot=list(fewshot.get(column.name, set())),  # 示例数据
-            col_meaning=col_info.col_meaning if col_info else None,  # 字段含义
-            field_meaning=col_info.field_meaning if col_info else None,  # JSONB字段含义
-            col_alias=col_info.col_alias if col_info else None,  # 字段别名
-            rel_col=(col_info.rel_col if col_info else None)
-            or column.relation,  # 关联关系，优先使用配置中的关联关系
-        )
-        # 将 Column 添加到列表中
+        col_info = col_info_map.get(column["name"])
+        column = {
+            "tb_code": tb_code,  # 表编号
+            "col_name": column["name"],  # 字段名称
+            "col_type": str(column["data_type"]),  # 数据类型
+            "col_comment": column["comment"],  # 字段注释
+            "fewshot": list(fewshot.get(column["name"], set())),  # 示例数据
+            "col_meaning": col_info.col_meaning if col_info else None,  # 字段含义
+            "field_meaning": col_info.field_meaning
+            if col_info
+            else None,  # JSONB字段含义
+            "col_alias": col_info.col_alias if col_info else None,  # 字段别名
+            "rel_col": (col_info.rel_col if col_info else None)
+            or column["relation"],  # 关联关系，优先使用配置中的关联关系
+        }
         tb_cols.append(column)
     return tb_cols
 
 
 async def get_knowledge(db_conf: DBCfg, kn_map: dict[int, KnowledgeCfg]):
     """获取知识信息"""
-    knowledges = [
-        Knowledge(
+    return [
+        {
             **kn.__dict__,
-            db_code=db_conf.db_code,
-            kn_code=kn_code,
-        )
+            "db_code": db_conf.db_code,
+            "kn_code": kn_code,
+        }
         for kn_code, kn in kn_map.items()
     ]
-    logger.info(f"{db_conf.db_code} load knowledge ({len(knowledges)})")
-    return knowledges
 
 
 if __name__ == "__main__":
