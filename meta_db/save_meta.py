@@ -1,3 +1,12 @@
+"""
+导入元数据
+
+每个库的表信息批量存储
+每个库的知识信息批量存储
+每个表的字段信息批量存储
+每个字段的单元格信息批量存储
+"""
+
 import asyncio
 import json
 from typing import LiteralString, cast
@@ -163,74 +172,75 @@ async def get_column(db_cfg: DBCfg, tb_code: str, logger=None) -> list[dict] | N
         return None
 
 
-async def save_meta(
-    tb_info_list: list[dict], columns: list[dict], knowledges: list[dict]
-):
-    """保存元数据"""
+async def save_meta(save: dict | None):
+    """
+    保存元数据
+
+    save = {
+        db_code:{
+            tb_code:{
+                col_name:[
+                    col_attr
+                ]
+            }
+        }
+    }
+    """
     async with neo4j_session() as session:
-        # 保存表信息
-        await save_tb_info(session, tb_info_list, logger)
-        # 保存字段信息
-        await save_column(session, columns, logger)
-        # 保存知识
-        await save_knowledge(session, knowledges, logger)
-        # 保存字段向量化信息
-        await save_col_embed(session, columns, logger)
-        # 保存知识向量化信息
-        await save_kn_embed(session, knowledges, logger)
+        for db_cfg in DB_CFG.values():
+            # 保存库信息
+            await save_db_info(session, db_cfg, save, logger)
+            # 保存表信息
+            await save_tb_info(session, db_cfg, save, logger)
+            # 保存知识
+            await save_knowledge(session, knowledges, logger)
+            # 保存知识向量化信息
+            await save_kn_embed(session, knowledges, logger)
+            # 保存字段信息
+            await save_column(session, columns, logger)
+            # 保存字段向量化信息
+            await save_col_embed(session, columns, logger)
 
-        try:
-            tb_code2tb_info_map = {i["tb_code"]: i for i in tb_info_list}
-            tb_code2cols_map: dict[str, list[dict]] = {}
-            for col in columns:
-                if (
-                    (any(i in col["col_type"].lower() for i in ["varchar", "text"]))
-                    and (col["tb_code"] in tb_code2tb_info_map)
-                    and (
-                        tb_code2tb_info_map[col["tb_code"]].get("sync_col") is None
-                        or col["col_name"]
-                        in tb_code2tb_info_map[col["tb_code"]]["sync_col"]
-                    )  # 如果同步字段为空，则所有字段都需要同步；如果字段在同步字段里则同步
-                    and (
-                        tb_code2tb_info_map[col["tb_code"]].get("no_sync_col") is None
-                        or col["col_name"]
-                        not in tb_code2tb_info_map[col["tb_code"]]["no_sync_col"]
-                    )  # 如果字段在同步字段里，且不在不同步字段里，则同步
-                ):
-                    tb_code2cols_map.setdefault(col["tb_code"], []).append(col)
-            # 写入字段值信息
-            await save_cell(session, tb_code2tb_info_map, tb_code2cols_map)
-        except Exception as e:
-            logger.exception(f"save cell error: {e}")
-            raise
+            try:
+                tb_code2tb_info_map = {i["tb_code"]: i for i in tb_info_list}
+                tb_code2cols_map: dict[str, list[dict]] = {}
+                for col in columns:
+                    if (
+                        (any(i in col["col_type"].lower() for i in ["varchar", "text"]))
+                        and (col["tb_code"] in tb_code2tb_info_map)
+                        and (
+                            tb_code2tb_info_map[col["tb_code"]].get("sync_col") is None
+                            or col["col_name"]
+                            in tb_code2tb_info_map[col["tb_code"]]["sync_col"]
+                        )  # 如果同步字段为空，则所有字段都需要同步；如果字段在同步字段里则同步
+                        and (
+                            tb_code2tb_info_map[col["tb_code"]].get("no_sync_col")
+                            is None
+                            or col["col_name"]
+                            not in tb_code2tb_info_map[col["tb_code"]]["no_sync_col"]
+                        )  # 如果字段在同步字段里，且不在不同步字段里，则同步
+                    ):
+                        tb_code2cols_map.setdefault(col["tb_code"], []).append(col)
+                # 写入字段值信息
+                await save_cell(session, tb_code2tb_info_map, tb_code2cols_map)
+            except Exception as e:
+                logger.exception(f"save cell error: {e}")
+                raise
 
 
-async def save_tb_info(session: AsyncSession, tb_info_list: list[dict], logger=None):
-    """写入表信息"""
-    if not tb_info_list:
+async def save_db_info(
+    session: AsyncSession, db_cfg: DBCfg, save: dict | None, logger=None
+):
+    """写入库信息"""
+    if save and db_cfg.db_code not in save:
         return
-
-    db_dict: dict[str, dict] = {}
-    tb_dict: dict[str, dict] = {}
-    tb_db_rel: set[tuple[str, str]] = set()  # (db_code, tb_code)
-
-    for tb_info in tb_info_list:
-        # 收集数据库信息
-        db_dict[tb_info["db_code"]] = {
-            "db_code": tb_info["db_code"],
-            "db_name": tb_info["db_name"],
-            "db_type": tb_info["db_type"],
-            "database": tb_info["database"],
-        }
-        # 收集表信息
-        tb_dict[tb_info["tb_code"]] = {
-            "tb_code": tb_info["tb_code"],
-            "tb_name": tb_info["tb_name"],
-            "tb_meaning": tb_info["tb_meaning"],
-        }
-        # 收集表与库的关系
-        tb_db_rel.add((tb_info["db_code"], tb_info["tb_code"]))
-
+    # 收集数据库信息
+    db_dict: dict[str, str] = {
+        "db_code": db_cfg.db_code,
+        "db_name": db_cfg.db_name,
+        "db_type": db_cfg.db_type,
+        "database": db_cfg.database,
+    }
     try:
         # DATABASE db_code 唯一约束
         await session.run(
@@ -238,24 +248,50 @@ async def save_tb_info(session: AsyncSession, tb_info_list: list[dict], logger=N
         )
         if logger:
             logger.info("create database constraint")
+        # 创建 DATABASE 节点
+        await session.run(
+            """
+            MERGE (n:DATABASE {db_code: db_dict.db_code})
+            SET n += db_dict
+            """,
+            db_dict=db_dict,
+        )
+        if logger:
+            logger.info(f"save database {db_cfg.db_code}")
+    except Exception as e:
+        if logger:
+            logger.exception(f"save database error: {e}")
+
+
+async def save_tb_info(
+    session: AsyncSession, db_cfg: DBCfg, save: dict | None, logger=None
+):
+    """写入表信息"""
+    if not db_cfg.table:
+        return
+    tbs: list[dict] = []
+    tb_db_rels: list[tuple[str, str]] = []  # (db_code, tb_code)
+    for tb_code, tb_cfg in db_cfg.table.items():
+        if save and save.get(db_cfg.db_code) and tb_code not in save[db_cfg.db_code]:
+            continue
+        # 收集表信息
+        tbs.append(
+            {
+                "tb_code": tb_code,
+                "tb_name": tb_cfg.tb_name,
+                "tb_meaning": tb_cfg.tb_meaning,
+            }
+        )
+        # 收集表与库的关系
+        tb_db_rels.append((db_cfg.db_code, tb_code))
+
+    try:
         # TABLE tb_code 唯一约束
         await session.run(
             "CREATE CONSTRAINT table_tb_code IF NOT EXISTS FOR (t:TABLE) REQUIRE t.tb_code IS UNIQUE"
         )
         if logger:
             logger.info("create table constraint")
-
-        # 创建 DATABASE 节点
-        await session.run(
-            """
-            UNWIND $dbs AS db
-            MERGE (n:DATABASE {db_code: db.db_code})
-            SET n += db
-            """,
-            dbs=list(db_dict.values()),
-        )
-        if logger:
-            logger.info(f"save database ({len(db_dict)})")
         # 创建 TABLE 节点
         await session.run(
             """
@@ -263,23 +299,23 @@ async def save_tb_info(session: AsyncSession, tb_info_list: list[dict], logger=N
             MERGE (n:TABLE {tb_code: tb.tb_code})
             SET n += tb
             """,
-            tbs=list(tb_dict.values()),
+            tbs=tbs,
         )
         if logger:
-            logger.info(f"save table ({len(tb_dict)})")
+            logger.info(f"save table ({len(tbs)})")
 
         # 创建 TABLE-[:BELONG]->DATABASE 关系
         await session.run(
             """
-            UNWIND $tb_db_rel AS rel
+            UNWIND $tb_db_rels AS rel
             MATCH (db:DATABASE {db_code: rel[0]})
             MATCH (tb:TABLE {tb_code: rel[1]})
             MERGE (tb)-[:BELONG]->(db)
             """,
-            tb_db_rel=list(tb_db_rel),
+            tb_db_rels=tb_db_rels,
         )
         if logger:
-            logger.info(f"save table-belong->database ({len(tb_db_rel)})")
+            logger.info(f"save table-belong->database ({len(tb_db_rels)})")
     except Exception as e:
         if logger:
             logger.exception(f"save table info error: {e}")
@@ -778,11 +814,9 @@ async def clear_neo4j():
 
 
 if __name__ == "__main__":
-    from load_meta import load_meta
 
     async def main():
         await clear_neo4j()
-        tb_info_list, tb_col_list, kn_list = await load_meta()
         await save_meta(tb_info_list, tb_col_list, kn_list)
 
     asyncio.run(main())
