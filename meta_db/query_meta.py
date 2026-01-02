@@ -54,7 +54,7 @@ async def list_col_by_dbcode_tbname_colname(
         if col_name not in col_map[tb_code]:
             col_data["field_meaning"] = (
                 json.loads(record["col"]["field_meaning"])
-                if record["col"]["field_meaning"]
+                if record["col"].get("field_meaning")
                 else None
             )
             col_map[tb_code][col_name] = col_data
@@ -200,7 +200,7 @@ async def retrieve_column(db_code: str, texts: list[str]):
         if col_name not in col_map[tb_code]:
             col_data["field_meaning"] = (
                 json.loads(record["col"]["field_meaning"])
-                if record["col"]["field_meaning"]
+                if record["col"].get("field_meaning")
                 else None
             )
             col_data["score"] = record["score"]
@@ -307,7 +307,7 @@ async def retrieve_cell(db_code: str, texts: list[str]):
             # 原本没有此 Column 则添加
             col_data["field_meaning"] = (
                 json.loads(record["col"]["field_meaning"])
-                if record["col"]["field_meaning"]
+                if record["col"].get("field_meaning")
                 else None
             )
             col_data["score"] = record["score"]
@@ -327,7 +327,7 @@ async def retrieve_cell(db_code: str, texts: list[str]):
 if __name__ == "__main__":
     db_code = "mysql_sales"
     db_code = "pg_archeology_scan"
-    # db_code = "pg_cold_chain_pharma_compliance"
+    db_code = "pg_cold_chain_pharma_compliance"
 
     async def main():
         # 查找数据库下的所有表信息

@@ -53,7 +53,7 @@ class DBCfg(BaseModel):
     skeleton: list[SkeletonCfg] | None = None
 
 
-DB_CONF: dict[str, DBCfg] = {}
+DB_CFG: dict[str, DBCfg] = {}
 db_conf_dir = CONFIG_DIR / "db_cfg"
 for d in db_conf_dir.iterdir():
     if not d.is_dir() or not (d / "db_info.yml").exists():
@@ -63,7 +63,7 @@ for d in db_conf_dir.iterdir():
         conf = OmegaConf.merge(conf, OmegaConf.load(yml))  # 加载并合并
     conf = OmegaConf.to_container(conf)
     assert isinstance(conf, dict)
-    DB_CONF[conf["db_code"]] = DBCfg.model_validate(conf)  # 转换为配置类
+    DB_CFG[conf["db_code"]] = DBCfg.model_validate(conf)  # 转换为配置类
 
 
 # ==================== base config ====================
@@ -71,7 +71,7 @@ class MetaDBCfg(BaseModel):
     neo4j: DBCfg
 
 
-class LoggingConfig(BaseModel):
+class LoggingCfg(BaseModel):
     level: str
     to_console: bool
     to_file: bool
@@ -92,10 +92,10 @@ class LLMCfg(BaseModel):
 
 class BaseCfg(BaseModel):
     meta_db: MetaDBCfg
-    logging: LoggingConfig
+    logging: LoggingCfg
     llm: LLMCfg
 
 
 base_cfg = OmegaConf.load(CONFIG_DIR / "base_cfg.yml")  # 加载
 OmegaConf.resolve(base_cfg)  # 解析插值
-CONF = BaseCfg.model_validate(base_cfg)  # 转换为配置类
+CFG = BaseCfg.model_validate(base_cfg)  # 转换为配置类

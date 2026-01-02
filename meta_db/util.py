@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Coroutine, ParamSpec, Tuple, Type, TypeVar
 
-from config import CONF
+from config import CFG
 from loguru import logger
 from openai import AsyncOpenAI
 
@@ -75,7 +75,7 @@ def async_retry(
 @async_retry(max_retries=1, timeout=None)
 async def embed(text: list[str]) -> list[list[float]]:
     """嵌入文本"""
-    model_config = CONF.llm.models[CONF.llm.embed_model]
+    model_config = CFG.llm.models[CFG.llm.embed_model]
     # 定义批处理大小，避免单次请求文本数量过多导致API限制
     batch_size = 64
 
@@ -124,25 +124,25 @@ def setup_logger():
     )
 
     # 控制台输出处理器
-    if CONF.logging.to_console:
+    if CFG.logging.to_console:
         logger.add(
             sink=sys.stdout,  # 输出到标准输出
-            level=CONF.logging.level,  # 从配置文件读取日志级别
+            level=CFG.logging.level,  # 从配置文件读取日志级别
             format=log_format,  # 日志格式
             colorize=True,  # 启用颜色输出，提升可读性
             catch=False,  # 不捕获异常，让错误直接抛出
         )
 
     # 文件输出处理器
-    if CONF.logging.to_file:
+    if CFG.logging.to_file:
         log_dir = Path(__file__).parent / "logs"  # 指定日志目录
         log_dir.mkdir(parents=True, exist_ok=True)  # 确保日志目录存在
 
         logger.add(
             sink=log_dir / "{time:YYYY-MM-DD}.log",  # 按日期命名的日志文件
-            level=CONF.logging.level,  # 使用配置的日志级别
+            level=CFG.logging.level,  # 使用配置的日志级别
             format=log_format,  # 日志格式
-            rotation=f"{CONF.logging.max_file_size}",  # 按文件大小自动滚动
+            rotation=f"{CFG.logging.max_file_size}",  # 按文件大小自动滚动
             encoding="utf-8",  # 使用UTF-8编码，支持中文
             catch=False,  # 不捕获异常，让错误直接抛出
         )
