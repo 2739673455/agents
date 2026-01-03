@@ -3,7 +3,7 @@
 
 每个库的表信息批量存储
 每个库的知识信息批量存储
-每个表的字段信息批量存储
+每个库的字段信息批量存储
 每个字段的单元格信息批量存储
 """
 
@@ -47,10 +47,11 @@ async def get_keywords(texts: list[str]) -> list[list[str]]:
             "i",  # 成语
             "l",  # 常用固定短语
         )
-        return [
+        keywords = [
             jieba.analyse.extract_tags(t, withWeight=False, allowPOS=allow_pos)
             for t in texts
         ]
+        return keywords
 
     return await asyncio.to_thread(sync_jieba)
 
@@ -127,49 +128,50 @@ async def _get_column_attr(
         return None
 
 
-async def get_column(db_cfg: DBCfg, tb_code: str, logger=None) -> list[dict] | None:
+async def get_column(db_cfg: DBCfg, tb_code: str, logger=None) -> list[dict]:
     """整合 表信息、字段属性、字段示例数据"""
     try:
         if not db_cfg.table:
-            return None
+            return []
         tb_cfg = db_cfg.table[tb_code]
-        columns = None
+        columns = []
         async with get_session(db_cfg) as session:
             # 获取表的字段属性
             columns = await _get_column_attr(session, tb_code, tb_cfg, logger)
             # 获取字段示例数据
             fewshot = await _get_fewshot(session, tb_code, tb_cfg, logger)
         if not columns:
-            return None
+            return []
 
         col_info_map = tb_cfg.column or {}
         # # 初始化表字段信息列表
         cols: list[dict] = []
         # 遍历所有表字段
-        for column in columns:
-            col_info = col_info_map.get(column["name"])
+        for c in columns:
+            col_info = col_info_map.get(c["name"])
             _column = {
                 "tb_code": tb_code,  # 表编号
-                "col_name": column["name"],  # 字段名称
-                "col_type": str(column["data_type"]),  # 数据类型
-                "col_comment": column["comment"],  # 字段注释
-                "fewshot": list(fewshot.get(column["name"], set()))
+                "col_name": c["name"],  # 字段名称
+                "col_type": str(c["data_type"]),  # 数据类型
+                "col_comment": c["comment"],  # 字段注释
+                "fewshot": list(fewshot.get(c["name"], set()))
                 if fewshot
                 else None,  # 示例数据
                 "col_meaning": col_info.col_meaning if col_info else None,  # 字段含义
-                "field_meaning": col_info.field_meaning
-                if col_info
+                "field_meaning": json.dumps(col_info.field_meaning, ensure_ascii=False)
+                if col_info and col_info.field_meaning
                 else None,  # JSONB字段含义
                 "col_alias": col_info.col_alias if col_info else None,  # 字段别名
-                "rel_col": (col_info.rel_col if col_info else None)
-                or column["relation"],  # 关联关系，优先使用配置中的关联关系
+                "rel_col": col_info.rel_col
+                if col_info and col_info.rel_col
+                else c["relation"],  # 关联关系，优先使用配置中的关联关系
             }
             cols.append(_column)
         return cols
     except Exception as e:
         if logger:
             logger.exception(f"{tb_code} merge column error: {e}")
-        return None
+        return []
 
 
 async def save_meta(save: dict | None = None):
@@ -178,11 +180,8 @@ async def save_meta(save: dict | None = None):
 
     save = {
         db_code:{
-            tb_code:{
-                col_name:[
-                    col_attr
-                ]
-            }
+            'table':[tb_code]
+            'knowledge':[kn_code]
         }
     }
     None 视为全选
@@ -191,17 +190,16 @@ async def save_meta(save: dict | None = None):
         for db_cfg in DB_CFG.values():
             # 保存库信息
             await save_db(session, db_cfg, save, logger)
-            # 保存表信息
-            await save_tb(session, db_cfg, save, logger)
+            # 保存表与字段信息
+            cols = await save_tb_col(session, db_cfg, save, logger)
+            # 保存字段向量化信息
+            if cols:
+                await save_col_embed(session, cols, logger)
             # 保存知识
             kns = await save_kn(session, db_cfg, save, logger)
             if kns:
                 # 保存知识向量化信息
                 await save_kn_embed(session, kns, logger)
-            # # 保存字段信息
-            # columns = await save_col(session, db_cfg, save, logger)
-            # # 保存字段向量化信息
-            # await save_col_embed(session, columns, logger)
 
             # try:
             #     tb_code2tb_info_map = {i["tb_code"]: i for i in tb_info_list}
@@ -232,7 +230,7 @@ async def save_meta(save: dict | None = None):
 
 async def save_db(session: AsyncSession, db_cfg: DBCfg, save: dict | None, logger=None):
     """写入库信息"""
-    if save and db_cfg.db_code not in save:
+    if (save is not None) and (db_cfg.db_code not in save):
         return
 
     # 收集数据库信息
@@ -247,8 +245,6 @@ async def save_db(session: AsyncSession, db_cfg: DBCfg, save: dict | None, logge
         await session.run(
             "CREATE CONSTRAINT database_db_code IF NOT EXISTS FOR (d:DATABASE) REQUIRE d.db_code IS UNIQUE"
         )
-        if logger:
-            logger.info("create database constraint")
         # 创建 DATABASE 节点
         await session.run(
             """
@@ -264,14 +260,22 @@ async def save_db(session: AsyncSession, db_cfg: DBCfg, save: dict | None, logge
             logger.exception(f"save database error: {e}")
 
 
-async def save_tb(session: AsyncSession, db_cfg: DBCfg, save: dict | None, logger=None):
-    """写入表信息"""
+async def save_tb_col(
+    session: AsyncSession, db_cfg: DBCfg, save: dict | None, logger=None
+):
+    """写入表与字段信息"""
     if not db_cfg.table:
+        return
+    if (save is not None) and (
+        (db_cfg.db_code not in save) or ("table" not in save[db_cfg.db_code])
+    ):
         return
 
     tbs: list[dict] = []
+    cols: list[dict] = []
+    col_col_rels: list[tuple] = []  # (tb_code, col_name, rel_tb_name,rel_col_name)
     for tb_code, tb_cfg in db_cfg.table.items():
-        if save and save.get(db_cfg.db_code) and tb_code not in save[db_cfg.db_code]:
+        if (save is not None) and (tb_code not in save[db_cfg.db_code]["table"]):
             continue
         # 收集表信息
         tbs.append(
@@ -282,13 +286,20 @@ async def save_tb(session: AsyncSession, db_cfg: DBCfg, save: dict | None, logge
                 "rel_db_code": db_cfg.db_code,
             }
         )
+        # 收集字段信息
+        columns = await get_column(db_cfg, tb_code, logger)
+        cols.extend(columns)
+        # 收集字段关联信息
+        for c in columns:
+            if c["rel_col"]:
+                rel_tb_name, rel_col_name = c["rel_col"].split(".")
+                col_col_rels.append((tb_code, c["col_name"], rel_tb_name, rel_col_name))
+    # 写入表信息
     try:
         # TABLE tb_code 唯一约束
         await session.run(
             "CREATE CONSTRAINT table_tb_code IF NOT EXISTS FOR (t:TABLE) REQUIRE t.tb_code IS UNIQUE"
         )
-        if logger:
-            logger.info("create table constraint")
         # 创建 TABLE 节点，创建 TABLE-[:BELONG]->DATABASE 关系
         await session.run(
             """
@@ -308,6 +319,145 @@ async def save_tb(session: AsyncSession, db_cfg: DBCfg, save: dict | None, logge
     except Exception as e:
         if logger:
             logger.exception(f"save table info error: {e}")
+    # 写入字段信息
+    try:
+        # COLUMN (tb_code, col_name) 唯一约束
+        await session.run(
+            "CREATE CONSTRAINT column_tb_code_col_name IF NOT EXISTS FOR (c:COLUMN) REQUIRE (c.tb_code, c.col_name) IS UNIQUE"
+        )
+        if logger:
+            logger.info("create column constraint")
+
+        # 创建 COLUMN 节点
+        await session.run(
+            """
+            UNWIND $cols AS col
+            MERGE (n:COLUMN {tb_code: col.tb_code, col_name: col.col_name})
+            SET n += col
+            WITH col.tb_code AS tb_code, col.col_name AS col_name, col.rel_col AS rel_col
+            MATCH (tb:TABLE {tb_code: tb_code})
+            MATCH (col:COLUMN {tb_code: tb_code, col_name: col_name})
+            MERGE (col)-[:BELONG]->(tb)
+            WITH 1 AS dummy
+            UNWIND $col_col_rels AS rel
+            MATCH (col:COLUMN {tb_code: rel[0], col_name: rel[1]})-[]-(:TABLE)-[]-(:DATABASE)-[]-(:TABLE {tb_name: rel[2]})-[]-(rel_col:COLUMN {col_name: rel[3]})
+            MERGE (col)-[:REL]->(rel_col)
+            """,
+            cols=cols,
+            col_col_rels=col_col_rels,
+        )
+        if logger:
+            logger.info(f"save column ({len(cols)})")
+            logger.info(f"save column-belong->tb ({len(cols)})")
+            logger.info(f"save column-rel->column ({len(col_col_rels)})")
+        return cols
+    except Exception as e:
+        if logger:
+            logger.exception(f"save column info error: {e}")
+        return None
+
+
+async def save_col_embed(session: AsyncSession, cols: list[dict], logger=None):
+    """写入字段向量化信息"""
+
+    def flatten_dict_values(d: dict) -> list:
+        """递归展平嵌套字典，获取所有叶子节点的值"""
+        return sum(
+            [
+                flatten_dict_values(v) if isinstance(v, dict) else [v]
+                for v in d.values()
+            ],
+            [],
+        )
+
+    col_contents: list[dict] = []
+    for col in cols:
+        col_dict = {"tb_code": col["tb_code"], "col_name": col["col_name"]}
+        # 收集字段名
+        col_contents.append({**col_dict, "content": col["col_name"], "col": "col_name"})
+        # 收集字段注释
+        if col["col_comment"] is not None:
+            col_contents.append(
+                {**col_dict, "content": col["col_comment"], "col": "col_comment"}
+            )
+        # 收集字段示例
+        if col["fewshot"] is not None:
+            col_contents.extend(
+                [
+                    {**col_dict, "content": i, "col": "fewshot"}
+                    for i in col["fewshot"]
+                    if not is_numeric(i)
+                ]
+            )
+        # 收集字段含义
+        if col["col_meaning"] is not None:
+            col_contents.append(
+                {**col_dict, "content": col["col_meaning"], "col": "col_meaning"}
+            )
+        # 收集字段JSON字段含义（展平嵌套字典的所有值）
+        if col["field_meaning"] is not None:
+            col_contents.extend(
+                [
+                    {**col_dict, "content": i, "col": "field_meaning"}
+                    for i in flatten_dict_values(json.loads(col["field_meaning"]))
+                ]
+            )
+        # 收集字段别名
+        if col["col_alias"] is not None:
+            col_contents.extend(
+                [
+                    {**col_dict, "content": i, "col": "col_alias"}
+                    for i in col["col_alias"]
+                ]
+            )
+
+    EMBED_BATCH_SIZE = 128
+    try:
+        # 向量化
+        tasks = []
+        for i in range(0, len(col_contents), EMBED_BATCH_SIZE):
+            batch = col_contents[i : i + EMBED_BATCH_SIZE]
+            tasks.append(embed([item["content"] for item in batch]))
+        embeds = await asyncio.gather(*tasks)
+        flatten_embeds = [vec for batch in embeds for vec in batch]
+        for col_dict, vec in zip(col_contents, flatten_embeds):
+            col_dict["embed"] = vec
+        if logger:
+            logger.info(f"embed column {len(col_contents)}")
+
+        # EMBED_COL (content) 唯一约束
+        await session.run(
+            "CREATE CONSTRAINT embed_col IF NOT EXISTS FOR (e:EMBED_COL) REQUIRE (e.content) IS UNIQUE"
+        )
+        if logger:
+            logger.info("create embed_col constraint")
+        # EMBED_COL embed 向量索引
+        await session.run(
+            """
+            CREATE VECTOR INDEX embed_col_embed IF NOT EXISTS FOR (e:EMBED_COL) ON e.embed
+            OPTIONS { indexConfig: {`vector.dimensions`: 1024,`vector.similarity_function`: 'cosine'} }
+            """
+        )
+        if logger:
+            logger.info("create embed_col index")
+        # 创建 EMBED_COL 节点，创建 EMBED_COL-[:BELONG]->COLUMN 关系
+        await session.run(
+            """
+            UNWIND $col_info_list AS col_item
+            MERGE (ec:EMBED_COL {content: col_item.content})
+            ON CREATE SET ec.embed = col_item.embed
+            WITH ec, col_item
+            MATCH (col:COLUMN {tb_code: col_item.tb_code, col_name: col_item.col_name})
+            MERGE (ec)-[:BELONG]->(col)
+            """,
+            col_info_list=col_contents,
+        )
+        if logger:
+            logger.info(f"save embed_col ({len(col_contents)})")
+            logger.info(f"save embed_col_name->belong->column ({len(col_contents)})")
+    except Exception as e:
+        if logger:
+            logger.exception(f"save embed_col error: {e}")
 
 
 async def save_kn(
@@ -316,11 +466,17 @@ async def save_kn(
     """写入知识信息"""
     if not db_cfg.knowledge:
         return None
+    if (save is not None) and (
+        (db_cfg.db_code not in save) or ("knowledge" not in save[db_cfg.db_code])
+    ):
+        return
 
     kns: list[dict] = []
     kn_kn_rels: list[tuple] = []  # (db_code, kn_code, rel_kn_code)
     kn_col_rels: list[tuple] = []  # (db_code, kn_code, rel_tb_name, rel_col_name)
     for kn_code, kn in db_cfg.knowledge.items():
+        if (save is not None) and (kn_code not in save[db_cfg.db_code]["knowledge"]):
+            continue
         kns.append(
             {
                 "db_code": db_cfg.db_code,
@@ -343,23 +499,22 @@ async def save_kn(
         await session.run(
             "CREATE CONSTRAINT knowledge_db_code_kn_code IF NOT EXISTS FOR (k:KNOWLEDGE) REQUIRE (k.db_code, k.kn_code) IS UNIQUE"
         )
-        if logger:
-            logger.info("create knowledge constraint")
         # 创建 KNOWLEDGE 节点及所有关系
         await session.run(
             """
             UNWIND $kns AS kn
             MERGE (n:KNOWLEDGE {db_code: kn.db_code, kn_code: kn.kn_code})
             SET n += kn
-            WITH kn
-            MATCH (db:DATABASE {db_code: kn.rel_db_code})
-            MERGE (kn)-[:BELONG]->(db)
-            WITH TRUE
+            WITH n, kn.db_code AS db_code, kn.kn_code AS kn_code, kn.rel_db_code AS rel_db_code
+            MATCH (db:DATABASE {db_code: rel_db_code})
+            MATCH (k:KNOWLEDGE {db_code: db_code, kn_code: kn_code})
+            MERGE (k)-[:BELONG]->(db)
+            WITH 1 AS dummy
             UNWIND $kn_kn_rels AS rel
             MATCH (kn:KNOWLEDGE {db_code: rel[0], kn_code: rel[1]})
             MATCH (rel_kn:KNOWLEDGE {db_code: rel[0], kn_code: rel[2]})
             MERGE (kn)-[:CONTAIN]->(rel_kn)
-            WITH TRUE
+            WITH 1 AS dummy
             UNWIND $kn_col_rels AS rel
             MATCH (kn:KNOWLEDGE {db_code: rel[0], kn_code: rel[1]})-[]-(:DATABASE)-[]-(:TABLE)-[]-(rel_col:COLUMN {tb_name: rel[2], col_name: rel[3]})
             MERGE (kn)-[:REL]->(rel_col)
@@ -406,8 +561,6 @@ async def save_kn_embed(session: AsyncSession, kns: list[dict], logger=None):
         await session.run(
             "CREATE CONSTRAINT embed_kn IF NOT EXISTS FOR (e:EMBED_KN) REQUIRE (e.content) IS UNIQUE"
         )
-        if logger:
-            logger.info("create embed_kn constraint")
         # EMBED_KN embed 向量索引
         await session.run(
             """
@@ -419,8 +572,6 @@ async def save_kn_embed(session: AsyncSession, kns: list[dict], logger=None):
         await session.run(
             "CREATE FULLTEXT INDEX embed_kn_tscontent IF NOT EXISTS FOR (e:EMBED_KN) ON EACH [e.tscontent]"
         )
-        if logger:
-            logger.info("create embed_kn index")
         # 创建 EMBED_KN 节点，创建 EMBED_KN-[:BELONG]->KNOWLEDGE 关系
         await session.run(
             """
@@ -439,189 +590,6 @@ async def save_kn_embed(session: AsyncSession, kns: list[dict], logger=None):
     except Exception as e:
         if logger:
             logger.exception(f"save embed_kn error: {e}")
-
-
-async def save_col(
-    session: AsyncSession, db_cfg: DBCfg, save: dict | None, logger=None
-):
-    """写入字段信息"""
-
-    col_tb_rel: set[tuple[str, str]] = set()  # (tb_code, col_name)
-    col_col_rel: set[tuple[str, str, str, str]] = (
-        set()
-    )  # (tb_code, col_name, rel_tb_name, rel_col_name)
-
-    for col in columns:
-        col["field_meaning"] = (
-            json.dumps(col["field_meaning"], ensure_ascii=False)
-            if col["field_meaning"]
-            else None
-        )
-        # 收集表与字段的关系
-        col_tb_rel.add((col["tb_code"], col["col_name"]))
-        # 收集字段与字段的关系
-        if col.get("rel_col"):
-            rel_tb_name, rel_col_name = col["rel_col"].split(".")
-            col_col_rel.add(
-                (col["tb_code"], col["col_name"], rel_tb_name, rel_col_name)
-            )
-
-    try:
-        # COLUMN (tb_code, col_name) 唯一约束
-        await session.run(
-            "CREATE CONSTRAINT column_tb_code_col_name IF NOT EXISTS FOR (c:COLUMN) REQUIRE (c.tb_code, c.col_name) IS UNIQUE"
-        )
-        if logger:
-            logger.info("create column constraint")
-
-        # 创建 COLUMN 节点
-        await session.run(
-            """
-            UNWIND $columns AS col
-            MERGE (n:COLUMN {tb_code: col.tb_code, col_name: col.col_name})
-            SET n += col
-            """,
-            columns=columns,
-        )
-        if logger:
-            logger.info(f"save column ({len(columns)})")
-
-        # 创建 COLUMN-[:BELONG]->TABLE 关系
-        await session.run(
-            """
-            UNWIND $col_tb_rel AS rel
-            MATCH (tb:TABLE {tb_code: rel[0]})
-            MATCH (col:COLUMN {tb_code: rel[0], col_name: rel[1]})
-            MERGE (col)-[:BELONG]->(tb)
-            """,
-            col_tb_rel=list(col_tb_rel),
-        )
-        if logger:
-            logger.info(f"save column-belong->tb ({len(col_tb_rel)})")
-        # 创建 COLUMN-[:REL]->COLUMN 关系
-        if col_col_rel:
-            await session.run(
-                """
-                UNWIND $col_col_rel AS rel
-                MATCH (col:COLUMN {tb_code: rel[0], col_name: rel[1]})-[]-(:TABLE)-[]-(:DATABASE)-[]-(:TABLE {tb_name: rel[2]})-[]-(rel_col:COLUMN {col_name: rel[3]})
-                MERGE (col)-[:REL]->(rel_col)
-                """,
-                col_col_rel=list(col_col_rel),
-            )
-        if logger:
-            logger.info(f"save column-rel->column ({len(col_col_rel)})")
-    except Exception as e:
-        if logger:
-            logger.exception(f"save column info error: {e}")
-
-
-async def save_col_embed(session: AsyncSession, columns: list[dict], logger=None):
-    """写入字段向量化信息"""
-
-    def flatten_dict_values(d: dict) -> list:
-        """递归展平嵌套字典，获取所有叶子节点的值"""
-        return sum(
-            [
-                flatten_dict_values(v) if isinstance(v, dict) else [v]
-                for v in d.values()
-            ],
-            [],
-        )
-
-    if not columns:
-        return
-
-    col_info_list: list[dict] = []
-    for col in columns:
-        col_dict = {"tb_code": col["tb_code"], "col_name": col["col_name"]}
-        # 收集字段名
-        col_info_list.append(
-            {**col_dict, "content": col["col_name"], "col": "col_name"}
-        )
-        # 收集字段注释
-        if col["col_comment"] is not None:
-            col_info_list.append(
-                {**col_dict, "content": col["col_comment"], "col": "col_comment"}
-            )
-        # 收集字段示例
-        if col["fewshot"] is not None:
-            col_info_list.extend(
-                [
-                    {**col_dict, "content": i, "col": "fewshot"}
-                    for i in col["fewshot"]
-                    if not is_numeric(i)
-                ]
-            )
-        # 收集字段含义
-        if col["col_meaning"] is not None:
-            col_info_list.append(
-                {**col_dict, "content": col["col_meaning"], "col": "col_meaning"}
-            )
-        # 收集字段JSON字段含义（展平嵌套字典的所有值）
-        if col["field_meaning"] is not None:
-            col_info_list.extend(
-                [
-                    {**col_dict, "content": i, "col": "field_meaning"}
-                    for i in flatten_dict_values(json.loads(col["field_meaning"]))
-                ]
-            )
-        # 收集字段别名
-        if col["col_alias"] is not None:
-            col_info_list.extend(
-                [
-                    {**col_dict, "content": i, "col": "col_alias"}
-                    for i in col["col_alias"]
-                ]
-            )
-
-    EMBED_BATCH_SIZE = 128
-    try:
-        # 向量化
-        tasks = []
-        for i in range(0, len(col_info_list), EMBED_BATCH_SIZE):
-            batch = col_info_list[i : i + EMBED_BATCH_SIZE]
-            tasks.append(embed([item["content"] for item in batch]))
-        embeds = await asyncio.gather(*tasks)
-        flatten_embeds = [vec for batch in embeds for vec in batch]
-        for col_dict, vec in zip(col_info_list, flatten_embeds):
-            col_dict["embed"] = vec
-        if logger:
-            logger.info(f"embed column {len(col_info_list)}")
-
-        # EMBED_COL (content) 唯一约束
-        await session.run(
-            "CREATE CONSTRAINT embed_col IF NOT EXISTS FOR (e:EMBED_COL) REQUIRE (e.content) IS UNIQUE"
-        )
-        if logger:
-            logger.info("create embed_col constraint")
-        # EMBED_COL embed 向量索引
-        await session.run(
-            """
-            CREATE VECTOR INDEX embed_col_embed IF NOT EXISTS FOR (e:EMBED_COL) ON e.embed
-            OPTIONS { indexConfig: {`vector.dimensions`: 1024,`vector.similarity_function`: 'cosine'} }
-            """
-        )
-        if logger:
-            logger.info("create embed_col index")
-
-        # 创建 EMBED_COL 节点，创建 EMBED_COL-[:BELONG]->COLUMN 关系
-        await session.run(
-            """
-            UNWIND $col_info_list AS col_item
-            MERGE (ec:EMBED_COL {content: col_item.content})
-            ON CREATE SET ec.embed = col_item.embed
-            WITH ec, col_item
-            MATCH (col:COLUMN {tb_code: col_item.tb_code, col_name: col_item.col_name})
-            MERGE (ec)-[:BELONG]->(col)
-            """,
-            col_info_list=col_info_list,
-        )
-        if logger:
-            logger.info(f"save embed_col ({len(col_info_list)})")
-            logger.info(f"save embed_col_name->belong->column ({len(col_info_list)})")
-    except Exception as e:
-        if logger:
-            logger.exception(f"save embed_col error: {e}")
 
 
 async def save_cell(
