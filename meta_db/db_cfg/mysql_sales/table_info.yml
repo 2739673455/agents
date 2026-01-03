@@ -16,7 +16,7 @@ table: # 表信息
       - segment
       - city
     no_sync_col: # 不同步字段
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       order_date:
         col_meaning: 订单生成时刻的年-月-日 # 字段含义
         field_meaning: # JSONB字段中每个字段的含义

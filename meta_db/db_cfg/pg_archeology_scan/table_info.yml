@@ -8,7 +8,7 @@ table: # 表信息
     no_sync_col: # 不同步字段
       - arcregistry
       - authpin
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       arcregistry:
         col_meaning: 考古项目注册唯一标识符 # 字段含义
         field_meaning: # JSONB字段中每个字段的含义
@@ -42,7 +42,7 @@ table: # 表信息
     no_sync_col: # 不同步字段
       - crewregistry
       - leadregistry
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       crewregistry:
         col_meaning: 操作人员注册唯一标识符
         field_meaning:
@@ -70,7 +70,7 @@ table: # 表信息
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - zoneregistry
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       zoneregistry:
         col_meaning: 考古区域唯一站点代码标识符
         field_meaning:
@@ -149,7 +149,7 @@ table: # 表信息
       - power_consumption
       - battery_drain
       - storage_usage_rate
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       equipregistry:
         col_meaning: 扫描设备唯一序列号标识符
         field_meaning:
@@ -232,7 +232,7 @@ table: # 表信息
       - size
       - scan_cost
       - scanning_rate
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       questregistry:
         col_meaning: 扫描会话记录唯一标识符
         field_meaning:
@@ -301,7 +301,7 @@ table: # 表信息
     no_sync_col: # 不同步字段
       - airregistry
       - imgcount
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       airregistry:
         col_meaning: 环境记录自动生成唯一标识符
         field_meaning:
@@ -345,7 +345,7 @@ table: # 表信息
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - cloudregistry
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       cloudregistry:
         col_meaning: 点云记录自动生成唯一标识符
         field_meaning:
@@ -381,7 +381,7 @@ table: # 表信息
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - facetregistry
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       facetregistry:
         col_meaning: 网格记录自动生成唯一标识符
         field_meaning:
@@ -416,7 +416,7 @@ table: # 表信息
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - domainregistry
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       domainregistry:
         col_meaning: 空间测量记录自动生成唯一标识符
         field_meaning:
@@ -454,7 +454,7 @@ table: # 表信息
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - traitregistry
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       traitregistry:
         col_meaning: 特征分析记录自动生成唯一标识符
         field_meaning:
@@ -495,7 +495,7 @@ table: # 表信息
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - cureregistry
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       cureregistry:
         col_meaning: 保护记录自动生成唯一标识符
         field_meaning:
@@ -543,7 +543,7 @@ table: # 表信息
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - logregistry
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       logregistry:
         col_meaning: 注册记录自动生成唯一标识符
         field_meaning:
@@ -579,7 +579,7 @@ table: # 表信息
     no_sync_col: # 不同步字段
       - flowregistry
       - processing_rate
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       flowregistry:
         col_meaning: 处理记录自动生成唯一标识符
         field_meaning:
@@ -666,7 +666,7 @@ table: # 表信息
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - qualregistry
-    col_info: # 字段额外信息
+    column: # 字段额外信息
       qualregistry:
         col_meaning: 质量控制记录自动生成唯一标识符
         field_meaning:

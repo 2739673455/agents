@@ -172,7 +172,7 @@ async def get_column(db_cfg: DBCfg, tb_code: str, logger=None) -> list[dict] | N
         return None
 
 
-async def save_meta(save: dict | None):
+async def save_meta(save: dict | None = None):
     """
     保存元数据
 
@@ -198,36 +198,36 @@ async def save_meta(save: dict | None):
             if kns:
                 # 保存知识向量化信息
                 await save_kn_embed(session, kns, logger)
-            # 保存字段信息
-            columns = await save_col(session, db_cfg, save, logger)
-            # 保存字段向量化信息
-            await save_col_embed(session, columns, logger)
+            # # 保存字段信息
+            # columns = await save_col(session, db_cfg, save, logger)
+            # # 保存字段向量化信息
+            # await save_col_embed(session, columns, logger)
 
-            try:
-                tb_code2tb_info_map = {i["tb_code"]: i for i in tb_info_list}
-                tb_code2cols_map: dict[str, list[dict]] = {}
-                for col in columns:
-                    if (
-                        (any(i in col["col_type"].lower() for i in ["varchar", "text"]))
-                        and (col["tb_code"] in tb_code2tb_info_map)
-                        and (
-                            tb_code2tb_info_map[col["tb_code"]].get("sync_col") is None
-                            or col["col_name"]
-                            in tb_code2tb_info_map[col["tb_code"]]["sync_col"]
-                        )  # 如果同步字段为空，则所有字段都需要同步；如果字段在同步字段里则同步
-                        and (
-                            tb_code2tb_info_map[col["tb_code"]].get("no_sync_col")
-                            is None
-                            or col["col_name"]
-                            not in tb_code2tb_info_map[col["tb_code"]]["no_sync_col"]
-                        )  # 如果字段在同步字段里，且不在不同步字段里，则同步
-                    ):
-                        tb_code2cols_map.setdefault(col["tb_code"], []).append(col)
-                # 写入字段值信息
-                await save_cell(session, tb_code2tb_info_map, tb_code2cols_map)
-            except Exception as e:
-                logger.exception(f"save cell error: {e}")
-                raise
+            # try:
+            #     tb_code2tb_info_map = {i["tb_code"]: i for i in tb_info_list}
+            #     tb_code2cols_map: dict[str, list[dict]] = {}
+            #     for col in columns:
+            #         if (
+            #             (any(i in col["col_type"].lower() for i in ["varchar", "text"]))
+            #             and (col["tb_code"] in tb_code2tb_info_map)
+            #             and (
+            #                 tb_code2tb_info_map[col["tb_code"]].get("sync_col") is None
+            #                 or col["col_name"]
+            #                 in tb_code2tb_info_map[col["tb_code"]]["sync_col"]
+            #             )  # 如果同步字段为空，则所有字段都需要同步；如果字段在同步字段里则同步
+            #             and (
+            #                 tb_code2tb_info_map[col["tb_code"]].get("no_sync_col")
+            #                 is None
+            #                 or col["col_name"]
+            #                 not in tb_code2tb_info_map[col["tb_code"]]["no_sync_col"]
+            #             )  # 如果字段在同步字段里，且不在不同步字段里，则同步
+            #         ):
+            #             tb_code2cols_map.setdefault(col["tb_code"], []).append(col)
+            #     # 写入字段值信息
+            #     await save_cell(session, tb_code2tb_info_map, tb_code2cols_map)
+            # except Exception as e:
+            #     logger.exception(f"save cell error: {e}")
+            #     raise
 
 
 async def save_db(session: AsyncSession, db_cfg: DBCfg, save: dict | None, logger=None):
@@ -252,8 +252,8 @@ async def save_db(session: AsyncSession, db_cfg: DBCfg, save: dict | None, logge
         # 创建 DATABASE 节点
         await session.run(
             """
-            MERGE (n:DATABASE {db_code: db_dict.db_code})
-            SET n += db_dict
+            MERGE (n:DATABASE {db_code: $db_dict.db_code})
+            SET n += $db_dict
             """,
             db_dict=db_dict,
         )
@@ -317,30 +317,34 @@ async def save_kn(
         return None
 
     kns: list[dict] = []
+    kn_kn_rels: list[tuple] = []  # (db_code, kn_code, rel_kn_code)
+    kn_col_rels: list[tuple] = []  # (db_code, kn_code, rel_tb_name, rel_col_name)
     for kn_code, kn in db_cfg.knowledge.items():
-        # 收集知识信息
-        _kn = {
-            "db_code": db_cfg.db_code,
-            "kn_code": kn_code,
-            **kn.model_dump(),
-            "rel_db_code": db_cfg.db_code,
-            "rel_kn_codes": kn.rel_kn,
-            "rel_cols": [],
-        }
+        kns.append(
+            {
+                "db_code": db_cfg.db_code,
+                "kn_code": kn_code,
+                **kn.model_dump(),
+                "rel_db_code": db_cfg.db_code,
+            }
+        )
+        # 收集知识与知识的关系
+        if kn.rel_kn:
+            for rel_kn_code in kn.rel_kn:
+                kn_kn_rels.append((db_cfg.db_code, kn_code, rel_kn_code))
         # 收集知识与字段的关系
         if kn.rel_col:
             for rel_col in kn.rel_col:
                 rel_tb_name, rel_col_name = rel_col.split(".")
-                _kn["rel_cols"].append((rel_tb_name, rel_col_name))
-        kns.append(_kn)
+                kn_col_rels.append((db_cfg.db_code, kn_code, rel_tb_name, rel_col_name))
     try:
-        # KNOWLEDGE (db_code, kn_code) 唯一约束
+        # 创建约束
         await session.run(
             "CREATE CONSTRAINT knowledge_db_code_kn_code IF NOT EXISTS FOR (k:KNOWLEDGE) REQUIRE (k.db_code, k.kn_code) IS UNIQUE"
         )
         if logger:
             logger.info("create knowledge constraint")
-        # 创建 KNOWLEDGE 节点，创建 KNOWLEDGE-[:BELONG]->DATABASE 关系
+        # 创建 KNOWLEDGE 节点及所有关系
         await session.run(
             """
             UNWIND $kns AS kn
@@ -349,40 +353,28 @@ async def save_kn(
             WITH kn
             MATCH (db:DATABASE {db_code: kn.rel_db_code})
             MERGE (kn)-[:BELONG]->(db)
+            WITH TRUE
+            UNWIND $kn_kn_rels AS rel
+            MATCH (kn:KNOWLEDGE {db_code: rel[0], kn_code: rel[1]})
+            MATCH (rel_kn:KNOWLEDGE {db_code: rel[0], kn_code: rel[2]})
+            MERGE (kn)-[:CONTAIN]->(rel_kn)
+            WITH TRUE
+            UNWIND $kn_col_rels AS rel
+            MATCH (kn:KNOWLEDGE {db_code: rel[0], kn_code: rel[1]})-[]-(:DATABASE)-[]-(:TABLE)-[]-(rel_col:COLUMN {tb_name: rel[2], col_name: rel[3]})
+            MERGE (kn)-[:REL]->(rel_col)
             """,
             kns=kns,
+            kn_kn_rels=kn_kn_rels,
+            kn_col_rels=kn_col_rels,
         )
         if logger:
             logger.info(f"save knowledge ({len(kns)})")
-        # 创建 KNOWLEDGE-[:CONTAIN]->KNOWLEDGE 关系
-        if kn_kn_rels:
-            await session.run(
-                """
-                UNWIND $kn_kn_rels AS rel
-                MATCH (kn:KNOWLEDGE {db_code: rel[0], kn_code: rel[1]})
-                MATCH (rel_kn:KNOWLEDGE {db_code: rel[0], kn_code: rel[2]})
-                MERGE (kn)-[:CONTAIN]->(rel_kn)
-                """,
-                kn_kn_rels=kn_kn_rels,
-            )
-        if logger:
             logger.info(f"save knowledge-contain->knowledge ({len(kn_kn_rels)})")
-        # 创建 KNOWLEDGE-[:REL]->COLUMN 关系
-        if kn_col_rels:
-            await session.run(
-                """
-                UNWIND $kn_col_rels AS rel
-                MATCH (kn:KNOWLEDGE {db_code: rel[0], kn_code: rel[1]})-[]-(:DATABASE)-[]-(:TABLE)-[]-(rel_col:COLUMN {tb_name: rel[2], col_name: rel[3]})
-                MERGE (kn)-[:REL]->(rel_col)
-                """,
-                kn_col_rels=kn_col_rels,
-            )
-        if logger:
             logger.info(f"save knowledge-rel->column ({len(kn_col_rels)})")
         return kns
     except Exception as e:
         if logger:
-            logger.execption(f"save knowledge error: {e}")
+            logger.exception(f"save knowledge error: {e}")
         return None
 
 
@@ -774,6 +766,6 @@ if __name__ == "__main__":
 
     async def main():
         await clear_neo4j()
-        await save_meta(tb_info_list, tb_col_list, kn_list)
+        await save_meta()
 
     asyncio.run(main())

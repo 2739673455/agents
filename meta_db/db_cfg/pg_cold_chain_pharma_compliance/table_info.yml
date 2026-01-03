@@ -8,7 +8,7 @@ table:
     no_sync_col: # 不同步字段
       - reckey
       - log_ts
-    col_info:
+    column:
       reckey:
         col_meaning: 货运记录的唯一标识键
         field_meaning:
@@ -48,7 +48,7 @@ table:
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - prodcode
-    col_info:
+    column:
       prodcode:
         col_meaning: 产品的唯一标识代码
         field_meaning:
@@ -83,7 +83,7 @@ table:
       - pack_cnt
       - valusd
       - insusd
-    col_info:
+    column:
       batchtag:
         col_meaning: 产品批次的唯一标识标签
         field_meaning:
@@ -150,7 +150,7 @@ table:
     tb_meaning: 承运人 # 表含义
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
-    col_info:
+    column:
       carriertag:
         col_meaning: 承运人的唯一标识名称
         field_meaning:
@@ -168,7 +168,7 @@ table:
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - vehref
-    col_info:
+    column:
       vehref:
         col_meaning: 车辆的唯一参考标识符
         field_meaning:
@@ -203,7 +203,7 @@ table:
       - mondevref
       - calibts
       - temppts
-    col_info:
+    column:
       mondevref:
         col_meaning: 监控设备的唯一参考标识符
         field_meaning:
@@ -236,7 +236,7 @@ table:
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - reckeylink
-    col_info:
+    column:
       reckeylink:
         col_meaning: 环境监控关联的货运记录标识
         field_meaning:
@@ -280,7 +280,7 @@ table:
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - reckeyqc
-    col_info:
+    column:
       reckeyqc:
         col_meaning: 质量控制关联的货运记录标识
         field_meaning:
@@ -323,7 +323,7 @@ table:
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - reckeyrisk
-    col_info:
+    column:
       reckeyrisk:
         col_meaning: 风险和事故管理关联的货运记录标识
         field_meaning:
@@ -367,7 +367,7 @@ table:
       - reckeyclaim
       - claimusd
       - costimpactusd
-    col_info:
+    column:
       reckeyclaim:
         col_meaning: 保险理赔关联的货运记录标识
         field_meaning:
@@ -405,7 +405,7 @@ table:
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - reckeyrev
-    col_info:
+    column:
       reckeyrev:
         col_meaning: 审查和改进关联的货运记录标识
         field_meaning:
@@ -548,7 +548,7 @@ table:
     sync_col: # 同步字段
     no_sync_col: # 不同步字段
       - shpnode
-    col_info:
+    column:
       shpnode:
         col_meaning: 传感器链接中的货运记录节点标识
         field_meaning:
