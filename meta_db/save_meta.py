@@ -128,7 +128,7 @@ async def _get_column_attr(
         return None
 
 
-async def get_column(db_cfg: DBCfg, tb_code: str, logger=None) -> list[dict]:
+async def _get_column(db_cfg: DBCfg, tb_code: str, logger=None) -> list[dict]:
     """整合 表信息、字段属性、字段示例数据"""
     try:
         if not db_cfg.table:
@@ -200,32 +200,8 @@ async def save_meta(save: dict | None = None):
             if kns:
                 # 保存知识向量化信息
                 await save_kn_embed(session, kns, logger)
-
-            # try:
-            #     tb_code2tb_info_map = {i["tb_code"]: i for i in tb_info_list}
-            #     tb_code2cols_map: dict[str, list[dict]] = {}
-            #     for col in columns:
-            #         if (
-            #             (any(i in col["col_type"].lower() for i in ["varchar", "text"]))
-            #             and (col["tb_code"] in tb_code2tb_info_map)
-            #             and (
-            #                 tb_code2tb_info_map[col["tb_code"]].get("sync_col") is None
-            #                 or col["col_name"]
-            #                 in tb_code2tb_info_map[col["tb_code"]]["sync_col"]
-            #             )  # 如果同步字段为空，则所有字段都需要同步；如果字段在同步字段里则同步
-            #             and (
-            #                 tb_code2tb_info_map[col["tb_code"]].get("no_sync_col")
-            #                 is None
-            #                 or col["col_name"]
-            #                 not in tb_code2tb_info_map[col["tb_code"]]["no_sync_col"]
-            #             )  # 如果字段在同步字段里，且不在不同步字段里，则同步
-            #         ):
-            #             tb_code2cols_map.setdefault(col["tb_code"], []).append(col)
-            #     # 写入字段值信息
-            #     await save_cell(session, tb_code2tb_info_map, tb_code2cols_map)
-            # except Exception as e:
-            #     logger.exception(f"save cell error: {e}")
-            #     raise
+            # 保存字段值信息
+            await save_cell(session, db_cfg, save, logger)
 
 
 async def save_db(session: AsyncSession, db_cfg: DBCfg, save: dict | None, logger=None):
@@ -287,7 +263,7 @@ async def save_tb_col(
             }
         )
         # 收集字段信息
-        columns = await get_column(db_cfg, tb_code, logger)
+        columns = await _get_column(db_cfg, tb_code, logger)
         cols.extend(columns)
         # 收集字段关联信息
         for c in columns:
@@ -593,10 +569,7 @@ async def save_kn_embed(session: AsyncSession, kns: list[dict], logger=None):
 
 
 async def save_cell(
-    session: AsyncSession,
-    tb_code2tb_info_map: dict[str, dict],
-    tb_code2sync_cols_map: dict[str, list[dict]],
-    logger=None,
+    session: AsyncSession, db_cfg: DBCfg, save: dict | None, logger=None
 ):
     """写入单元格信息"""
 
@@ -637,13 +610,22 @@ async def save_cell(
             logger.info(f"save cell ({len(batch)})")
             logger.info(f"save cell-belong->column ({len(batch)})")
 
+    if not db_cfg.table:
+        return
+    if (save is not None) and (
+        (db_cfg.db_code not in save) or ("table" not in save[db_cfg.db_code])
+    ):
+        return
+
+    semaphore = asyncio.Semaphore(20)
+    SELECT_BATCH_SIZE = 5000
+    PROCESS_BATCH_SIZE = 128
+
     try:
         # CELL (content) 唯一约束
         await session.run(
             "CREATE CONSTRAINT cell IF NOT EXISTS FOR (c:CELL) REQUIRE (c.content) IS UNIQUE"
         )
-        if logger:
-            logger.info("create cell constraint")
         # CELL embed 向量索引
         await session.run(
             """
@@ -655,20 +637,35 @@ async def save_cell(
         await session.run(
             "CREATE FULLTEXT INDEX cell_tscontent IF NOT EXISTS FOR (c:CELL) ON EACH [c.tscontent]"
         )
-        if logger:
-            logger.info("create cell index")
 
-        semaphore = asyncio.Semaphore(20)
-        SELECT_BATCH_SIZE = 5000
-        PROCESS_BATCH_SIZE = 128
-        for tb_code, tb_info in tb_code2tb_info_map.items():
-            tb_col_list = tb_code2sync_cols_map.get(tb_code)
-            if not tb_col_list:
+        for tb_code, tb_cfg in db_cfg.table.items():
+            if (save is not None) and (tb_code not in save[db_cfg.db_code]["table"]):
                 continue
-            col_name_list = [i["col_name"] for i in tb_col_list]
-            async with get_session(DB_CFG[tb_info["db_code"]]) as db_session:
-                stmt = select(*[column(c) for c in col_name_list]).select_from(
-                    table(tb_info["tb_name"])
+            sync_col_names: list[str] = []
+            async with get_session(db_cfg) as db_session:
+                # 获取表的字段属性
+                columns = await _get_column_attr(db_session, tb_code, tb_cfg, logger)
+            if not columns:
+                continue
+            # 收集需要同步的字段
+            for c in columns:
+                if (
+                    (any(i in str(c["data_type"]).lower() for i in ["varchar", "text"]))
+                    and (
+                        tb_cfg.sync_col is None or c["name"] in tb_cfg.sync_col
+                    )  # 如果同步字段为空，则所有字段都需要同步；如果字段在同步字段里则同步
+                    and (
+                        tb_cfg.no_sync_col is None
+                        or c["name"] not in tb_cfg.no_sync_col
+                    )  # 如果字段在同步字段里，且不在不同步字段里，则同步
+                ):
+                    sync_col_names.append(c["name"])
+            if not sync_col_names:
+                continue
+
+            async with get_session(db_cfg) as db_session:
+                stmt = select(*[column(c) for c in sync_col_names]).select_from(
+                    table(tb_cfg.tb_name)
                 )
                 if logger:
                     logger.info(f"execute sql statement: {stmt}")
@@ -678,7 +675,7 @@ async def save_cell(
                 async for batch in result.partitions(SELECT_BATCH_SIZE):
                     # 构造 col_name->[cell] 映射
                     # 解包->转置->转换为集合->关联列名->转换为字典
-                    col_map = dict(zip(col_name_list, map(set, zip(*batch))))
+                    col_map = dict(zip(sync_col_names, map(set, zip(*batch))))
                     tasks = []
                     _batch: list[dict] = []
                     for col_name, cells in col_map.items():
@@ -704,6 +701,7 @@ async def save_cell(
     except Exception as e:
         if logger:
             logger.exception(f"save cell error: {e}")
+        raise
 
 
 async def clear_neo4j():
