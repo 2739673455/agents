@@ -170,36 +170,6 @@ async def _get_column(db_cfg: DBCfg, tb_code: str, logger=None) -> list[dict]:
         return []
 
 
-async def save_meta(save: dict | None = None):
-    """
-    保存元数据
-
-    save = {
-        db_code:{
-            'table':[tb_code]
-            'knowledge':[kn_code]
-        }
-    }
-    None 视为全选
-    """
-    async with neo4j_session() as session:
-        for db_cfg in DB_CFG.values():
-            # 保存库信息
-            await save_db(session, db_cfg, save, logger)
-            # 保存表与字段信息
-            cols = await save_tb_col(session, db_cfg, save, logger)
-            # 保存字段向量化信息
-            if cols:
-                await save_col_embed(session, cols, logger)
-            # 保存知识
-            kns = await save_kn(session, db_cfg, save, logger)
-            if kns:
-                # 保存知识向量化信息
-                await save_kn_embed(session, kns, logger)
-            # 保存字段值信息
-            await save_cell(session, db_cfg, save, logger)
-
-
 async def save_db(session: AsyncSession, db_cfg: DBCfg, save: dict | None, logger=None):
     """写入库信息"""
     if (save is not None) and (db_cfg.db_code not in save):
@@ -297,9 +267,6 @@ async def save_tb_col(
         await session.run(
             "CREATE CONSTRAINT column_tb_code_col_name IF NOT EXISTS FOR (c:COLUMN) REQUIRE (c.tb_code, c.col_name) IS UNIQUE"
         )
-        if logger:
-            logger.info("create column constraint")
-
         # 创建 COLUMN 节点
         await session.run(
             """
@@ -320,7 +287,7 @@ async def save_tb_col(
         )
         if logger:
             logger.info(f"save column ({len(cols)})")
-            logger.info(f"save column-belong->tb ({len(cols)})")
+            logger.info(f"save column-belong->table ({len(cols)})")
             logger.info(f"save column-rel->column ({len(col_col_rels)})")
         return cols
     except Exception as e:
@@ -385,6 +352,18 @@ async def save_col_embed(session: AsyncSession, cols: list[dict], logger=None):
 
     EMBED_BATCH_SIZE = 128
     try:
+        # EMBED_COL (content) 唯一约束
+        await session.run(
+            "CREATE CONSTRAINT embed_col IF NOT EXISTS FOR (e:EMBED_COL) REQUIRE (e.content) IS UNIQUE"
+        )
+        # EMBED_COL embed 向量索引
+        await session.run(
+            """
+            CREATE VECTOR INDEX embed_col_embed IF NOT EXISTS FOR (e:EMBED_COL) ON e.embed
+            OPTIONS { indexConfig: {`vector.dimensions`: 1024,`vector.similarity_function`: 'cosine'} }
+            """
+        )
+
         # 向量化
         tasks = []
         for i in range(0, len(col_contents), EMBED_BATCH_SIZE):
@@ -397,21 +376,6 @@ async def save_col_embed(session: AsyncSession, cols: list[dict], logger=None):
         if logger:
             logger.info(f"embed column {len(col_contents)}")
 
-        # EMBED_COL (content) 唯一约束
-        await session.run(
-            "CREATE CONSTRAINT embed_col IF NOT EXISTS FOR (e:EMBED_COL) REQUIRE (e.content) IS UNIQUE"
-        )
-        if logger:
-            logger.info("create embed_col constraint")
-        # EMBED_COL embed 向量索引
-        await session.run(
-            """
-            CREATE VECTOR INDEX embed_col_embed IF NOT EXISTS FOR (e:EMBED_COL) ON e.embed
-            OPTIONS { indexConfig: {`vector.dimensions`: 1024,`vector.similarity_function`: 'cosine'} }
-            """
-        )
-        if logger:
-            logger.info("create embed_col index")
         # 创建 EMBED_COL 节点，创建 EMBED_COL-[:BELONG]->COLUMN 关系
         await session.run(
             """
@@ -426,7 +390,7 @@ async def save_col_embed(session: AsyncSession, cols: list[dict], logger=None):
         )
         if logger:
             logger.info(f"save embed_col ({len(col_contents)})")
-            logger.info(f"save embed_col_name->belong->column ({len(col_contents)})")
+            logger.info(f"save embed_col->belong->column ({len(col_contents)})")
     except Exception as e:
         if logger:
             logger.exception(f"save embed_col error: {e}")
@@ -521,14 +485,6 @@ async def save_kn_embed(session: AsyncSession, kns: list[dict], logger=None):
                 [{**kn_dict, "content": i, "col": "kn_alias"} for i in kn["kn_alias"]]
             )
     try:
-        # 嵌入与分词
-        contents = [kn["content"] for kn in kn_contents]
-        embeds, tscontents = await asyncio.gather(
-            embed(contents), get_keywords(contents)
-        )
-        for i, e, t in zip(kn_contents, embeds, tscontents):
-            i["embed"] = e
-            i["tscontent"] = t
         # EMBED_KN (content) 唯一约束
         await session.run(
             "CREATE CONSTRAINT embed_kn IF NOT EXISTS FOR (e:EMBED_KN) REQUIRE (e.content) IS UNIQUE"
@@ -544,6 +500,16 @@ async def save_kn_embed(session: AsyncSession, kns: list[dict], logger=None):
         await session.run(
             "CREATE FULLTEXT INDEX embed_kn_tscontent IF NOT EXISTS FOR (e:EMBED_KN) ON EACH [e.tscontent]"
         )
+
+        # 嵌入与分词
+        contents = [kn["content"] for kn in kn_contents]
+        embeds, tscontents = await asyncio.gather(
+            embed(contents), get_keywords(contents)
+        )
+        for i, e, t in zip(kn_contents, embeds, tscontents):
+            i["embed"] = e
+            i["tscontent"] = t
+
         # 创建 EMBED_KN 节点，创建 EMBED_KN-[:BELONG]->KNOWLEDGE 关系
         await session.run(
             """
@@ -558,7 +524,7 @@ async def save_kn_embed(session: AsyncSession, kns: list[dict], logger=None):
         )
         if logger:
             logger.info(f"save embed_kn ({len(kn_contents)})")
-            logger.info(f"save embed_kn_name->belong->kn ({len(kn_contents)})")
+            logger.info(f"save embed_kn->belong->kn ({len(kn_contents)})")
     except Exception as e:
         if logger:
             logger.exception(f"save embed_kn error: {e}")
@@ -609,7 +575,7 @@ async def save_cell(
     if not db_cfg.table:
         return
     if (save is not None) and (
-        (db_cfg.db_code not in save) or ("table" not in save[db_cfg.db_code])
+        (db_cfg.db_code not in save) or ("cell" not in save[db_cfg.db_code])
     ):
         return
 
@@ -635,11 +601,11 @@ async def save_cell(
         )
 
         for tb_code, tb_cfg in db_cfg.table.items():
-            if (save is not None) and (tb_code not in save[db_cfg.db_code]["table"]):
+            if (save is not None) and (tb_code not in save[db_cfg.db_code]["cell"]):
                 continue
             sync_col_names: list[str] = []
+            # 获取表的字段属性
             async with get_session(db_cfg) as db_session:
-                # 获取表的字段属性
                 columns = await _get_column_attr(db_session, tb_code, tb_cfg, logger)
             if not columns:
                 continue
@@ -659,6 +625,7 @@ async def save_cell(
             if not sync_col_names:
                 continue
 
+            # 查询字段值
             async with get_session(db_cfg) as db_session:
                 stmt = select(*[column(c) for c in sync_col_names]).select_from(
                     table(tb_cfg.tb_name)
@@ -698,6 +665,37 @@ async def save_cell(
         if logger:
             logger.exception(f"save cell error: {e}")
         raise
+
+
+async def save_meta(save: dict | None = None):
+    """
+    保存元数据
+
+    save = {
+        db_code:{
+            'table':[tb_code]
+            'knowledge':[kn_code]
+            'cell':[tb_code]
+        }
+    }
+    None 视为全选
+    """
+    async with neo4j_session() as session:
+        for db_cfg in DB_CFG.values():
+            # 保存库信息
+            await save_db(session, db_cfg, save, logger)
+            # 保存表与字段信息
+            cols = await save_tb_col(session, db_cfg, save, logger)
+            # 保存字段向量化信息
+            if cols:
+                await save_col_embed(session, cols, logger)
+            # 保存知识
+            kns = await save_kn(session, db_cfg, save, logger)
+            if kns:
+                # 保存知识向量化信息
+                await save_kn_embed(session, kns, logger)
+            # 保存字段值信息
+            await save_cell(session, db_cfg, save, logger)
 
 
 async def clear_neo4j():

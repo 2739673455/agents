@@ -34,13 +34,12 @@ def extract_keyword(query: str):
     ) + [query]
     keywords = list(set([w for w in keywords if not is_numeric(w)]))
 
-    return {"keywords": keywords}
+    return keywords
 
 
 def main():
     usage = 'python extract_keyword.py "查询文本"'
     parser = argparse.ArgumentParser(description="关键词提取", usage=usage)
-
     parser.add_argument("query", type=str, help="查询文本")
 
     try:
