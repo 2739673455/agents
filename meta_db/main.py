@@ -12,9 +12,16 @@ from query_meta import (
 )
 from save_meta import clear_meta, save_meta
 
+metadata_router = APIRouter()
+
+
+@metadata_router.get("/health")
+async def health():
+    return 200
+
 
 class SaveMetaRequest(BaseModel):
-    save: dict[str, dict[str, list[str] | None] | None] = Field(
+    save: dict[str, dict[str, list | None] | None] | None = Field(
         description="数据库元数据保存配置",
         examples=[
             {
@@ -28,17 +35,9 @@ class SaveMetaRequest(BaseModel):
     )
 
 
-metadata_router = APIRouter()
-
-
-@metadata_router.get("/health")
-async def health():
-    return 200
-
-
 @metadata_router.post("/save_metadata")
-async def api_save_meta(save_meta_request: SaveMetaRequest):
-    await save_meta(save_meta_request.save)
+async def api_save_meta(req: SaveMetaRequest):
+    await save_meta(req.save)
 
 
 @metadata_router.post("/clear_metadata")
@@ -46,29 +45,57 @@ async def api_clear_meta():
     await clear_meta()
 
 
+class GetTableRequest(BaseModel):
+    db_code: str = Field(description="数据库编号")
+
+
 @metadata_router.post("/get_table")
-async def api_get_table(db_code: str):
-    return await get_tb_info_by_dbcode(db_code)
+async def api_get_table(req: GetTableRequest):
+    return await get_tb_info_by_dbcode(req.db_code)
+
+
+class GetColumnRequest(BaseModel):
+    db_code: str = Field(description="数据库编号")
+    tb_col_tuple_list: list[tuple[str, str]] = Field(
+        description="(tb_name, col_name) 的列表",
+        examples=[[("tb_name", "col_name")]],
+    )
 
 
 @metadata_router.post("/get_column")
-async def api_get_column(db_code: str, tb_col_tuple_list: list[tuple[str, str]]):
-    return await get_col_by_dbcode_tbname_colname(db_code, tb_col_tuple_list)
+async def api_get_column(req: GetColumnRequest):
+    return await get_col_by_dbcode_tbname_colname(req.db_code, req.tb_col_tuple_list)
 
 
-@metadata_router.post("retrieve_knowledge")
-async def api_retrieve_knowledge(db_code: str, query: str, keywords: list[str]):
-    return await retrieve_knowledge(db_code, query, keywords)
+class RetrieveKnowledgeRequest(BaseModel):
+    db_code: str = Field(description="数据库编号")
+    query: str = Field(description="查询")
+    keywords: list[str] = Field(description="关键词列表")
 
 
-@metadata_router.post("retrieve_column")
-async def api_retrieve_column(db_code: str, texts: list[str]):
-    return await retrieve_column(db_code, texts)
+@metadata_router.post("/retrieve_knowledge")
+async def api_retrieve_knowledge(req: RetrieveKnowledgeRequest):
+    return await retrieve_knowledge(req.db_code, req.query, req.keywords)
 
 
-@metadata_router.post("retrieve_cell")
-async def api_retrieve_cell(db_code: str, texts: list[str]):
-    return await retrieve_cell(db_code, texts)
+class RetrieveColumnRequest(BaseModel):
+    db_code: str = Field(description="数据库编号")
+    texts: list[str] = Field(description="关键词列表")
+
+
+@metadata_router.post("/retrieve_column")
+async def api_retrieve_column(req: RetrieveColumnRequest):
+    return await retrieve_column(req.db_code, req.texts)
+
+
+class RetrieveCellRequest(BaseModel):
+    db_code: str = Field(description="数据库编号")
+    texts: list[str] = Field(description="关键词列表")
+
+
+@metadata_router.post("/retrieve_cell")
+async def api_retrieve_cell(req: RetrieveCellRequest):
+    return await retrieve_cell(req.db_code, req.texts)
 
 
 api_router = APIRouter(prefix="/api")
@@ -103,4 +130,4 @@ app.include_router(api_router)
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

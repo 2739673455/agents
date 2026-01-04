@@ -716,11 +716,11 @@ async def clear_meta():
         records = await result.data()
         for record in records:
             query_str = f"DROP INDEX {record['name']}"
-            try:
-                await session.run(cast(LiteralString, query_str))
-            except Exception:
-                ...
-    logger.info("clear neo4j")
+            # try:
+            #     await session.run(cast(LiteralString, query_str))
+            # except Exception:
+            #     ...
+    logger.info("clear metadata")
 
 
 if __name__ == "__main__":
