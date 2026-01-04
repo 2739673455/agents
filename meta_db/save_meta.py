@@ -698,8 +698,8 @@ async def save_meta(save: dict | None = None):
             await save_cell(session, db_cfg, save, logger)
 
 
-async def clear_neo4j():
-    """清空 neo4j"""
+async def clear_meta():
+    """清空元数据"""
     async with neo4j_session() as session:
         # 删除所有数据
         await session.run("MATCH (n) DETACH DELETE n")
@@ -726,7 +726,7 @@ async def clear_neo4j():
 if __name__ == "__main__":
 
     async def main():
-        await clear_neo4j()
+        await clear_meta()
         await save_meta()
 
     asyncio.run(main())
