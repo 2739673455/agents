@@ -5,7 +5,7 @@ description: 这个技能用于根据用户的查询问题，从元数据存储�
 
 # Data Query
 ## 任务清单
-- step1: 从用户查询中提取关键词
+- step1: 获取相关信息，
 - step2: 使用查询和关键词检索相关知识
 - step3: 补全上下文信息
 - step4:
@@ -26,13 +26,15 @@ description: 这个技能用于根据用户的查询问题，从元数据存储�
 python scripts/extract_keyword.py "查询文本"
 ```
 ## step2: 使用查询和关键词检索相关知识
-执行 python 脚本 [scripts/retrieve_knowledge.py](scripts/retrieve_knowledge.py) 检索相关知识
+执行 python 脚本 [scripts/recall_knowledge.py](scripts/recall_knowledge.py) 检索相关知识
 ```bash
-python scripts/retrieve_knowledge.py --query "查询文本" --keywords [关键词列表]
+python scripts/recall_knowledge.py --query "查询文本" --keywords '["关键词列表"]'
 ```
 ## step3: 补全上下文信息
-跳过
-
+执行 python 脚本 [scripts/add_context.py](scripts/add_context.py) 补充相关信息
+```bash
+python scripts/add_context.py
+```
 ## step4: LLM根据上下文扩展查询时可能需要的字段 & LLM根据上下文扩展查询时可能需要的字段值
 跳过
 

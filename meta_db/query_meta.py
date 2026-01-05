@@ -353,9 +353,11 @@ async def retrieve_cell(db_code: str, keywords: list[str]):
 
 
 if __name__ == "__main__":
-    db_code = "mysql_sales"
-    db_code = "pg_archeology_scan"
-    db_code = "pg_cold_chain_pharma_compliance"
+    db_code = [
+        "mysql_sales",
+        "pg_archeology_scan",
+        "pg_cold_chain_pharma_compliance",
+    ][2]
 
     async def main():
         # 查找数据库下的所有表信息

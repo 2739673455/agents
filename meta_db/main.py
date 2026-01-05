@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel, Field
 from query_meta import (
     get_col_by_dbcode_tbname_colname,
@@ -56,6 +57,7 @@ class RetrieveCellRequest(BaseModel):
     keywords: list[str] = Field(description="关键词列表")
 
 
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 metadata_router = APIRouter()
 
 

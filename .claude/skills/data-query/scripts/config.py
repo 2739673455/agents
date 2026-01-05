@@ -7,13 +7,6 @@ from pydantic import BaseModel, computed_field
 CONFIG_DIR = Path(__file__).parent
 
 
-class LoggingCfg(BaseModel):
-    level: str
-    to_console: bool
-    to_file: bool
-    max_file_size: str
-
-
 class ModelCfg(BaseModel):
     base_url: str
     api_key: str
@@ -64,7 +57,6 @@ class MetaDBCfg(BaseModel):
 
 
 class BaseCfg(BaseModel):
-    logging: LoggingCfg
     llm: LLMCfg
     meta_db: MetaDBCfg
     use_db_code: str
