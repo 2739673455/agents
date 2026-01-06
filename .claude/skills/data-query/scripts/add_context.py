@@ -5,8 +5,8 @@ from typing import Callable
 
 import httpx
 import jieba.analyse
-from callback import read_callback, write_callback
 from config import CFG
+from state_manage import read_callback, write_callback
 
 
 async def add_context(

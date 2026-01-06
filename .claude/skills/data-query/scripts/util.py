@@ -101,9 +101,9 @@ async def ask_llm(
 def get_prompt(prompt_file: str, prompt_name: str, **kwargs):
     """构建提示词"""
     PROMPT_DIR = Path(__file__).parent / "prompts"
-    prompt_data = yaml.safe_load(PROMPT_DIR.joinpath(f"{prompt_file}.yml").read_text())[
-        prompt_name
-    ]
+    prompt_data = yaml.safe_load(
+        PROMPT_DIR.joinpath(f"{prompt_file}.yml").read_text(encoding="utf-8")
+    )[prompt_name]
 
     # 验证必需的模板变量是否都已提供
     required_vars = prompt_data["required_vars"]

@@ -8,6 +8,7 @@ dependencies = [
     "asyncmy>=0.2.10",
     "asyncpg>=0.31.0",
     "fastapi[standard]>=0.128.0",
+    "filelock>=3.20.2",
     "jieba>=0.42.1",
     "loguru>=0.7.3",
     "neo4j>=6.0.3",
