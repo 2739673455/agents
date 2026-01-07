@@ -5,9 +5,9 @@ from pathlib import Path
 from config import CFG
 from loguru import logger
 from openai import AsyncOpenAI
+from rich.console import Console
+from rich.progress import BarColumn, Progress, TextColumn
 from tenacity import retry, stop_after_attempt, wait_exponential
-
-semaphore = asyncio.Semaphore(20)
 
 
 async def embed(
@@ -15,7 +15,6 @@ async def embed(
 ) -> list[list[float]]:
     """嵌入文本"""
 
-    # TODO添加进度条
     @retry(
         stop=stop_after_attempt(retries + 1),
         wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -29,17 +28,27 @@ async def embed(
                 ),
                 timeout=timeout,
             )
+            progress.update(task_id, advance=len(chunk))
             return [i.embedding for i in resp.data]
 
     if not text:
         return []
     BATCH_SIZE = 64
+    semaphore = asyncio.Semaphore(20)
     model_config = CFG.llm.models[CFG.llm.embed_model]
     client = AsyncOpenAI(api_key=model_config.api_key, base_url=model_config.base_url)
     chunks = [text[i : i + BATCH_SIZE] for i in range(0, len(text), BATCH_SIZE)]
     try:
-        tasks = [_aembed(chunk) for chunk in chunks]
-        results = await asyncio.gather(*tasks)
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[cyan]{task.completed}/{task.total}"),
+            console=Console(),
+            transient=True,
+        ) as progress:
+            task_id = progress.add_task("embedding", total=len(text))
+            tasks = [_aembed(chunk) for chunk in chunks]
+            results = await asyncio.gather(*tasks)
         return [emb for batch in results for emb in batch]
     finally:
         await client.close()
