@@ -24,7 +24,7 @@ async def recall_knowledge(
         )
 
     if w_callback:
-        await w_callback({"kn_map": response.json()})
+        await w_callback({"retrieved_knowledge": response.json()})
 
 
 if __name__ == "__main__":

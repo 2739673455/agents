@@ -1,0 +1,2037 @@
+{
+  "db_code": "pg_archeology_scan",
+  "query": "查询扫描质量分数高于60的考古项目",
+  "keywords": [
+    "高于",
+    "考古",
+    "扫描",
+    "查询",
+    "查询扫描质量分数高于60的考古项目",
+    "分数",
+    "质量",
+    "项目"
+  ],
+  "cur_date_info": "当前日期信息:2026-01-08,Thursday",
+  "tb_map": {
+    "pg_archeology_scan_environment": {
+      "tb_name": "environment",
+      "tb_meaning": "环境数据"
+    },
+    "pg_archeology_scan_sites": {
+      "tb_name": "sites",
+      "tb_meaning": "考古遗址"
+    },
+    "pg_archeology_scan_processing": {
+      "tb_name": "processing",
+      "tb_meaning": "数据处理"
+    },
+    "pg_archeology_scan_qualitycontrol": {
+      "tb_name": "qualitycontrol",
+      "tb_meaning": "质量控制"
+    },
+    "pg_archeology_scan_features": {
+      "tb_name": "features",
+      "tb_meaning": "特征分析"
+    },
+    "pg_archeology_scan_scans": {
+      "tb_name": "scans",
+      "tb_meaning": "扫描记录"
+    },
+    "pg_archeology_scan_conservation": {
+      "tb_name": "conservation",
+      "tb_meaning": "保护记录"
+    },
+    "pg_archeology_scan_equipment": {
+      "tb_name": "equipment",
+      "tb_meaning": "扫描设备"
+    },
+    "pg_archeology_scan_personnel": {
+      "tb_name": "personnel",
+      "tb_meaning": "人员信息"
+    },
+    "pg_archeology_scan_projects": {
+      "tb_name": "projects",
+      "tb_meaning": "考古项目"
+    },
+    "pg_archeology_scan_pointcloud": {
+      "tb_name": "pointcloud",
+      "tb_meaning": "点云数据"
+    },
+    "pg_archeology_scan_spatial": {
+      "tb_name": "spatial",
+      "tb_meaning": "空间测量"
+    },
+    "pg_archeology_scan_registration": {
+      "tb_name": "registration",
+      "tb_meaning": "注册记录"
+    },
+    "pg_archeology_scan_mesh": {
+      "tb_name": "mesh",
+      "tb_meaning": "3D网格数据"
+    }
+  },
+  "tb_caption": "数据库: 考古扫描数据库\n表名: environment，表含义: 环境数据\n表名: sites，表含义: 考古遗址\n表名: processing，表含义: 数据处理\n表名: qualitycontrol，表含义: 质量控制\n表名: features，表含义: 特征分析\n表名: scans，表含义: 扫描记录\n表名: conservation，表含义: 保护记录\n表名: equipment，表含义: 扫描设备\n表名: personnel，表含义: 人员信息\n表名: projects，表含义: 考古项目\n表名: pointcloud，表含义: 点云数据\n表名: spatial，表含义: 空间测量\n表名: registration，表含义: 注册记录\n表名: mesh，表含义: 3D网格数据\n",
+  "extracted_columns": [
+    "扫描质量分数",
+    "考古遗址",
+    "分数高于60",
+    "查询扫描质量分数高于60的考古项目",
+    "考古",
+    "查询",
+    "分数",
+    "考古项目",
+    "扫描",
+    "高于",
+    "项目",
+    "质量",
+    "质量控制"
+  ],
+  "extracted_cells": [
+    "质量",
+    "质量分数",
+    "查询",
+    "分数",
+    "查询扫描质量分数高于60的考古项目",
+    "扫描",
+    "扫描质量",
+    "高于",
+    "扫描记录",
+    "考古",
+    "项目",
+    "考古项目"
+  ],
+  "kn_map": {
+    "0": {
+      "kn_code": 0,
+      "kn_desc": "A sophisticated compound index measuring the overall resolution quality of a scan based on resolution and point density.",
+      "kn_alias": [
+        "扫描分辨率指数",
+        "SRI指数",
+        "分辨率质量指标",
+        "扫描精度指数"
+      ],
+      "kn_def": "SRI = \\frac{\\log_{10}(\\text{Scan Resolution (mm)} \\times 10^3)}{\\log_{10}(\\text{Point Density (points/m²)})} \\times 5, \\text{ where lower values indicate higher quality resolution and more balanced scanning parameters.}",
+      "kn_name": "Scan Resolution Index (SRI)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "1": {
+      "kn_code": 1,
+      "kn_desc": "Measures how effectively a scan covers its target area considering both coverage percentage and overlap redundancy.",
+      "kn_alias": [
+        "扫描覆盖有效性",
+        "SCE",
+        "覆盖效果指数",
+        "区域覆盖度"
+      ],
+      "kn_def": "SCE = \\text{Coverage (%)} \\times \\left(1 + \\frac{\\text{Overlap (%)}}{100} \\times \\left(1 - \\frac{\\text{Coverage (%)}}{100}\\right)\\right), \\text{ where higher values indicate more effective coverage with appropriate overlap.}",
+      "kn_name": "Scan Coverage Effectiveness (SCE)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "33": {
+      "kn_code": 33,
+      "kn_desc": "Evaluates registration accuracy relative to scan resolution using propagation of uncertainty principles.",
+      "kn_alias": [
+        "配准精度比",
+        "RAR",
+        "精度比率",
+        "注册精度比"
+      ],
+      "kn_def": "RAR = \\frac{\\text{Scan Resolution (mm)}}{\\text{Registration Accuracy (mm)} \\times \\sqrt{1 + \\frac{\\text{Error Value (mm)}}{\\text{Registration Accuracy (mm)}}}}, \\text{ where values > 1 indicate registration accuracy exceeds scan resolution, a desirable outcome for precise spatial analysis.}",
+      "kn_name": "Registration Accuracy Ratio (RAR)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "3": {
+      "kn_code": 3,
+      "rel_kn": [
+        0,
+        1
+      ],
+      "kn_desc": "Comprehensive quality metric combining resolution, coverage, and noise factors with weighted importance.",
+      "kn_alias": [
+        "扫描质量分数",
+        "SQS",
+        "综合质量指标",
+        "扫描品质评分"
+      ],
+      "kn_def": "SQS = \\left(\\frac{10}{\\text{SRI}}\\right)^{1.5} \\times \\left(\\frac{\\text{SCE}}{100}\\right) \\times \\left(1 - \\frac{\\text{Noise Level (dB)}}{30}\\right)^2, \\text{ where higher values indicate exponentially better overall scan quality with emphasis on resolution.}",
+      "kn_name": "Scan Quality Score (SQS)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "38": {
+      "kn_code": 38,
+      "rel_kn": [
+        9,
+        6,
+        33,
+        1
+      ],
+      "kn_desc": "Comprehensive metric for evaluating digital preservation quality for archaeological sites with weighted quality factors.",
+      "kn_alias": [
+        "数字保护质量",
+        "DPQ",
+        "数字化质量",
+        "数字保存质量"
+      ],
+      "kn_def": "DPQ = (0.3 \\times \\text{ADC}) + (0.3 \\times \\text{MFS}) + (0.2 \\times \\text{RAR}) + (0.2 \\times \\text{SCE}) - 2 \\times \\sqrt{\\frac{\\text{Error Value (mm)}}{\\text{Scan Resolution (mm)}}}, \\text{ where ADC is Archaeological Documentation Completeness, MFS is Model Fidelity Score, RAR is Registration Accuracy Ratio, and SCE is Scan Coverage Effectiveness.}",
+      "kn_name": "Digital Preservation Quality (DPQ)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "6": {
+      "kn_code": 6,
+      "rel_kn": [
+        4,
+        5
+      ],
+      "kn_desc": "Combines mesh complexity, texture quality, and geometric accuracy to assess overall 3D model fidelity for archaeological analysis.",
+      "kn_alias": [
+        "模型保真度分数",
+        "MFS",
+        "模型精度评分",
+        "3D模型质量"
+      ],
+      "kn_def": "MFS = \\text{MCR} \\times \\left(\\frac{\\text{TDI}}{10}\\right) \\times \\left(1 + \\exp\\left(-\\text{Geometric Accuracy (mm)}\\right)\\right), \\text{ where higher values indicate more accurate and detailed models with appropriate complexity.}",
+      "kn_name": "Model Fidelity Score (MFS)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "9": {
+      "kn_code": 9,
+      "rel_kn": [
+        3,
+        6,
+        1
+      ],
+      "kn_desc": "Comprehensive score for how completely a site has been documented through scanning with weighted importance factors.",
+      "kn_alias": [
+        "考古文献完整性",
+        "ADC",
+        "文档完整度",
+        "遗址记录完整性"
+      ],
+      "kn_def": "ADC = \\left(\\text{SQS} \\times 0.4\\right) + \\left(\\text{MFS} \\times 0.4\\right) + \\left(\\text{SCE} \\times 0.2\\right) - 5 \\times \\sqrt{\\frac{\\text{Noise Level (dB)}}{10}}, \\text{ where higher values indicate more complete documentation with multiple quality factors.}",
+      "kn_name": "Archaeological Documentation Completeness (ADC)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    }
+  },
+  "retrieved_col_map": {
+    "pg_archeology_scan_projects": {
+      "vesseltag": {
+        "col_alias": [
+          "项目标签",
+          "项目名称"
+        ],
+        "fewshot": [
+          "Project Happy",
+          "Project Central",
+          "Project Perhaps",
+          "Project Majority",
+          "Project Off"
+        ],
+        "tb_code": "pg_archeology_scan_projects",
+        "col_name": "vesseltag",
+        "col_meaning": "项目名称或指定标签",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9469332695007324
+      },
+      "arcregistry": {
+        "col_alias": [
+          "项目编号",
+          "项目ID"
+        ],
+        "fewshot": [
+          "PR9973",
+          "PR8235",
+          "PR7509",
+          "PR8865",
+          "PR8078"
+        ],
+        "tb_code": "pg_archeology_scan_projects",
+        "col_name": "arcregistry",
+        "col_meaning": "考古项目注册唯一标识符",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9001727104187012
+      },
+      "fundflux": {
+        "col_alias": [
+          "资金来源",
+          "资助方"
+        ],
+        "fewshot": [
+          "Grant",
+          "Private",
+          "University",
+          "Government"
+        ],
+        "tb_code": "pg_archeology_scan_projects",
+        "col_name": "fundflux",
+        "col_meaning": "项目资金来源或财务支持",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8743653297424316
+      }
+    },
+    "pg_archeology_scan_scans": {
+      "scancount": {
+        "col_alias": [
+          "扫描次数",
+          "扫描数量"
+        ],
+        "fewshot": [
+          "2 scans, moderate coverage session",
+          "7 scans, comprehensive coverage session",
+          "20 scans, extensive documentation session",
+          "10 scans, comprehensive coverage session",
+          "5 scans, moderate coverage session"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "scancount",
+        "col_meaning": "会话中单个扫描总数",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9338488578796387
+      },
+      "crewref": {
+        "col_alias": [
+          "操作员参考",
+          "扫描员"
+        ],
+        "rel_col": "personnel.crewregistry",
+        "fewshot": [
+          "OP5563",
+          "OP8435",
+          "OP4778",
+          "OP7199",
+          "OP4641"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "crewref",
+        "col_meaning": "执行扫描的操作员参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9254245758056641
+      },
+      "chronotag": {
+        "col_alias": [
+          "扫描时间",
+          "时间戳"
+        ],
+        "fewshot": [
+          "2024-09-03 07:20:28.479288 GMT+8",
+          "2025-01-24 12:45:10.479479 GMT+8",
+          "2024-12-31 01:19:03.480489 GMT+8",
+          "2024-04-23 18:04:33.479479 GMT+8",
+          "2024-07-27 08:52:12.479479 GMT+8"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "chronotag",
+        "col_meaning": "执行扫描的精确时间戳",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9224958419799805
+      },
+      "scanning_rate": {
+        "col_alias": [
+          "扫描速率",
+          "采集速度"
+        ],
+        "fewshot": [
+          "37 MB/min",
+          "240 MB/min",
+          "63 MB/min",
+          "188 MB/min",
+          "168 MB/min"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "scanning_rate",
+        "col_meaning": "扫描期间数据采集率",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9185376167297363
+      },
+      "questregistry": {
+        "col_alias": [
+          "扫描ID",
+          "会话编号"
+        ],
+        "fewshot": [
+          "ASD409481",
+          "ASD648638",
+          "ASD535327",
+          "ASD213501",
+          "ASD387860"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "questregistry",
+        "col_meaning": "扫描会话记录唯一标识符",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9096202850341797
+      },
+      "zoneref": {
+        "col_alias": [
+          "站点参考",
+          "扫描站点"
+        ],
+        "rel_col": "sites.zoneregistry",
+        "fewshot": [
+          "SC9081",
+          "SC4082",
+          "SC3155",
+          "SC9016",
+          "SC4817"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "zoneref",
+        "col_meaning": "进行扫描的站点参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9074959754943848
+      },
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR9973",
+          "PR8235",
+          "PR7509",
+          "PR8865",
+          "PR8078"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      },
+      "scan_cost": {
+        "col_alias": [
+          "扫描成本",
+          "单位成本"
+        ],
+        "fewshot": [
+          "3.2 USD/GB",
+          "4.2 USD/GB",
+          "2.64 USD/GB",
+          "3.22 USD/GB",
+          "6.86 USD/GB"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "scan_cost",
+        "col_meaning": "每GB设备成本",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8931894302368164
+      }
+    },
+    "pg_archeology_scan_sites": {
+      "zonelabel": {
+        "col_alias": [
+          "遗址名称",
+          "站点名称"
+        ],
+        "fewshot": [
+          "Site-Kingport",
+          "Site-Port Brianside",
+          "Site-Grahammouth",
+          "Site-South Tina",
+          "Site-North Alexanderville"
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "zonelabel",
+        "col_meaning": "考古遗址的描述性名称",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9190850257873535
+      },
+      "typesite": {
+        "col_alias": [
+          "遗址类型",
+          "站点分类"
+        ],
+        "fewshot": [
+          "Military",
+          "Burial",
+          "Industrial",
+          "Religious",
+          "Bur."
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "typesite",
+        "col_meaning": "考古遗址类型分类",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.909764289855957
+      },
+      "site_status": {
+        "col_alias": [
+          "站点状态",
+          "安全评估"
+        ],
+        "field_meaning": {
+          "Pres_Stat": "考古遗迹当前保存状态",
+          "Entry_Stat": "人员和设备站点可访问状态",
+          "Safe_Rank": "站点保护安全级别分类",
+          "Insur_Stat": "站点运营保险覆盖状态",
+          "Risk_Eval": "站点安全评估风险状态",
+          "Health_Eval": "站点条件健康和安全评估状态",
+          "Env_Haz": "站点存在的环境风险因素"
+        },
+        "fewshot": [
+          "{'Env_Haz': 'Low', 'Pres_Stat': 'Excellent', 'Risk_Eval': 'Req.', 'Safe_Rank': 'Minimal', 'Entry_Stat': 'Closed', 'Insur_Stat': 'Expired', 'Health_Eval': 'Approved'}",
+          "{'Env_Haz': 'Low', 'Pres_Stat': 'Fair', 'Risk_Eval': 'Pending', 'Safe_Rank': 'Standard', 'Entry_Stat': 'Restricted', 'Insur_Stat': 'Pending', 'Health_Eval': 'Pending'}",
+          "{'Env_Haz': 'High', 'Pres_Stat': 'Critical', 'Risk_Eval': 'Completed', 'Safe_Rank': 'High', 'Entry_Stat': 'Closed', 'Insur_Stat': 'Expired', 'Health_Eval': 'Review'}",
+          "{'Env_Haz': 'High', 'Pres_Stat': 'Good', 'Risk_Eval': None, 'Safe_Rank': 'high', 'Entry_Stat': 'Open', 'Insur_Stat': 'Pending', 'Health_Eval': 'Review'}",
+          "{'Env_Haz': 'Medium', 'Pres_Stat': 'Good', 'Risk_Eval': None, 'Safe_Rank': 'Minimal', 'Entry_Stat': 'Restricted', 'Insur_Stat': 'Pending', 'Health_Eval': 'Pending'}"
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "site_status",
+        "col_meaning": "站点条件和安全评估，包括保护、访问、安全和风险评估状态",
+        "col_type": "JSONB",
+        "score": 0.8819289207458496
+      },
+      "zoneregistry": {
+        "col_alias": [
+          "站点代码",
+          "遗址编号"
+        ],
+        "fewshot": [
+          "SC9081",
+          "SC4082",
+          "SC3155",
+          "SC9016",
+          "SC4817"
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "zoneregistry",
+        "col_meaning": "考古区域唯一站点代码标识符",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8707313537597656
+      },
+      "guessdate": {
+        "col_alias": [
+          "估计日期",
+          "推测年代"
+        ],
+        "fewshot": [
+          "1335 BCE",
+          "-3387 BCE",
+          "-2929 BCE",
+          "-4985 BCE",
+          "164 CE"
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "guessdate",
+        "col_meaning": "考古材料的估计日期或年龄",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8413653373718262
+      },
+      "geo_position": {
+        "col_alias": [
+          "地理位置",
+          "坐标信息"
+        ],
+        "field_meaning": {
+          "Geo_X": "纬度坐标（十进制度）",
+          "Geo_Y": "经度坐标（十进制度）",
+          "Height_M": "海平面以上高度（米）",
+          "Depth_C": "地表以下挖掘深度（厘米）"
+        },
+        "fewshot": [
+          "{'Geo_X': -74.17208, 'Geo_Y': -148.65161, 'Depth_C': 286, 'Height_M': 1316.05}",
+          "{'Geo_X': 57.10752, 'Geo_Y': 70.03605, 'Depth_C': 97.5, 'Height_M': 429.28}",
+          "{'Geo_X': 49.948586, 'Geo_Y': -88.61409, 'Depth_C': 9.3, 'Height_M': 1124.99}",
+          "{'Geo_X': -9.602135, 'Geo_Y': -2.756411, 'Depth_C': 329.9, 'Height_M': 4391.4}",
+          "{'Geo_X': 73.605545, 'Geo_Y': 141.71112, 'Depth_C': 499.9, 'Height_M': 4934.58}"
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "geo_position",
+        "col_meaning": "地理定位数据，包括坐标、高程和挖掘深度测量",
+        "col_type": "JSONB",
+        "score": 0.79718017578125
+      }
+    },
+    "pg_archeology_scan_registration": {
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR8235",
+          "PR7509",
+          "PR8865",
+          "PR8078",
+          "PR2658"
+        ],
+        "tb_code": "pg_archeology_scan_registration",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      }
+    },
+    "pg_archeology_scan_spatial": {
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR5905",
+          "PR7509",
+          "PR8865",
+          "PR9095",
+          "PR3061"
+        ],
+        "tb_code": "pg_archeology_scan_spatial",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      }
+    },
+    "pg_archeology_scan_qualitycontrol": {
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR5905",
+          "PR7509",
+          "PR8865",
+          "PR8078",
+          "PR2658"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      },
+      "ctrlstate": {
+        "col_alias": [
+          "控制状态",
+          "质控状态"
+        ],
+        "fewshot": [
+          "Failed",
+          "Passed",
+          "Pending"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "ctrlstate",
+        "col_meaning": "质量控制状态和验证状态",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8878655433654785
+      },
+      "remark": {
+        "col_alias": [
+          "备注",
+          "额外说明"
+        ],
+        "fewshot": [
+          "Bed something performance leader realize.",
+          "Staff these range miss.",
+          "Drug rest away school trial general.",
+          "Value most court history power animal.",
+          "Some or around leave economic."
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "remark",
+        "col_meaning": "质量控制的额外说明和观察",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8875088691711426
+      },
+      "crewref": {
+        "col_alias": [
+          "操作员参考",
+          "质检人员"
+        ],
+        "rel_col": "personnel.crewregistry",
+        "fewshot": [
+          "OP5563",
+          "OP8435",
+          "OP2782",
+          "OP4641",
+          "OP2517"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "crewref",
+        "col_meaning": "执行质量控制的操作员参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.875617504119873
+      },
+      "valimeth": {
+        "col_alias": [
+          "验证方法",
+          "评估方法"
+        ],
+        "fewshot": [
+          "Visual",
+          "Automated",
+          "Hybrid"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "valimeth",
+        "col_meaning": "用于质量评估的验证方法",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8497557640075684
+      },
+      "qualregistry": {
+        "col_alias": [
+          "质控ID",
+          "质控编号"
+        ],
+        "fewshot": [
+          "3",
+          "2",
+          "1",
+          "4",
+          "5"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "qualregistry",
+        "col_meaning": "质量控制记录自动生成唯一标识符",
+        "col_type": "BIGINT",
+        "field_meaning": null,
+        "score": 0.8466739654541016
+      },
+      "valistate": {
+        "col_alias": [
+          "验证状态",
+          "完成状态"
+        ],
+        "fewshot": [
+          "Validation rejected, data quality issues identified",
+          "Validation approved, data quality meets standards",
+          "Validation pending, quality review in progress"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "valistate",
+        "col_meaning": "验证状态和完成状态",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8416690826416016
+      },
+      "archstat": {
+        "col_alias": [
+          "存档状态",
+          "档案状态"
+        ],
+        "fewshot": [
+          "Verified",
+          "Completed",
+          "Pending",
+          "verified",
+          "In Process"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "archstat",
+        "col_meaning": "长期数据保存的存档状态",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8338255882263184
+      },
+      "refmention": {
+        "col_alias": [
+          "引用格式",
+          "数据引用"
+        ],
+        "fewshot": [
+          "Citation-2238",
+          "Citation-6197",
+          "Citation-3221",
+          "Citation-8447",
+          "Citation-8597"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "refmention",
+        "col_meaning": "数据引用格式和归属要求",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.822110652923584
+      },
+      "accucheck": {
+        "col_alias": [
+          "准确度检查",
+          "精度评估"
+        ],
+        "fewshot": [
+          "Accuracy check completed, validation successful",
+          "Accuracy check not required, standard quality sufficient",
+          "Accuracy check pending, validation in progress"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "accucheck",
+        "col_meaning": "准确度评估评价结果",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8201932907104492
+      }
+    },
+    "pg_archeology_scan_pointcloud": {
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR9973",
+          "PR8235",
+          "PR7509",
+          "PR8865",
+          "PR2658"
+        ],
+        "tb_code": "pg_archeology_scan_pointcloud",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      },
+      "cloud_metrics": {
+        "col_alias": [
+          "点云指标",
+          "质量指标"
+        ],
+        "field_meaning": {
+          "Scan_Resol_Mm": "扫描分辨率（毫米）",
+          "Point_Dense": "每平方米点密度",
+          "Cover_Pct": "扫描覆盖的表面积百分比",
+          "Total_Pts": "点云中总点数",
+          "Cloud_Dense": "点云密度测量",
+          "Lap_Pct": "扫描段之间的重叠百分比",
+          "Noise_Db": "噪声水平测量（分贝）",
+          "Ref_Pct": "表面反射率百分比测量"
+        },
+        "fewshot": [
+          "{'Lap_Pct': 55.6, 'Ref_Pct': 18.5, 'Noise_Db': 1.829, 'Cover_Pct': 88.8, 'Total_Pts': 34747634, 'Cloud_Dense': 7282, 'Point_Dense': 855156, 'Scan_Resol_Mm': 3.34}",
+          "{'Lap_Pct': 39.9, 'Ref_Pct': 67.4, 'Noise_Db': 1.041, 'Cover_Pct': 88.3, 'Total_Pts': 40047207, 'Cloud_Dense': 7553, 'Point_Dense': 411433, 'Scan_Resol_Mm': 1.41}",
+          "{'Lap_Pct': 31.3, 'Ref_Pct': 11, 'Noise_Db': 1.318, 'Cover_Pct': 91.2, 'Total_Pts': 46562436, 'Cloud_Dense': 9449, 'Point_Dense': 42812, 'Scan_Resol_Mm': 2.4}",
+          "{'Lap_Pct': 68.4, 'Ref_Pct': 24.1, 'Noise_Db': 1.802, 'Cover_Pct': 95.4, 'Total_Pts': 41958825, 'Cloud_Dense': 2301, 'Point_Dense': 853420, 'Scan_Resol_Mm': 0.89}",
+          "{'Lap_Pct': 31.7, 'Ref_Pct': 53.8, 'Noise_Db': 1.79, 'Cover_Pct': 98.1, 'Total_Pts': 87734478, 'Cloud_Dense': 1746, 'Point_Dense': 934361, 'Scan_Resol_Mm': 4.9}"
+        ],
+        "tb_code": "pg_archeology_scan_pointcloud",
+        "col_name": "cloud_metrics",
+        "col_meaning": "点云质量和密度测量，包括分辨率、覆盖率、重叠和噪声分析",
+        "col_type": "JSONB",
+        "score": 0.8948211669921875
+      }
+    },
+    "pg_archeology_scan_conservation": {
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR3991",
+          "PR7509",
+          "PR9095",
+          "PR8078",
+          "PR3061"
+        ],
+        "tb_code": "pg_archeology_scan_conservation",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      },
+      "priordocs": {
+        "col_alias": [
+          "历史文档",
+          "先前记录"
+        ],
+        "fewshot": [
+          "Complete",
+          "Partial"
+        ],
+        "tb_code": "pg_archeology_scan_conservation",
+        "col_name": "priordocs",
+        "col_meaning": "以前的文档和记录可用性",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.7918152809143066
+      }
+    },
+    "pg_archeology_scan_equipment": {
+      "coverage_rate": {
+        "col_alias": [
+          "覆盖率",
+          "扫描效率"
+        ],
+        "fewshot": [
+          "7 m²/hr",
+          "15 m²/hr",
+          "3 m²/hr",
+          "5 m²/hr",
+          "11 m²/hr"
+        ],
+        "tb_code": "pg_archeology_scan_equipment",
+        "col_name": "coverage_rate",
+        "col_meaning": "扫描期间区域覆盖率",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9013633728027344
+      },
+      "accuracy_per_time": {
+        "col_alias": [
+          "准确度提升",
+          "精度改善"
+        ],
+        "fewshot": [
+          "6 mm/hr",
+          "3 mm/hr",
+          "8 mm/hr",
+          "1 mm/hr",
+          "4 mm/hr"
+        ],
+        "tb_code": "pg_archeology_scan_equipment",
+        "col_name": "accuracy_per_time",
+        "col_meaning": "扫描时间内准确度提升",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8056535720825195
+      }
+    },
+    "pg_archeology_scan_environment": {
+      "ambient_cond": {
+        "col_alias": [
+          "环境条件",
+          "环境参数"
+        ],
+        "field_meaning": {
+          "Ambic_Temp": "扫描期间环境空气温度（摄氏度）",
+          "Hume_Pct": "扫描期间相对湿度百分比",
+          "Illume_Lux": "勒克斯单位的光强度条件",
+          "Geo_Signal": "GPS信号质量和接收状态",
+          "Track_Status": "RTK定位系统状态和准确度",
+          "Link_Status": "扫描期间网络连接状态"
+        },
+        "fewshot": [
+          "{'Hume_Pct': 52.3, 'Ambic_Temp': 22.3, 'Geo_Signal': 'Good', 'Illume_Lux': 99474, 'Link_Status': 'Limited', 'Track_Status': 'Fixed'}",
+          "{'Hume_Pct': 32.9, 'Ambic_Temp': 8.8, 'Geo_Signal': None, 'Illume_Lux': 51271, 'Link_Status': 'Connected', 'Track_Status': None}",
+          "{'Hume_Pct': 72.6, 'Ambic_Temp': -3.9, 'Geo_Signal': 'Poor', 'Illume_Lux': 21889, 'Link_Status': 'Disconnected', 'Track_Status': 'Fixed'}",
+          "{'Hume_Pct': 71.2, 'Ambic_Temp': 4.6, 'Geo_Signal': 'Poor', 'Illume_Lux': 10046, 'Link_Status': 'Connected', 'Track_Status': None}",
+          "{'Hume_Pct': 60.4, 'Ambic_Temp': 25.3, 'Geo_Signal': None, 'Illume_Lux': 86054, 'Link_Status': 'Disconnected', 'Track_Status': None}"
+        ],
+        "tb_code": "pg_archeology_scan_environment",
+        "col_name": "ambient_cond",
+        "col_meaning": "扫描期间环境条件，包括温度、湿度、照明和连接状态",
+        "col_type": "JSONB",
+        "score": 0.8589539527893066
+      }
+    },
+    "pg_archeology_scan_features": {
+      "feature_analysis": {
+        "col_alias": [
+          "特征分析",
+          "分析结果"
+        ],
+        "field_meaning": {
+          "Trait_Count": "分析中识别的特征数量",
+          "Arti_Count": "检测或计数的文物数量",
+          "Struct_Kind": "分析中识别的结构类型",
+          "Mat_Kind": "分析特征的材料类型分类",
+          "Analysis_Status": {
+            "Hue_Study": "颜色分析结果和分类",
+            "Texture_Study": "纹理分析结果和模式",
+            "Pattern_Note": "模式识别分析和观察"
+          }
+        },
+        "fewshot": [
+          "{'Mat_Kind': 'Ceramic', 'Arti_Count': 69, 'Struct_Kind': 'Complex', 'Trait_Count': 103, 'Analysis_Status': {'Hue_Study': 'Completed', 'Pattern_Note': 'Not Required', 'Texture_Study': 'Partial'}}",
+          "{'Mat_Kind': 'Stone', 'Arti_Count': 3, 'Struct_Kind': 'Artifact', 'Trait_Count': 346, 'Analysis_Status': {'Hue_Study': 'Partial', 'Pattern_Note': 'Completed', 'Texture_Study': 'Not Required'}}",
+          "{'Mat_Kind': 'Mixed', 'Arti_Count': 8, 'Struct_Kind': 'Wall', 'Trait_Count': 820, 'Analysis_Status': {'Hue_Study': 'Not Required', 'Pattern_Note': 'Completed', 'Texture_Study': 'Completed'}}",
+          "{'Mat_Kind': 'Ceramic', 'Arti_Count': 74, 'Struct_Kind': 'Wall', 'Trait_Count': 869, 'Analysis_Status': {'Hue_Study': 'Partial', 'Pattern_Note': 'Partial', 'Texture_Study': 'Partial'}}",
+          "{'Mat_Kind': 'Organic', 'Arti_Count': 71, 'Struct_Kind': 'Artifact', 'Trait_Count': 516, 'Analysis_Status': {'Hue_Study': 'Partial', 'Pattern_Note': 'Not Required', 'Texture_Study': 'Partial'}}"
+        ],
+        "tb_code": "pg_archeology_scan_features",
+        "col_name": "feature_analysis",
+        "col_meaning": "考古特征分析结果，包括计数、材料分类和分析完成状态",
+        "col_type": "JSONB",
+        "score": 0.834132194519043
+      }
+    },
+    "pg_archeology_scan_processing": {
+      "processing_rate": {
+        "col_alias": [
+          "处理速率",
+          "处理速度"
+        ],
+        "fewshot": [
+          "2.3 MB/s",
+          "5.2 MB/s",
+          "4.0 MB/s",
+          "4.9 MB/s",
+          "5.7 MB/s"
+        ],
+        "tb_code": "pg_archeology_scan_processing",
+        "col_name": "processing_rate",
+        "col_meaning": "数据处理吞吐率",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8174114227294922
+      },
+      "datalevel": {
+        "col_alias": [
+          "数据级别",
+          "安全分类"
+        ],
+        "fewshot": [
+          "Confidential",
+          "Restricted",
+          "Public"
+        ],
+        "tb_code": "pg_archeology_scan_processing",
+        "col_name": "datalevel",
+        "col_meaning": "数据访问级别和安全分类",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8091025352478027
+      }
+    }
+  },
+  "retrieved_cell_map": {},
+  "col_map": {
+    "pg_archeology_scan_qualitycontrol": {
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR5905",
+          "PR7509",
+          "PR8865",
+          "PR8078",
+          "PR2658"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      },
+      "ctrlstate": {
+        "col_alias": [
+          "控制状态",
+          "质控状态"
+        ],
+        "fewshot": [
+          "Failed",
+          "Passed",
+          "Pending"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "ctrlstate",
+        "col_meaning": "质量控制状态和验证状态",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8878655433654785
+      },
+      "remark": {
+        "col_alias": [
+          "备注",
+          "额外说明"
+        ],
+        "fewshot": [
+          "Bed something performance leader realize.",
+          "Staff these range miss.",
+          "Drug rest away school trial general.",
+          "Value most court history power animal.",
+          "Some or around leave economic."
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "remark",
+        "col_meaning": "质量控制的额外说明和观察",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8875088691711426
+      },
+      "crewref": {
+        "col_alias": [
+          "操作员参考",
+          "质检人员"
+        ],
+        "rel_col": "personnel.crewregistry",
+        "fewshot": [
+          "OP5563",
+          "OP8435",
+          "OP2782",
+          "OP4641",
+          "OP2517"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "crewref",
+        "col_meaning": "执行质量控制的操作员参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.875617504119873
+      },
+      "valimeth": {
+        "col_alias": [
+          "验证方法",
+          "评估方法"
+        ],
+        "fewshot": [
+          "Visual",
+          "Automated",
+          "Hybrid"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "valimeth",
+        "col_meaning": "用于质量评估的验证方法",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8497557640075684
+      },
+      "qualregistry": {
+        "col_alias": [
+          "质控ID",
+          "质控编号"
+        ],
+        "fewshot": [
+          "3",
+          "2",
+          "1",
+          "4",
+          "5"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "qualregistry",
+        "col_meaning": "质量控制记录自动生成唯一标识符",
+        "col_type": "BIGINT",
+        "field_meaning": null,
+        "score": 0.8466739654541016
+      },
+      "valistate": {
+        "col_alias": [
+          "验证状态",
+          "完成状态"
+        ],
+        "fewshot": [
+          "Validation rejected, data quality issues identified",
+          "Validation approved, data quality meets standards",
+          "Validation pending, quality review in progress"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "valistate",
+        "col_meaning": "验证状态和完成状态",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8416690826416016
+      },
+      "archstat": {
+        "col_alias": [
+          "存档状态",
+          "档案状态"
+        ],
+        "fewshot": [
+          "Verified",
+          "Completed",
+          "Pending",
+          "verified",
+          "In Process"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "archstat",
+        "col_meaning": "长期数据保存的存档状态",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8338255882263184
+      },
+      "refmention": {
+        "col_alias": [
+          "引用格式",
+          "数据引用"
+        ],
+        "fewshot": [
+          "Citation-2238",
+          "Citation-6197",
+          "Citation-3221",
+          "Citation-8447",
+          "Citation-8597"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "refmention",
+        "col_meaning": "数据引用格式和归属要求",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.822110652923584
+      },
+      "accucheck": {
+        "col_alias": [
+          "准确度检查",
+          "精度评估"
+        ],
+        "fewshot": [
+          "Accuracy check completed, validation successful",
+          "Accuracy check not required, standard quality sufficient",
+          "Accuracy check pending, validation in progress"
+        ],
+        "tb_code": "pg_archeology_scan_qualitycontrol",
+        "col_name": "accucheck",
+        "col_meaning": "准确度评估评价结果",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8201932907104492
+      }
+    },
+    "pg_archeology_scan_pointcloud": {
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR9973",
+          "PR8235",
+          "PR7509",
+          "PR8865",
+          "PR2658"
+        ],
+        "tb_code": "pg_archeology_scan_pointcloud",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      },
+      "cloud_metrics": {
+        "col_alias": [
+          "点云指标",
+          "质量指标"
+        ],
+        "field_meaning": {
+          "Scan_Resol_Mm": "扫描分辨率（毫米）",
+          "Point_Dense": "每平方米点密度",
+          "Cover_Pct": "扫描覆盖的表面积百分比",
+          "Total_Pts": "点云中总点数",
+          "Cloud_Dense": "点云密度测量",
+          "Lap_Pct": "扫描段之间的重叠百分比",
+          "Noise_Db": "噪声水平测量（分贝）",
+          "Ref_Pct": "表面反射率百分比测量"
+        },
+        "fewshot": [
+          "{'Lap_Pct': 55.6, 'Ref_Pct': 18.5, 'Noise_Db': 1.829, 'Cover_Pct': 88.8, 'Total_Pts': 34747634, 'Cloud_Dense': 7282, 'Point_Dense': 855156, 'Scan_Resol_Mm': 3.34}",
+          "{'Lap_Pct': 39.9, 'Ref_Pct': 67.4, 'Noise_Db': 1.041, 'Cover_Pct': 88.3, 'Total_Pts': 40047207, 'Cloud_Dense': 7553, 'Point_Dense': 411433, 'Scan_Resol_Mm': 1.41}",
+          "{'Lap_Pct': 31.3, 'Ref_Pct': 11, 'Noise_Db': 1.318, 'Cover_Pct': 91.2, 'Total_Pts': 46562436, 'Cloud_Dense': 9449, 'Point_Dense': 42812, 'Scan_Resol_Mm': 2.4}",
+          "{'Lap_Pct': 68.4, 'Ref_Pct': 24.1, 'Noise_Db': 1.802, 'Cover_Pct': 95.4, 'Total_Pts': 41958825, 'Cloud_Dense': 2301, 'Point_Dense': 853420, 'Scan_Resol_Mm': 0.89}",
+          "{'Lap_Pct': 31.7, 'Ref_Pct': 53.8, 'Noise_Db': 1.79, 'Cover_Pct': 98.1, 'Total_Pts': 87734478, 'Cloud_Dense': 1746, 'Point_Dense': 934361, 'Scan_Resol_Mm': 4.9}"
+        ],
+        "tb_code": "pg_archeology_scan_pointcloud",
+        "col_name": "cloud_metrics",
+        "col_meaning": "点云质量和密度测量，包括分辨率、覆盖率、重叠和噪声分析",
+        "col_type": "JSONB",
+        "score": 0.8948211669921875
+      }
+    },
+    "pg_archeology_scan_conservation": {
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR3991",
+          "PR7509",
+          "PR9095",
+          "PR8078",
+          "PR3061"
+        ],
+        "tb_code": "pg_archeology_scan_conservation",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      },
+      "priordocs": {
+        "col_alias": [
+          "历史文档",
+          "先前记录"
+        ],
+        "fewshot": [
+          "Complete",
+          "Partial"
+        ],
+        "tb_code": "pg_archeology_scan_conservation",
+        "col_name": "priordocs",
+        "col_meaning": "以前的文档和记录可用性",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.7918152809143066
+      }
+    },
+    "pg_archeology_scan_equipment": {
+      "coverage_rate": {
+        "col_alias": [
+          "覆盖率",
+          "扫描效率"
+        ],
+        "fewshot": [
+          "7 m²/hr",
+          "15 m²/hr",
+          "3 m²/hr",
+          "5 m²/hr",
+          "11 m²/hr"
+        ],
+        "tb_code": "pg_archeology_scan_equipment",
+        "col_name": "coverage_rate",
+        "col_meaning": "扫描期间区域覆盖率",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9013633728027344
+      },
+      "accuracy_per_time": {
+        "col_alias": [
+          "准确度提升",
+          "精度改善"
+        ],
+        "fewshot": [
+          "6 mm/hr",
+          "3 mm/hr",
+          "8 mm/hr",
+          "1 mm/hr",
+          "4 mm/hr"
+        ],
+        "tb_code": "pg_archeology_scan_equipment",
+        "col_name": "accuracy_per_time",
+        "col_meaning": "扫描时间内准确度提升",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8056535720825195
+      }
+    },
+    "pg_archeology_scan_environment": {
+      "ambient_cond": {
+        "col_alias": [
+          "环境条件",
+          "环境参数"
+        ],
+        "field_meaning": {
+          "Ambic_Temp": "扫描期间环境空气温度（摄氏度）",
+          "Hume_Pct": "扫描期间相对湿度百分比",
+          "Illume_Lux": "勒克斯单位的光强度条件",
+          "Geo_Signal": "GPS信号质量和接收状态",
+          "Track_Status": "RTK定位系统状态和准确度",
+          "Link_Status": "扫描期间网络连接状态"
+        },
+        "fewshot": [
+          "{'Hume_Pct': 52.3, 'Ambic_Temp': 22.3, 'Geo_Signal': 'Good', 'Illume_Lux': 99474, 'Link_Status': 'Limited', 'Track_Status': 'Fixed'}",
+          "{'Hume_Pct': 32.9, 'Ambic_Temp': 8.8, 'Geo_Signal': None, 'Illume_Lux': 51271, 'Link_Status': 'Connected', 'Track_Status': None}",
+          "{'Hume_Pct': 72.6, 'Ambic_Temp': -3.9, 'Geo_Signal': 'Poor', 'Illume_Lux': 21889, 'Link_Status': 'Disconnected', 'Track_Status': 'Fixed'}",
+          "{'Hume_Pct': 71.2, 'Ambic_Temp': 4.6, 'Geo_Signal': 'Poor', 'Illume_Lux': 10046, 'Link_Status': 'Connected', 'Track_Status': None}",
+          "{'Hume_Pct': 60.4, 'Ambic_Temp': 25.3, 'Geo_Signal': None, 'Illume_Lux': 86054, 'Link_Status': 'Disconnected', 'Track_Status': None}"
+        ],
+        "tb_code": "pg_archeology_scan_environment",
+        "col_name": "ambient_cond",
+        "col_meaning": "扫描期间环境条件，包括温度、湿度、照明和连接状态",
+        "col_type": "JSONB",
+        "score": 0.8589539527893066
+      }
+    },
+    "pg_archeology_scan_projects": {
+      "vesseltag": {
+        "col_alias": [
+          "项目标签",
+          "项目名称"
+        ],
+        "fewshot": [
+          "Project Happy",
+          "Project Central",
+          "Project Perhaps",
+          "Project Majority",
+          "Project Off"
+        ],
+        "tb_code": "pg_archeology_scan_projects",
+        "col_name": "vesseltag",
+        "col_meaning": "项目名称或指定标签",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9469332695007324
+      },
+      "arcregistry": {
+        "col_alias": [
+          "项目编号",
+          "项目ID"
+        ],
+        "fewshot": [
+          "PR9973",
+          "PR8235",
+          "PR7509",
+          "PR8865",
+          "PR8078"
+        ],
+        "tb_code": "pg_archeology_scan_projects",
+        "col_name": "arcregistry",
+        "col_meaning": "考古项目注册唯一标识符",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9001727104187012
+      },
+      "fundflux": {
+        "col_alias": [
+          "资金来源",
+          "资助方"
+        ],
+        "fewshot": [
+          "Grant",
+          "Private",
+          "University",
+          "Government"
+        ],
+        "tb_code": "pg_archeology_scan_projects",
+        "col_name": "fundflux",
+        "col_meaning": "项目资金来源或财务支持",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8743653297424316
+      }
+    },
+    "pg_archeology_scan_scans": {
+      "scancount": {
+        "col_alias": [
+          "扫描次数",
+          "扫描数量"
+        ],
+        "fewshot": [
+          "2 scans, moderate coverage session",
+          "7 scans, comprehensive coverage session",
+          "20 scans, extensive documentation session",
+          "10 scans, comprehensive coverage session",
+          "5 scans, moderate coverage session"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "scancount",
+        "col_meaning": "会话中单个扫描总数",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9338488578796387
+      },
+      "crewref": {
+        "col_alias": [
+          "操作员参考",
+          "扫描员"
+        ],
+        "rel_col": "personnel.crewregistry",
+        "fewshot": [
+          "OP5563",
+          "OP8435",
+          "OP4778",
+          "OP7199",
+          "OP4641"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "crewref",
+        "col_meaning": "执行扫描的操作员参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9254245758056641
+      },
+      "chronotag": {
+        "col_alias": [
+          "扫描时间",
+          "时间戳"
+        ],
+        "fewshot": [
+          "2024-09-03 07:20:28.479288 GMT+8",
+          "2025-01-24 12:45:10.479479 GMT+8",
+          "2024-12-31 01:19:03.480489 GMT+8",
+          "2024-04-23 18:04:33.479479 GMT+8",
+          "2024-07-27 08:52:12.479479 GMT+8"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "chronotag",
+        "col_meaning": "执行扫描的精确时间戳",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9224958419799805
+      },
+      "scanning_rate": {
+        "col_alias": [
+          "扫描速率",
+          "采集速度"
+        ],
+        "fewshot": [
+          "37 MB/min",
+          "240 MB/min",
+          "63 MB/min",
+          "188 MB/min",
+          "168 MB/min"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "scanning_rate",
+        "col_meaning": "扫描期间数据采集率",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9185376167297363
+      },
+      "questregistry": {
+        "col_alias": [
+          "扫描ID",
+          "会话编号"
+        ],
+        "fewshot": [
+          "ASD409481",
+          "ASD648638",
+          "ASD535327",
+          "ASD213501",
+          "ASD387860"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "questregistry",
+        "col_meaning": "扫描会话记录唯一标识符",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9096202850341797
+      },
+      "zoneref": {
+        "col_alias": [
+          "站点参考",
+          "扫描站点"
+        ],
+        "rel_col": "sites.zoneregistry",
+        "fewshot": [
+          "SC9081",
+          "SC4082",
+          "SC3155",
+          "SC9016",
+          "SC4817"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "zoneref",
+        "col_meaning": "进行扫描的站点参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9074959754943848
+      },
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR9973",
+          "PR8235",
+          "PR7509",
+          "PR8865",
+          "PR8078"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      },
+      "scan_cost": {
+        "col_alias": [
+          "扫描成本",
+          "单位成本"
+        ],
+        "fewshot": [
+          "3.2 USD/GB",
+          "4.2 USD/GB",
+          "2.64 USD/GB",
+          "3.22 USD/GB",
+          "6.86 USD/GB"
+        ],
+        "tb_code": "pg_archeology_scan_scans",
+        "col_name": "scan_cost",
+        "col_meaning": "每GB设备成本",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8931894302368164
+      }
+    },
+    "pg_archeology_scan_sites": {
+      "zonelabel": {
+        "col_alias": [
+          "遗址名称",
+          "站点名称"
+        ],
+        "fewshot": [
+          "Site-Kingport",
+          "Site-Port Brianside",
+          "Site-Grahammouth",
+          "Site-South Tina",
+          "Site-North Alexanderville"
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "zonelabel",
+        "col_meaning": "考古遗址的描述性名称",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9190850257873535
+      },
+      "typesite": {
+        "col_alias": [
+          "遗址类型",
+          "站点分类"
+        ],
+        "fewshot": [
+          "Military",
+          "Burial",
+          "Industrial",
+          "Religious",
+          "Bur."
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "typesite",
+        "col_meaning": "考古遗址类型分类",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.909764289855957
+      },
+      "site_status": {
+        "col_alias": [
+          "站点状态",
+          "安全评估"
+        ],
+        "field_meaning": {
+          "Pres_Stat": "考古遗迹当前保存状态",
+          "Entry_Stat": "人员和设备站点可访问状态",
+          "Safe_Rank": "站点保护安全级别分类",
+          "Insur_Stat": "站点运营保险覆盖状态",
+          "Risk_Eval": "站点安全评估风险状态",
+          "Health_Eval": "站点条件健康和安全评估状态",
+          "Env_Haz": "站点存在的环境风险因素"
+        },
+        "fewshot": [
+          "{'Env_Haz': 'Low', 'Pres_Stat': 'Excellent', 'Risk_Eval': 'Req.', 'Safe_Rank': 'Minimal', 'Entry_Stat': 'Closed', 'Insur_Stat': 'Expired', 'Health_Eval': 'Approved'}",
+          "{'Env_Haz': 'Low', 'Pres_Stat': 'Fair', 'Risk_Eval': 'Pending', 'Safe_Rank': 'Standard', 'Entry_Stat': 'Restricted', 'Insur_Stat': 'Pending', 'Health_Eval': 'Pending'}",
+          "{'Env_Haz': 'High', 'Pres_Stat': 'Critical', 'Risk_Eval': 'Completed', 'Safe_Rank': 'High', 'Entry_Stat': 'Closed', 'Insur_Stat': 'Expired', 'Health_Eval': 'Review'}",
+          "{'Env_Haz': 'High', 'Pres_Stat': 'Good', 'Risk_Eval': None, 'Safe_Rank': 'high', 'Entry_Stat': 'Open', 'Insur_Stat': 'Pending', 'Health_Eval': 'Review'}",
+          "{'Env_Haz': 'Medium', 'Pres_Stat': 'Good', 'Risk_Eval': None, 'Safe_Rank': 'Minimal', 'Entry_Stat': 'Restricted', 'Insur_Stat': 'Pending', 'Health_Eval': 'Pending'}"
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "site_status",
+        "col_meaning": "站点条件和安全评估，包括保护、访问、安全和风险评估状态",
+        "col_type": "JSONB",
+        "score": 0.8819289207458496
+      },
+      "zoneregistry": {
+        "col_alias": [
+          "站点代码",
+          "遗址编号"
+        ],
+        "fewshot": [
+          "SC9081",
+          "SC4082",
+          "SC3155",
+          "SC9016",
+          "SC4817"
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "zoneregistry",
+        "col_meaning": "考古区域唯一站点代码标识符",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8707313537597656
+      },
+      "guessdate": {
+        "col_alias": [
+          "估计日期",
+          "推测年代"
+        ],
+        "fewshot": [
+          "1335 BCE",
+          "-3387 BCE",
+          "-2929 BCE",
+          "-4985 BCE",
+          "164 CE"
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "guessdate",
+        "col_meaning": "考古材料的估计日期或年龄",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8413653373718262
+      },
+      "geo_position": {
+        "col_alias": [
+          "地理位置",
+          "坐标信息"
+        ],
+        "field_meaning": {
+          "Geo_X": "纬度坐标（十进制度）",
+          "Geo_Y": "经度坐标（十进制度）",
+          "Height_M": "海平面以上高度（米）",
+          "Depth_C": "地表以下挖掘深度（厘米）"
+        },
+        "fewshot": [
+          "{'Geo_X': -74.17208, 'Geo_Y': -148.65161, 'Depth_C': 286, 'Height_M': 1316.05}",
+          "{'Geo_X': 57.10752, 'Geo_Y': 70.03605, 'Depth_C': 97.5, 'Height_M': 429.28}",
+          "{'Geo_X': 49.948586, 'Geo_Y': -88.61409, 'Depth_C': 9.3, 'Height_M': 1124.99}",
+          "{'Geo_X': -9.602135, 'Geo_Y': -2.756411, 'Depth_C': 329.9, 'Height_M': 4391.4}",
+          "{'Geo_X': 73.605545, 'Geo_Y': 141.71112, 'Depth_C': 499.9, 'Height_M': 4934.58}"
+        ],
+        "tb_code": "pg_archeology_scan_sites",
+        "col_name": "geo_position",
+        "col_meaning": "地理定位数据，包括坐标、高程和挖掘深度测量",
+        "col_type": "JSONB",
+        "score": 0.79718017578125
+      }
+    },
+    "pg_archeology_scan_registration": {
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR8235",
+          "PR7509",
+          "PR8865",
+          "PR8078",
+          "PR2658"
+        ],
+        "tb_code": "pg_archeology_scan_registration",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      }
+    },
+    "pg_archeology_scan_spatial": {
+      "arcref": {
+        "col_alias": [
+          "项目参考",
+          "关联项目"
+        ],
+        "rel_col": "projects.arcregistry",
+        "fewshot": [
+          "PR5905",
+          "PR7509",
+          "PR8865",
+          "PR9095",
+          "PR3061"
+        ],
+        "tb_code": "pg_archeology_scan_spatial",
+        "col_name": "arcref",
+        "col_meaning": "关联的考古项目参考",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.9033989906311035
+      }
+    },
+    "pg_archeology_scan_features": {
+      "feature_analysis": {
+        "col_alias": [
+          "特征分析",
+          "分析结果"
+        ],
+        "field_meaning": {
+          "Trait_Count": "分析中识别的特征数量",
+          "Arti_Count": "检测或计数的文物数量",
+          "Struct_Kind": "分析中识别的结构类型",
+          "Mat_Kind": "分析特征的材料类型分类",
+          "Analysis_Status": {
+            "Hue_Study": "颜色分析结果和分类",
+            "Texture_Study": "纹理分析结果和模式",
+            "Pattern_Note": "模式识别分析和观察"
+          }
+        },
+        "fewshot": [
+          "{'Mat_Kind': 'Ceramic', 'Arti_Count': 69, 'Struct_Kind': 'Complex', 'Trait_Count': 103, 'Analysis_Status': {'Hue_Study': 'Completed', 'Pattern_Note': 'Not Required', 'Texture_Study': 'Partial'}}",
+          "{'Mat_Kind': 'Stone', 'Arti_Count': 3, 'Struct_Kind': 'Artifact', 'Trait_Count': 346, 'Analysis_Status': {'Hue_Study': 'Partial', 'Pattern_Note': 'Completed', 'Texture_Study': 'Not Required'}}",
+          "{'Mat_Kind': 'Mixed', 'Arti_Count': 8, 'Struct_Kind': 'Wall', 'Trait_Count': 820, 'Analysis_Status': {'Hue_Study': 'Not Required', 'Pattern_Note': 'Completed', 'Texture_Study': 'Completed'}}",
+          "{'Mat_Kind': 'Ceramic', 'Arti_Count': 74, 'Struct_Kind': 'Wall', 'Trait_Count': 869, 'Analysis_Status': {'Hue_Study': 'Partial', 'Pattern_Note': 'Partial', 'Texture_Study': 'Partial'}}",
+          "{'Mat_Kind': 'Organic', 'Arti_Count': 71, 'Struct_Kind': 'Artifact', 'Trait_Count': 516, 'Analysis_Status': {'Hue_Study': 'Partial', 'Pattern_Note': 'Not Required', 'Texture_Study': 'Partial'}}"
+        ],
+        "tb_code": "pg_archeology_scan_features",
+        "col_name": "feature_analysis",
+        "col_meaning": "考古特征分析结果，包括计数、材料分类和分析完成状态",
+        "col_type": "JSONB",
+        "score": 0.834132194519043
+      }
+    },
+    "pg_archeology_scan_processing": {
+      "processing_rate": {
+        "col_alias": [
+          "处理速率",
+          "处理速度"
+        ],
+        "fewshot": [
+          "2.3 MB/s",
+          "5.2 MB/s",
+          "4.0 MB/s",
+          "4.9 MB/s",
+          "5.7 MB/s"
+        ],
+        "tb_code": "pg_archeology_scan_processing",
+        "col_name": "processing_rate",
+        "col_meaning": "数据处理吞吐率",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8174114227294922
+      },
+      "datalevel": {
+        "col_alias": [
+          "数据级别",
+          "安全分类"
+        ],
+        "fewshot": [
+          "Confidential",
+          "Restricted",
+          "Public"
+        ],
+        "tb_code": "pg_archeology_scan_processing",
+        "col_name": "datalevel",
+        "col_meaning": "数据访问级别和安全分类",
+        "col_type": "TEXT",
+        "field_meaning": null,
+        "score": 0.8091025352478027
+      }
+    }
+  },
+  "retrieved_knowledge": {
+    "0": {
+      "kn_code": 0,
+      "kn_desc": "A sophisticated compound index measuring the overall resolution quality of a scan based on resolution and point density.",
+      "kn_alias": [
+        "扫描分辨率指数",
+        "SRI指数",
+        "分辨率质量指标",
+        "扫描精度指数"
+      ],
+      "kn_def": "SRI = \\frac{\\log_{10}(\\text{Scan Resolution (mm)} \\times 10^3)}{\\log_{10}(\\text{Point Density (points/m²)})} \\times 5, \\text{ where lower values indicate higher quality resolution and more balanced scanning parameters.}",
+      "kn_name": "Scan Resolution Index (SRI)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "1": {
+      "kn_code": 1,
+      "kn_desc": "Measures how effectively a scan covers its target area considering both coverage percentage and overlap redundancy.",
+      "kn_alias": [
+        "扫描覆盖有效性",
+        "SCE",
+        "覆盖效果指数",
+        "区域覆盖度"
+      ],
+      "kn_def": "SCE = \\text{Coverage (%)} \\times \\left(1 + \\frac{\\text{Overlap (%)}}{100} \\times \\left(1 - \\frac{\\text{Coverage (%)}}{100}\\right)\\right), \\text{ where higher values indicate more effective coverage with appropriate overlap.}",
+      "kn_name": "Scan Coverage Effectiveness (SCE)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "3": {
+      "kn_code": 3,
+      "rel_kn": [
+        0,
+        1
+      ],
+      "kn_desc": "Comprehensive quality metric combining resolution, coverage, and noise factors with weighted importance.",
+      "kn_alias": [
+        "扫描质量分数",
+        "SQS",
+        "综合质量指标",
+        "扫描品质评分"
+      ],
+      "kn_def": "SQS = \\left(\\frac{10}{\\text{SRI}}\\right)^{1.5} \\times \\left(\\frac{\\text{SCE}}{100}\\right) \\times \\left(1 - \\frac{\\text{Noise Level (dB)}}{30}\\right)^2, \\text{ where higher values indicate exponentially better overall scan quality with emphasis on resolution.}",
+      "kn_name": "Scan Quality Score (SQS)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "4": {
+      "kn_code": 4,
+      "kn_desc": "Measures the topological complexity of a mesh relative to its resolution, helping identify overly complex or simplified archaeological models.",
+      "kn_alias": [
+        "网格复杂度比",
+        "MCR",
+        "拓扑复杂度",
+        "模型复杂度指标"
+      ],
+      "kn_def": "MCR = \\frac{\\text{Mesh Faces}}{\\text{Mesh Vertices} \\times \\text{Mesh Resolution (mm)}^2} \\times 10^3, \\text{ where higher values indicate more complex meshes for a given resolution, capturing finer archaeological details.}",
+      "kn_name": "Mesh Complexity Ratio (MCR)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "5": {
+      "kn_code": 5,
+      "kn_desc": "Evaluates the pixel density of textures relative to mesh resolution for assessing surface detail preservation.",
+      "kn_alias": [
+        "纹理密度指数",
+        "TDI",
+        "纹理质量指标",
+        "表面细节密度"
+      ],
+      "kn_def": "TDI = \\frac{\\text{Texture Size (px)}}{\\sqrt{\\text{Mesh Faces}} \\times \\text{Mesh Resolution (mm)}} \\times 10^{-2}, \\text{ where higher values indicate more detailed textures relative to geometric complexity.}",
+      "kn_name": "Texture Density Index (TDI)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "6": {
+      "kn_code": 6,
+      "rel_kn": [
+        4,
+        5
+      ],
+      "kn_desc": "Combines mesh complexity, texture quality, and geometric accuracy to assess overall 3D model fidelity for archaeological analysis.",
+      "kn_alias": [
+        "模型保真度分数",
+        "MFS",
+        "模型精度评分",
+        "3D模型质量"
+      ],
+      "kn_def": "MFS = \\text{MCR} \\times \\left(\\frac{\\text{TDI}}{10}\\right) \\times \\left(1 + \\exp\\left(-\\text{Geometric Accuracy (mm)}\\right)\\right), \\text{ where higher values indicate more accurate and detailed models with appropriate complexity.}",
+      "kn_name": "Model Fidelity Score (MFS)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "9": {
+      "kn_code": 9,
+      "rel_kn": [
+        3,
+        6,
+        1
+      ],
+      "kn_desc": "Comprehensive score for how completely a site has been documented through scanning with weighted importance factors.",
+      "kn_alias": [
+        "考古文献完整性",
+        "ADC",
+        "文档完整度",
+        "遗址记录完整性"
+      ],
+      "kn_def": "ADC = \\left(\\text{SQS} \\times 0.4\\right) + \\left(\\text{MFS} \\times 0.4\\right) + \\left(\\text{SCE} \\times 0.2\\right) - 5 \\times \\sqrt{\\frac{\\text{Noise Level (dB)}}{10}}, \\text{ where higher values indicate more complete documentation with multiple quality factors.}",
+      "kn_name": "Archaeological Documentation Completeness (ADC)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "10": {
+      "kn_code": 10,
+      "kn_desc": "Defines what constitutes a high-resolution archaeological scan based on quantitative parameters.",
+      "kn_alias": [
+        "高分辨率扫描",
+        "高精扫描",
+        "高精度扫描",
+        "精细扫描"
+      ],
+      "kn_def": "A scan with \\text{Scan Resolution (mm)} \\leq 1.0 and \\text{Point Density (points/m²)} \\geq 1000, allowing for sub-millimeter precision in archaeological documentation and feature detection.",
+      "kn_name": "High Resolution Scan",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "11": {
+      "kn_code": 11,
+      "kn_desc": "Defines the standard for comprehensive scan coverage of an archaeological site or artifact with statistical confidence.",
+      "kn_alias": [
+        "全面覆盖",
+        "完整覆盖",
+        "高覆盖率",
+        "全覆盖扫描"
+      ],
+      "kn_def": "A scan with \\text{Coverage (%)} \\geq 95 and \\text{Overlap (%)} \\geq 30, ensuring minimal data gaps and sufficient overlap for accurate registration with 95% confidence interval for spatial measurements.",
+      "kn_name": "Comprehensive Coverage",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "12": {
+      "kn_code": 12,
+      "rel_kn": [
+        10,
+        11,
+        3
+      ],
+      "kn_desc": "Defines the criteria for a premium quality archaeological scan suitable for conservation planning and scholarly publication.",
+      "kn_alias": [
+        "优质扫描",
+        "高级质量扫描",
+        "精品扫描",
+        "顶级扫描质量"
+      ],
+      "kn_def": "A scan that is both a High Resolution Scan and has Comprehensive Coverage with \\text{SQS} > 7.5, where SQS is the Scan Quality Score, producing data suitable for detailed analysis and conservation planning.",
+      "kn_name": "Premium Quality Scan",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "33": {
+      "kn_code": 33,
+      "kn_desc": "Evaluates registration accuracy relative to scan resolution using propagation of uncertainty principles.",
+      "kn_alias": [
+        "配准精度比",
+        "RAR",
+        "精度比率",
+        "注册精度比"
+      ],
+      "kn_def": "RAR = \\frac{\\text{Scan Resolution (mm)}}{\\text{Registration Accuracy (mm)} \\times \\sqrt{1 + \\frac{\\text{Error Value (mm)}}{\\text{Registration Accuracy (mm)}}}}, \\text{ where values > 1 indicate registration accuracy exceeds scan resolution, a desirable outcome for precise spatial analysis.}",
+      "kn_name": "Registration Accuracy Ratio (RAR)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "38": {
+      "kn_code": 38,
+      "rel_kn": [
+        9,
+        6,
+        33,
+        1
+      ],
+      "kn_desc": "Comprehensive metric for evaluating digital preservation quality for archaeological sites with weighted quality factors.",
+      "kn_alias": [
+        "数字保护质量",
+        "DPQ",
+        "数字化质量",
+        "数字保存质量"
+      ],
+      "kn_def": "DPQ = (0.3 \\times \\text{ADC}) + (0.3 \\times \\text{MFS}) + (0.2 \\times \\text{RAR}) + (0.2 \\times \\text{SCE}) - 2 \\times \\sqrt{\\frac{\\text{Error Value (mm)}}{\\text{Scan Resolution (mm)}}}, \\text{ where ADC is Archaeological Documentation Completeness, MFS is Model Fidelity Score, RAR is Registration Accuracy Ratio, and SCE is Scan Coverage Effectiveness.}",
+      "kn_name": "Digital Preservation Quality (DPQ)",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    },
+    "48": {
+      "kn_code": 48,
+      "rel_kn": [
+        9,
+        38
+      ],
+      "kn_desc": "Defines complex archaeological projects requiring multiple scanning phases with integrated documentation strategy.",
+      "kn_alias": [
+        "多阶段文档项目",
+        "分阶段项目",
+        "复合文档项目",
+        "多轮扫描项目"
+      ],
+      "kn_def": "A project with multiple scans where the total \\text{ADC} < 70 for individual scans but \\text{DPQ} > 80 when combined, where ADC is Archaeological Documentation Completeness and DPQ is Digital Preservation Quality, indicating comprehensive documentation achieved through multiple phases with coherent registration strategy for holistic interpretation.",
+      "kn_name": "Multi-Phase Documentation Project",
+      "rel_db_code": "pg_archeology_scan",
+      "db_code": "pg_archeology_scan"
+    }
+  }
+}
