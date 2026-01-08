@@ -15,6 +15,7 @@ async def add_kn_col(
     db_code: str = state["db_code"]
     col_map: dict[str, dict[str, dict]] = state["col_map"]
     kn_map: dict[str, dict] = state["kn_map"]
+    retrieve_cell_url = CFG.meta_db.retrieve_cell_url
     if not kn_map or all(not kn.get("rel_col") for kn in kn_map.values()):
         return
 
@@ -27,7 +28,7 @@ async def add_kn_col(
                 tb_col_tuple_set.add((tb_name, col_name))
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            CFG.meta_db.retrieve_cell_url,
+            retrieve_cell_url,
             json={"db_code": db_code, "tb_col_tuple_list": list(tb_col_tuple_set)},
         )
         kn_rel_col_map = response.json()

@@ -10,7 +10,6 @@ from state_manage import read_callback, write_callback
 
 
 async def add_context(
-    db_code: str,
     query: str,
     r_callback: Callable | None = None,
     w_callback: Callable | None = None,
@@ -24,6 +23,9 @@ async def add_context(
             return True
         except (ValueError, TypeError):
             return False
+
+    db_code = CFG.use_db_code
+    get_table_url = CFG.meta_db.get_table_url
 
     # 提取关键词
     allow_pos = (
@@ -53,10 +55,7 @@ async def add_context(
 
     # 获取表信息
     async with httpx.AsyncClient() as client:
-        response = await client.post(
-            CFG.meta_db.get_table_url,
-            json={"db_code": db_code},
-        )
+        response = await client.post(get_table_url, json={"db_code": db_code})
     db_info, tb_map = response.json()
 
     # 构建表的说明信息
@@ -83,7 +82,7 @@ async def main():
     parser.add_argument("query", type=str, help="查询文本")
 
     args = parser.parse_args()
-    await add_context(CFG.use_db_code, args.query, read_callback, write_callback)
+    await add_context(args.query, read_callback, write_callback)
 
 
 if __name__ == "__main__":

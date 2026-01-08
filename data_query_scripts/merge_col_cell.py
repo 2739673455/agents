@@ -6,8 +6,6 @@ from state_manage import read_callback, write_callback
 
 
 async def merge_col_cell(
-    max_tb_num: int,
-    max_col_per_tb: int,
     r_callback: Callable | None = None,
     w_callback: Callable | None = None,
 ):
@@ -15,6 +13,9 @@ async def merge_col_cell(
     state = await r_callback() if r_callback else {}
     retrieved_col_map: dict[str, dict[str, dict]] = state["retrieved_col_map"]
     retrieved_cell_map: dict[str, dict[str, dict]] = state["retrieved_cell_map"]
+    max_tb_num = CFG.max_tb_num
+    max_col_per_tb = CFG.max_col_per_tb
+
     # 将单元格信息与字段信息合并
     for tb_code, cell_name_col_map in retrieved_cell_map.items():
         name_col_map = retrieved_col_map.setdefault(tb_code, {})
@@ -56,11 +57,4 @@ async def merge_col_cell(
 
 
 if __name__ == "__main__":
-    asyncio.run(
-        merge_col_cell(
-            CFG.max_tb_num,
-            CFG.max_col_per_tb,
-            read_callback,
-            write_callback,
-        )
-    )
+    asyncio.run(merge_col_cell(read_callback, write_callback))

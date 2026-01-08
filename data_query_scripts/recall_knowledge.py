@@ -15,9 +15,11 @@ async def recall_knowledge(
     db_code: str = state["db_code"]
     query: str = state["query"]
     keywords: list[str] = state["keywords"]
+    retrieve_knowledge_url = CFG.meta_db.retrieve_knowledge_url
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            CFG.meta_db.retrieve_knowledge_url,
+            retrieve_knowledge_url,
             json={"db_code": db_code, "query": query, "keywords": keywords},
         )
 
