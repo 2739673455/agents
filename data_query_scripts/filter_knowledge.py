@@ -12,8 +12,8 @@ async def filter_knowledge(
 ):
     """LLM筛选指标知识"""
     state = await r_callback() if r_callback else {}
-    query = state["query"]
-    kn_map = state["kn_map"]
+    query: str = state["query"]
+    kn_map: dict[int, dict] = {int(k): v for k, v in state["kn_map"].items()}
     filter_model = CFG.llm.filter_model
 
     if not kn_map:
@@ -40,7 +40,7 @@ async def filter_knowledge(
     add_kn_codes: set[int] = {
         rel_code
         for kn_code in filtered_kn_codes
-        for rel_code in (kn_map[kn_code].rel_kn or [])
+        for rel_code in (kn_map[kn_code]["rel_kn"] or [])
         if rel_code not in filtered_kn_codes
     }  # 补充可能在过滤中遗漏掉的关联知识
     kn_map = {k: kn_map[k] for k in filtered_kn_codes | add_kn_codes}

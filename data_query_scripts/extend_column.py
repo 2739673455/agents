@@ -12,9 +12,9 @@ async def extend_column(
 ):
     """LLM 结合查询内容、关键词、表信息来扩展字段，生成查询可能用到的字段"""
     state = await r_callback() if r_callback else {}
-    query = state["query"]
-    keywords = state["keywords"]
-    tb_caption = state["tb_caption"]
+    query: str = state["query"]
+    keywords: list[str] = state["keywords"]
+    tb_caption: str = state["tb_caption"]
     extend_model = CFG.llm.extend_model
 
     prompt = get_prompt(

@@ -12,9 +12,9 @@ async def extend_cell(
 ):
     """LLM 结合查询内容、表信息来扩展字段，生成可能用到具体字段值信息，并针对可能有歧义的关键词消歧"""
     state = await r_callback() if r_callback else {}
-    query = state["query"]
-    keywords = state["keywords"]
-    tb_caption = state["tb_caption"]
+    query: str = state["query"]
+    keywords: list[str] = state["keywords"]
+    tb_caption: str = state["tb_caption"]
     extend_model = CFG.llm.extend_model
 
     prompt = get_prompt(

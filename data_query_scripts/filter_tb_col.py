@@ -86,10 +86,10 @@ async def filter_tb_col(
             return tb_code, filtered_col_dict
 
     state = await r_callback() if r_callback else {}
-    query = state["query"]
-    tb_map = state["tb_map"]
-    col_map = state["col_map"]
-    cur_date_info = state["cur_date_info"]
+    query: str = state["query"]
+    tb_map: dict[str, dict] = state["tb_map"]
+    col_map: dict[str, dict[str, dict]] = state["col_map"]
+    cur_date_info: str = state["cur_date_info"]
     filter_model = CFG.llm.filter_model
 
     max_concurrent = 20

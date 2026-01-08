@@ -14,7 +14,7 @@ async def add_kn_col(
     state = await r_callback() if r_callback else {}
     db_code: str = state["db_code"]
     col_map: dict[str, dict[str, dict]] = state["col_map"]
-    kn_map: dict[str, dict] = state["kn_map"]
+    kn_map: dict[int, dict] = {int(k): v for k, v in state["kn_map"].items()}
     retrieve_cell_url = CFG.meta_db.retrieve_cell_url
     if not kn_map or all(not kn.get("rel_col") for kn in kn_map.values()):
         return
