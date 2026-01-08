@@ -45,7 +45,7 @@ async def embed(
             TextColumn("[cyan]{task.completed}/{task.total}"),
             console=Console(),
             transient=True,
-        ) as progress:
+        ) as progress:  # 进度条
             task_id = progress.add_task("embedding", total=len(text))
             tasks = [_aembed(chunk) for chunk in chunks]
             results = await asyncio.gather(*tasks)

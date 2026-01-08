@@ -147,7 +147,7 @@ def kn_info_xml_str(kn_map: dict[int, dict]):
             f"{_tag('kn_name', k['kn_name'])}"
             f"{_tag('kn_def', k['kn_def'])}"
             f"{_tag('kn_desc', k['kn_desc'])}"
-            f"{_tag('rel_kn', k['rel_kn'])}"
+            f"{_tag('rel_kn', k.get('rel_kn'))}"
             f"{_tag('kn_alias', k['kn_alias'])}"
             "</knowledge>"
             for k in kn_map.values()
