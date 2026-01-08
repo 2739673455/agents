@@ -4,14 +4,14 @@ from pathlib import Path
 from filelock import FileLock
 
 SESSION_DIR = Path(__file__).parent.parent / "session"
-STATE_FILE = SESSION_DIR / "state.json"
-LOCK_FILE = SESSION_DIR / "state.json.lock"
 LOCK_TIMEOUT = 5
 
 
-async def write_state_to_json(data: dict):
+async def write_state_to_json(data: dict, session_id: str = "default"):
     """保存状态到JSON文件"""
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_FILE = SESSION_DIR / session_id / "state.json"
+    LOCK_FILE = SESSION_DIR / session_id / "state.json.lock"
     with FileLock(LOCK_FILE, timeout=LOCK_TIMEOUT):
         state = (
             {**json.loads(STATE_FILE.read_text(encoding="utf-8")), **data}
@@ -24,8 +24,10 @@ async def write_state_to_json(data: dict):
     print(f"{list(data.keys())} saved to: {STATE_FILE}")
 
 
-async def read_state_from_json():
+async def read_state_from_json(session_id: str = "default"):
     """从JSON文件读取状态"""
+    STATE_FILE = SESSION_DIR / session_id / "state.json"
+    LOCK_FILE = SESSION_DIR / session_id / "state.json.lock"
     with FileLock(LOCK_FILE, timeout=LOCK_TIMEOUT):
         state = (
             json.loads(STATE_FILE.read_text(encoding="utf-8"))
