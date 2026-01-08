@@ -38,19 +38,19 @@ async def filter_knowledge(
         20,
     )
     filtered_kn_codes = parse_json(resp)
-    filtered_kn_codes = {
-        kn_code for kn_code in filtered_kn_codes if kn_code in retrieved_knowledge
-    }
-    # TODO 缺少递归添加子知识
-    add_kn_codes: set[int] = {
-        rel_code
-        for kn_code in filtered_kn_codes
-        for rel_code in (retrieved_knowledge[kn_code]["rel_kn"] or [])
-        if rel_code not in filtered_kn_codes
-    }  # 补充可能在过滤中遗漏掉的关联知识
-    print(filtered_kn_codes)
-    print(add_kn_codes)
-    kn_map = {k: retrieved_knowledge[k] for k in (filtered_kn_codes | add_kn_codes)}
+    needed_kn_codes = {i for i in filtered_kn_codes if i in retrieved_knowledge}
+    # 补充可能在过滤中遗漏掉的关联知识
+    while True:
+        add_kn_codes: set[int] = {
+            rel_code
+            for kn_code in needed_kn_codes
+            for rel_code in (retrieved_knowledge[kn_code].get("rel_kn") or [])
+            if rel_code not in needed_kn_codes
+        }
+        if not add_kn_codes:
+            break
+        needed_kn_codes = needed_kn_codes | add_kn_codes
+    kn_map = {k: retrieved_knowledge[k] for k in needed_kn_codes}
 
     if w_callback:
         await w_callback({"kn_map": kn_map})

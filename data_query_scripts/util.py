@@ -109,12 +109,12 @@ def tb_col_xml_str(tb_map: dict[str, dict], col_map: dict[str, dict[str, dict]])
                 """
             <column>"""
                 f"{_tag('column_name', c['col_name'])}"
-                f"{_tag('column_comment', c['col_comment'])}"
-                f"{_tag('column_meaning', c['col_meaning'])}"
-                f"{_tag('column_alias', c['col_alias'])}"
-                f"{_tag('column_json_meaning', c['field_meaning'], True)}"
-                f"{_tag('fewshot', c['fewshot'])}"
-                f"{_tag('cells', c['cells'])}"
+                f"{_tag('column_comment', c.get('col_comment'))}"
+                f"{_tag('column_meaning', c.get('col_meaning'))}"
+                f"{_tag('column_alias', c.get('col_alias'))}"
+                f"{_tag('column_json_meaning', c.get('field_meaning'), True)}"
+                f"{_tag('fewshot', c.get('fewshot'))}"
+                f"{_tag('cells', c.get('cells'))}"
                 "</column>"
                 for c in col_dict.values()
             ]
@@ -146,9 +146,9 @@ def kn_info_xml_str(kn_map: dict[int, dict]):
             f"{_tag('kn_code', k['kn_code'])}"
             f"{_tag('kn_name', k['kn_name'])}"
             f"{_tag('kn_def', k['kn_def'])}"
-            f"{_tag('kn_desc', k['kn_desc'])}"
+            f"{_tag('kn_desc', k.get('kn_desc'))}"
             f"{_tag('rel_kn', k.get('rel_kn'))}"
-            f"{_tag('kn_alias', k['kn_alias'])}"
+            f"{_tag('kn_alias', k.get('kn_alias'))}"
             "</knowledge>"
             for k in kn_map.values()
         ]

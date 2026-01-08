@@ -22,10 +22,9 @@ async def add_kn_col(
     # 获取知识的相关字段
     tb_col_tuple_set: set[tuple[str, str]] = set()
     for kn in kn_map.values():
-        if kn["rel_col"]:
-            for tb_col in kn["rel_col"]:
-                tb_name, col_name = tb_col.split(".")
-                tb_col_tuple_set.add((tb_name, col_name))
+        for tb_col in kn.get("rel_col", []):
+            tb_name, col_name = tb_col.split(".")
+            tb_col_tuple_set.add((tb_name, col_name))
     async with httpx.AsyncClient() as client:
         response = await client.post(
             retrieve_cell_url,

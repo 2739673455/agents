@@ -36,7 +36,7 @@ async def filter_tb_col(
                 filtered_tb_codes = parse_json(resp)
                 return filtered_tb_codes
             except Exception:
-                return tb_code_list
+                raise
 
     async def filter_column(tb_code: str) -> tuple | None:
         """使用LLM过滤字段，返回单表所有和查询相关的字段"""
@@ -62,7 +62,7 @@ async def filter_tb_col(
                 )
                 res = parse_json(resp)
             except Exception:
-                return tb_code, col_map[tb_code]
+                raise
 
             # 预期的返回格式：
             # {
