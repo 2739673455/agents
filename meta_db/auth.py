@@ -4,7 +4,7 @@ from typing import Annotated
 import jwt
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, SecurityScopes
-from pwdlib import PasswordHash
+from pwdlib._hash import PasswordHash
 
 SECRET_KEY = "d6a5d730ec247d487f17419df966aec9d4c2a09d2efc9699d09757cf94c68b01"
 ALGORITHM = "HS256"
@@ -41,26 +41,26 @@ USER_DB = {
         "group": "root",
         "username": "root",
         "email": "root@example.com",
-        "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$fMuhnWBkGYj3r25EZnf6OA$4MRww1o4TWdfmmrYIu6H90+uQ6pMD+V6wd4B1UYnMp0",
+        "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$fMuhnWBkGYj3r25EZnf6OA$4MRww1o4TWdfmmrYIu6H90+uQ6pMD+V6wd4B1UYnMp0",  # 123321
         "yn": 1,
     },
     "atguigu": {
         "group": "atguigu",
         "username": "atguigu",
         "email": "atguigu@example.com",
-        "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$fMuhnWBkGYj3r25EZnf6OA$4MRww1o4TWdfmmrYIu6H90+uQ6pMD+V6wd4B1UYnMp0",
+        "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$fMuhnWBkGYj3r25EZnf6OA$4MRww1o4TWdfmmrYIu6H90+uQ6pMD+V6wd4B1UYnMp0",  # 123321
         "yn": 1,
     },
     "zhangsan": {
         "group": "guest",
         "username": "zhangsan",
         "email": "zhangsan@example.com",
-        "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$fMuhnWBkGYj3r25EZnf6OA$4MRww1o4TWdfmmrYIu6H90+uQ6pMD+V6wd4B1UYnMp0",
+        "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$fMuhnWBkGYj3r25EZnf6OA$4MRww1o4TWdfmmrYIu6H90+uQ6pMD+V6wd4B1UYnMp0",  # 123321
         "yn": 1,
     },
 }
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", scopes=ALL_SCOPES)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token", scopes=ALL_SCOPES)
 password_hash = PasswordHash.recommended()
 
 
@@ -71,11 +71,12 @@ async def create_access_token(username: str, password: str, scopes: list[str]):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
 
     # 验证权限范围
-    if exceed_scopes := set(scopes) - GROUP_DB[user["group"]]["allowed_scopes"]:
+    if exceed_scopes := set(scopes) - set(GROUP_DB[user["group"]]["allowed_scopes"]):
         raise HTTPException(
             status_code=403,
             detail=f"Requested scopes {exceed_scopes} exceed user's permissions",
         )
+
     # 创建访问令牌
     payload = {"sub": username, "scope": " ".join(scopes)}
     expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -85,7 +86,7 @@ async def create_access_token(username: str, password: str, scopes: list[str]):
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-async def authenticate(
+async def authentication(
     security_scopes: SecurityScopes, token: Annotated[str, Depends(oauth2_scheme)]
 ):
     authenticate_value = (
@@ -117,5 +118,3 @@ async def authenticate(
             detail="Not enough permissions",
             headers={"WWW-Authenticate": authenticate_value},
         )
-
-    return user

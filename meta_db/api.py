@@ -1,7 +1,7 @@
 from typing import Annotated
 
-from auth import create_access_token
-from fastapi import APIRouter, Depends
+from auth import authentication, create_access_token
+from fastapi import APIRouter, Depends, Security
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from query_meta import (
@@ -60,42 +60,66 @@ class RetrieveCellRequest(BaseModel):
     keywords: list[str] = Field(description="关键词列表")
 
 
-@metadata_router.get("/health")
+@metadata_router.get(
+    "/health",
+    dependencies=[Security(authentication, scopes=["health"])],
+)
 async def health():
     return "live"
 
 
-@metadata_router.post("/save_metadata")
+@metadata_router.post(
+    "/save_metadata",
+    dependencies=[Security(authentication, scopes=["save_metadata"])],
+)
 async def api_save_meta(req: SaveMetaRequest):
     await save_meta(req.save)
 
 
-@metadata_router.post("/clear_metadata")
+@metadata_router.post(
+    "/clear_metadata",
+    dependencies=[Security(authentication, scopes=["clear_metadata"])],
+)
 async def api_clear_meta():
     await clear_meta()
 
 
-@metadata_router.post("/get_table")
+@metadata_router.post(
+    "/get_table",
+    dependencies=[Security(authentication, scopes=["get_table"])],
+)
 async def api_get_table(req: GetTableRequest):
     return await get_tb_info_by_dbcode(req.db_code)
 
 
-@metadata_router.post("/get_column")
+@metadata_router.post(
+    "/get_column",
+    dependencies=[Security(authentication, scopes=["get_column"])],
+)
 async def api_get_column(req: GetColumnRequest):
     return await get_col_by_dbcode_tbname_colname(req.db_code, req.tb_col_tuple_list)
 
 
-@metadata_router.post("/retrieve_knowledge")
+@metadata_router.post(
+    "/retrieve_knowledge",
+    dependencies=[Security(authentication, scopes=["retrieve_knowledge"])],
+)
 async def api_retrieve_knowledge(req: RetrieveKnowledgeRequest):
     return await retrieve_knowledge(req.db_code, req.query, req.keywords)
 
 
-@metadata_router.post("/retrieve_column")
+@metadata_router.post(
+    "/retrieve_column",
+    dependencies=[Security(authentication, scopes=["retrieve_column"])],
+)
 async def api_retrieve_column(req: RetrieveColumnRequest):
     return await retrieve_column(req.db_code, req.keywords)
 
 
-@metadata_router.post("/retrieve_cell")
+@metadata_router.post(
+    "/retrieve_cell",
+    dependencies=[Security(authentication, scopes=["retrieve_cell"])],
+)
 async def api_retrieve_cell(req: RetrieveCellRequest):
     return await retrieve_cell(req.db_code, req.keywords)
 
