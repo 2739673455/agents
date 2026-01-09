@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from auth import authentication, create_access_token
-from fastapi import APIRouter, Depends, Security
+from fastapi import APIRouter, Depends, Request, Security
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from query_meta import (
@@ -60,10 +60,7 @@ class RetrieveCellRequest(BaseModel):
     keywords: list[str] = Field(description="关键词列表")
 
 
-@metadata_router.get(
-    "/health",
-    dependencies=[Security(authentication, scopes=["health"])],
-)
+@metadata_router.get("/health")
 async def health():
     return "live"
 
@@ -125,11 +122,17 @@ async def api_retrieve_cell(req: RetrieveCellRequest):
 
 
 @api_router.post("/token")
-async def login_for_access_token(req: Annotated[OAuth2PasswordRequestForm, Depends()]):
-    username = req.username
-    password = req.password
-    scopes = req.scopes
-    return await create_access_token(username, password, scopes)
+async def login_for_access_token(
+    req: Request,
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+):
+    client_ip = req.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    if not client_ip:
+        client_ip = getattr(req.client, "host", "unknown")
+    username = form_data.username
+    password = form_data.password
+    scopes = form_data.scopes
+    return await create_access_token(username, password, scopes, client_ip)
 
 
 api_router.include_router(metadata_router, prefix="/metadata")

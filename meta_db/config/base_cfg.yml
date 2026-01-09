@@ -10,10 +10,18 @@ meta_db: # 元数据数据库
     database: neo4j
 
 logging:
-  level: INFO # 日志级别(DEBUG, INFO, WARNING, ERROR, CRITICAL)
-  to_console: true # 是否输出到控制台
-  to_file: true # 是否输出到文件
-  max_file_size: 10MB # 单个日志文件最大大小
+  service:
+    level: INFO # 日志级别(DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    to_console: true # 是否输出到控制台
+    to_file: true # 是否输出到文件
+    dir_name: service # 日志目录名
+    max_file_size: 10MB # 单个日志文件最大大小
+  auth:
+    level: INFO # 日志级别(DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    to_console: true # 是否输出到控制台
+    to_file: true # 是否输出到文件
+    dir_name: auth # 日志目录名
+    max_file_size: 10MB # 单个日志文件最大大小
 
 llm:
   embed_model: siliconflow_bge_m3 # 嵌入模型

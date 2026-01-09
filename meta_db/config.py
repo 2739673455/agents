@@ -71,11 +71,17 @@ class MetaDBCfg(BaseModel):
     neo4j: DBCfg
 
 
-class LoggingCfg(BaseModel):
+class LoggerCfg(BaseModel):
     level: str
     to_console: bool
     to_file: bool
+    dir_name: str
     max_file_size: str
+
+
+class LoggingCfg(BaseModel):
+    service: LoggerCfg
+    auth: LoggerCfg
 
 
 class ModelCfg(BaseModel):

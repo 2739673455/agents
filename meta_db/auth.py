@@ -5,13 +5,13 @@ import jwt
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, SecurityScopes
 from pwdlib._hash import PasswordHash
+from util import auth_logger
 
 SECRET_KEY = "d6a5d730ec247d487f17419df966aec9d4c2a09d2efc9699d09757cf94c68b01"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 ALL_SCOPES = {
-    "health": "服务健康检查",
     "save_metadata": "写入元数据",
     "clear_metadata": "清空元数据",
     "get_table": "获取表信息",
@@ -26,7 +26,6 @@ GROUP_DB = {
     "guest": {"allowed_scopes": []},
     "atguigu": {
         "allowed_scopes": [
-            "health",
             "get_table",
             "get_column",
             "retrieve_knowledge",
@@ -64,24 +63,39 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token", scopes=ALL_SCOPES
 password_hash = PasswordHash.recommended()
 
 
-async def create_access_token(username: str, password: str, scopes: list[str]):
+async def create_access_token(
+    username: str,
+    password: str,
+    scopes: list[str],
+    client_ip: str,
+):
     # 验证用户名、密码
+    auth_logger.info(f"{client_ip} | {username} | {scopes}: request token")
     user = USER_DB.get(username)
-    if not (user and password_hash.verify(password, user["hashed_password"])):
+    target_hash = (
+        user["hashed_password"] if user else password_hash.hash("dummy_password")
+    )  # 如果用户不存在，使用 dummy_password 进行验证，避免时间攻击
+    password_correct = password_hash.verify(password, target_hash)
+    if not (user and password_correct):
+        auth_logger.info(f"{client_ip} | {username} | {scopes}: validation user failed")
         raise HTTPException(status_code=401, detail="Incorrect username or password")
 
     # 验证权限范围
     if exceed_scopes := set(scopes) - set(GROUP_DB[user["group"]]["allowed_scopes"]):
+        auth_logger.info(
+            f"{client_ip} | {username} | {scopes}: validation scope failed"
+        )
         raise HTTPException(
             status_code=403,
             detail=f"Requested scopes {exceed_scopes} exceed user's permissions",
         )
 
     # 创建访问令牌
-    payload = {"sub": username, "scope": " ".join(scopes)}
+    payload = {"sub": username, "group": user["group"], "scope": " ".join(scopes)}
     expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode = {**payload, "exp": expire}
     access_token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    auth_logger.info(f"{client_ip} | {username} | {scopes}: create token success")
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -94,7 +108,14 @@ async def authentication(
         if security_scopes.scopes
         else "Bearer"
     )
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except (jwt.ExpiredSignatureError, jwt.exceptions.InvalidTokenError):
+        raise HTTPException(
+            status_code=401,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": authenticate_value},
+        )
 
     # 验证用户
     if not ((username := payload.get("sub")) and (user := USER_DB.get(username))):

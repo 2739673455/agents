@@ -9,6 +9,8 @@ from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+LOG_DIR = Path(__file__).parent / "logs"  # 日志目录
+
 
 async def embed(
     text: list[str], retries: int = 1, timeout: float | None = None
@@ -54,6 +56,82 @@ async def embed(
         await client.close()
 
 
+def setup_service_logger():
+    service_filter = lambda record: record["extra"].get("tag") is None
+    log_format = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+        "<level>{level:^8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+        "<level>{message}</level>"
+    )
+
+    # 控制台输出处理器
+    service_log_cfg = CFG.logging.service
+    if service_log_cfg.to_console:
+        logger.add(
+            sink=sys.stdout,  # 输出到标准输出
+            level=service_log_cfg.level,  # 日志级别
+            format=log_format,  # 日志格式
+            colorize=True,  # 启用颜色输出，提升可读性
+            catch=False,  # 不捕获异常，让错误直接抛出
+            filter=service_filter,
+        )
+
+    # 文件输出处理器
+    if service_log_cfg.to_file:
+        # 确保日志目录存在
+        (LOG_DIR / service_log_cfg.dir_name).mkdir(parents=True, exist_ok=True)
+        logger.add(
+            sink=LOG_DIR
+            / service_log_cfg.dir_name
+            / "{time:YYYY-MM-DD}.log",  # 按日期命名日志文件
+            level=service_log_cfg.level,  # 日志级别
+            format=log_format,  # 日志格式
+            rotation=f"{service_log_cfg.max_file_size}",  # 按文件大小自动滚动
+            encoding="utf-8",  # 使用UTF-8编码，支持中文
+            catch=False,  # 不捕获异常，让错误直接抛出
+            filter=service_filter,
+        )
+
+
+def setup_auth_logger():
+    auth_filter = lambda record: record["extra"].get("tag") == "auth"
+    log_format = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+        "<level>{level:^8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+        "<level>{message}</level>"
+    )
+
+    # 控制台输出处理器
+    auth_log_cfg = CFG.logging.auth
+    if auth_log_cfg.to_console:
+        logger.add(
+            sink=sys.stdout,  # 输出到标准输出
+            level=auth_log_cfg.level,  # 日志级别
+            format=log_format,  # 日志格式
+            colorize=True,  # 启用颜色输出，提升可读性
+            catch=False,  # 不捕获异常，让错误直接抛出
+            filter=auth_filter,  # 只输出 auth 相关日志
+        )
+
+    # 文件输出处理器
+    if auth_log_cfg.to_file:
+        # 确保日志目录存在
+        (LOG_DIR / auth_log_cfg.dir_name).mkdir(parents=True, exist_ok=True)
+        logger.add(
+            sink=LOG_DIR
+            / auth_log_cfg.dir_name
+            / "{time:YYYY-MM-DD}.log",  # 按日期命名日志文件
+            level=auth_log_cfg.level,  # 日志级别
+            format=log_format,  # 日志格式
+            rotation=f"{auth_log_cfg.max_file_size}",  # 按文件大小自动滚动
+            encoding="utf-8",  # 使用UTF-8编码，支持中文
+            catch=False,  # 不捕获异常，让错误直接抛出
+            filter=auth_filter,  # 只输出 auth 相关日志
+        )
+
+
 def setup_logger():
     """配置 loguru 日志器"""
     # 避免重复配置
@@ -64,39 +142,12 @@ def setup_logger():
     # loguru 默认有一个输出到 stderr 的处理器，级别为 INFO
     logger.remove()
 
-    log_format = (
-        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-        "<level>{level:^8}</level> | "
-        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-        "<level>{message}</level>"
-    )
-
-    # 控制台输出处理器
-    if CFG.logging.to_console:
-        logger.add(
-            sink=sys.stdout,  # 输出到标准输出
-            level=CFG.logging.level,  # 从配置文件读取日志级别
-            format=log_format,  # 日志格式
-            colorize=True,  # 启用颜色输出，提升可读性
-            catch=False,  # 不捕获异常，让错误直接抛出
-        )
-
-    # 文件输出处理器
-    if CFG.logging.to_file:
-        log_dir = Path(__file__).parent / "logs"  # 指定日志目录
-        log_dir.mkdir(parents=True, exist_ok=True)  # 确保日志目录存在
-
-        logger.add(
-            sink=log_dir / "{time:YYYY-MM-DD}.log",  # 按日期命名的日志文件
-            level=CFG.logging.level,  # 使用配置的日志级别
-            format=log_format,  # 日志格式
-            rotation=f"{CFG.logging.max_file_size}",  # 按文件大小自动滚动
-            encoding="utf-8",  # 使用UTF-8编码，支持中文
-            catch=False,  # 不捕获异常，让错误直接抛出
-        )
+    setup_service_logger()
+    setup_auth_logger()
 
     # 标记为已配置
     setattr(logger, "_configured", True)
 
 
 setup_logger()
+auth_logger = logger.bind(tag="auth")
