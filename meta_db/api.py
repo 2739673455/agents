@@ -17,21 +17,19 @@ from save_meta import clear_meta, save_meta
 
 ALL_SCOPES = {
     "health_check": "服务健康检查",
-    "save_meta": "写入元数据",
-    "clear_meta": "清空元数据",
+    "save_metadata": "写入元数据",
+    "clear_metadata": "清空元数据",
     "get_table": "获取表信息",
     "get_column": "获取字段信息",
     "retrieve_knowledge": "检索知识",
     "retrieve_column": "检索字段",
     "retrieve_cell": "检索单元格",
 }
+SECRET_KEY = "d6a5d730ec247d487f17419df966aec9d4c2a09d2efc9699d09757cf94c68b01"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 GROUP_DB = {
-    "root": {
-        "algorithm": "HS256",
-        "secret_key": "d6a5d730ec247d487f17419df966aec9d4c2a09d2efc9699d09757cf94c68b01",
-        "access_token_expire_minutes": 10,
-        "allowed_scopes": list(ALL_SCOPES.keys()),
-    },
+    "root": {"allowed_scopes": list(ALL_SCOPES.keys())},
 }
 USER_DB = {
     "root": {
@@ -138,9 +136,6 @@ async def login(req: Annotated[OAuth2PasswordRequestForm, Depends()]):
     scopes = req.scopes
 
     group = USER_DB[username]["group"]
-    access_token_expire_minutes = GROUP_DB[group]["access_token_expire_minutes"]
-    algorithm = GROUP_DB[group]["algorithm"]
-    secret_key = GROUP_DB[group]["secret_key"]
     allowed_scopes = GROUP_DB[group]["allowed_scopes"]
 
     if not (
@@ -148,9 +143,9 @@ async def login(req: Annotated[OAuth2PasswordRequestForm, Depends()]):
         and password_hash.verify(password, USER_DB[username]["password"])
     ):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
-    expire = datetime.now() + timedelta(minutes=access_token_expire_minutes)
+    expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {"sub": f"username:{username}", "scope": " ".join(scopes), "exp": expire}
-    access_token = jwt.encode(payload, secret_key, algorithm=algorithm)
+    access_token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
     return {"access_token": access_token, "token_type": "bearer"}
 
 
