@@ -86,8 +86,6 @@ async def authentication(
     token: Annotated[str, Depends(oauth2_scheme)],
 ):
     # 检查 scopes 是否已初始化
-    if not oauth2_scheme.model.flows.oauth2.password.scopes:
-        raise HTTPException(status_code=500, detail="OAuth2 scheme not initialized yet")
 
     authenticate_value = (
         f'Bearer scope="{security_scopes.scope_str}"'
