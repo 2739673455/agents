@@ -1,4 +1,8 @@
+from typing import Annotated
+
+from auth import create_access_token
 from fastapi import APIRouter, Depends
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from query_meta import (
     get_col_by_dbcode_tbname_colname,
@@ -94,6 +98,14 @@ async def api_retrieve_column(req: RetrieveColumnRequest):
 @metadata_router.post("/retrieve_cell")
 async def api_retrieve_cell(req: RetrieveCellRequest):
     return await retrieve_cell(req.db_code, req.keywords)
+
+
+@api_router.post("/token")
+async def login_for_access_token(req: Annotated[OAuth2PasswordRequestForm, Depends()]):
+    username = req.username
+    password = req.password
+    scopes = req.scopes
+    return await create_access_token(username, password, scopes)
 
 
 api_router.include_router(metadata_router, prefix="/metadata")

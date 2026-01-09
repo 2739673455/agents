@@ -3,11 +3,7 @@ from typing import Annotated
 
 import jwt
 from fastapi import Depends, HTTPException
-from fastapi.security import (
-    OAuth2PasswordBearer,
-    OAuth2PasswordRequestForm,
-    SecurityScopes,
-)
+from fastapi.security import OAuth2PasswordBearer, SecurityScopes
 from pwdlib import PasswordHash
 
 SECRET_KEY = "d6a5d730ec247d487f17419df966aec9d4c2a09d2efc9699d09757cf94c68b01"
@@ -27,6 +23,7 @@ ALL_SCOPES = {
 
 GROUP_DB = {
     "root": {"allowed_scopes": list(ALL_SCOPES.keys())},
+    "guest": {"allowed_scopes": []},
     "atguigu": {
         "allowed_scopes": [
             "health",
@@ -48,9 +45,16 @@ USER_DB = {
         "yn": 1,
     },
     "atguigu": {
-        "group": "root",
-        "username": "root",
-        "email": "root@example.com",
+        "group": "atguigu",
+        "username": "atguigu",
+        "email": "atguigu@example.com",
+        "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$fMuhnWBkGYj3r25EZnf6OA$4MRww1o4TWdfmmrYIu6H90+uQ6pMD+V6wd4B1UYnMp0",
+        "yn": 1,
+    },
+    "zhangsan": {
+        "group": "guest",
+        "username": "zhangsan",
+        "email": "zhangsan@example.com",
         "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$fMuhnWBkGYj3r25EZnf6OA$4MRww1o4TWdfmmrYIu6H90+uQ6pMD+V6wd4B1UYnMp0",
         "yn": 1,
     },
@@ -60,50 +64,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", scopes=ALL_SCOPES)
 password_hash = PasswordHash.recommended()
 
 
-async def get_current_user(
-    security_scopes: SecurityScopes, token: Annotated[str, Depends(oauth2_scheme)]
-):
-    authenticate_value = (
-        f'Bearer scope="{security_scopes.scope_str}"'
-        if security_scopes.scopes
-        else "Bearer"
-    )
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    # 验证用户
-    username = payload.get("sub")
-    if username is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": authenticate_value},
-        )
-    user = USER_DB.get(username)
-    if user is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": authenticate_value},
-        )
-    # 验证权限
-    token_scopes = set(payload.get("scope", "").split(" "))
-    for scope in security_scopes.scopes:
-        if scope not in token_scopes:
-            raise HTTPException(
-                status_code=401,
-                detail="Not enough permissions",
-                headers={"WWW-Authenticate": authenticate_value},
-            )
-    return user
-
-
-async def login_for_access_token(req: Annotated[OAuth2PasswordRequestForm, Depends()]):
-    username = req.username
-    password = req.password
-    scopes = req.scopes
-
+async def create_access_token(username: str, password: str, scopes: list[str]):
     # 验证用户名、密码
     user = USER_DB.get(username)
-    if not (user and password_hash.verify(password, user["password"])):
+    if not (user and password_hash.verify(password, user["hashed_password"])):
         raise HTTPException(status_code=401, detail="Incorrect username or password")
 
     # 创建访问令牌
@@ -113,3 +77,39 @@ async def login_for_access_token(req: Annotated[OAuth2PasswordRequestForm, Depen
     access_token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+async def get_current_active_user(
+    security_scopes: SecurityScopes, token: Annotated[str, Depends(oauth2_scheme)]
+):
+    authenticate_value = (
+        f'Bearer scope="{security_scopes.scope_str}"'
+        if security_scopes.scopes
+        else "Bearer"
+    )
+    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+    # 验证用户
+    if not ((username := payload.get("sub")) and (user := USER_DB.get(username))):
+        raise HTTPException(
+            status_code=401,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": authenticate_value},
+        )
+    if not user["yn"]:
+        raise HTTPException(
+            status_code=401,
+            detail="Inactive user",
+            headers={"WWW-Authenticate": authenticate_value},
+        )
+
+    # 验证权限
+    token_scopes = set(payload.get("scope", "").split())
+    if set(security_scopes.scopes) - token_scopes:
+        raise HTTPException(
+            status_code=403,
+            detail="Not enough permissions",
+            headers={"WWW-Authenticate": authenticate_value},
+        )
+
+    return user
