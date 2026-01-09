@@ -26,12 +26,6 @@ SKILL.md 文件所有内容
 3. 资源与代码(按需加载)
 附加技能目录或文件，在 SKILL.md 中引用
 
-# 权限隔离
-
-
-
-
-
 
 # Benchmark
 - BIRD-SQL
