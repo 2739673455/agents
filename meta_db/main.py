@@ -1,7 +1,6 @@
 from contextlib import asynccontextmanager
 
 from api import api_router
-from auth import init_all_scopes
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -10,7 +9,6 @@ from fastapi.middleware.cors import CORSMiddleware
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 服务启动时的初始化操作
-    await init_all_scopes()
 
     # 应用运行期间
     yield

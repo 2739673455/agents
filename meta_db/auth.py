@@ -3,7 +3,7 @@ from typing import Annotated
 
 import jwt
 from config import CFG
-from db_session import get_session
+from db_session import get_asession, get_session
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, SecurityScopes
 from pwdlib._hash import PasswordHash
@@ -14,21 +14,22 @@ SECRET_KEY = "d6a5d730ec247d487f17419df966aec9d4c2a09d2efc9699d09757cf94c68b01"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token", scopes={})
-password_hash = PasswordHash.recommended()
 
-
-async def init_all_scopes():
-    global oauth2_scheme
+def init_all_scopes():
     """从数据库加载所有权限范围"""
     all_scopes: dict[str, str] = {}
-    async with get_session(CFG.auth_db) as session:
-        result = await session.execute(text("SELECT name, description FROM scope"))
+    with get_session(CFG.auth_db) as session:
+        result = session.execute(text("SELECT name, description FROM scope"))
         rows = result.mappings().fetchall()
         for row in rows:
             all_scopes[row["name"]] = row["description"]
     auth_logger.info(f"all scopes loaded: {list(all_scopes.keys())}")
-    oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token", scopes=all_scopes)
+    return all_scopes
+
+
+ALL_SCOPES = init_all_scopes()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/token", scopes=ALL_SCOPES)
+password_hash = PasswordHash.recommended()
 
 
 async def create_access_token(
@@ -38,7 +39,7 @@ async def create_access_token(
     client_ip: str,
 ):
     # 验证用户名、密码
-    async with get_session(CFG.auth_db) as session:
+    async with get_asession(CFG.auth_db) as session:
         result = await session.execute(
             text(
                 "SELECT user.*, GROUP_CONCAT(scope.name) as scopes "
@@ -60,9 +61,8 @@ async def create_access_token(
         raise HTTPException(status_code=401, detail="Incorrect username or password")
 
     # 验证权限范围
-    if exceed_scopes := set(scopes) - set(
-        user["scopes"].split(",") if user["scopes"] else []
-    ):
+    allowed_scopes = user["scopes"].split(",") if user["scopes"] else []
+    if exceed_scopes := set(scopes) - set(allowed_scopes):
         auth_logger.info(
             f"{client_ip} | {username} | {scopes}: validation scope failed"
         )
@@ -71,8 +71,10 @@ async def create_access_token(
             detail=f"Requested scopes {exceed_scopes} exceed user's permissions",
         )
 
+    # 如果没有选择权限，默认返回用户拥有的所有权限
+    scopes = scopes if scopes else allowed_scopes
     # 创建访问令牌
-    payload = {"sub": username, "group": user["group_name"], "scope": " ".join(scopes)}
+    payload = {"sub": username, "scope": " ".join(scopes)}
     expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode = {**payload, "exp": expire}
     access_token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
@@ -86,7 +88,6 @@ async def authentication(
     token: Annotated[str, Depends(oauth2_scheme)],
 ):
     # 检查 scopes 是否已初始化
-
     authenticate_value = (
         f'Bearer scope="{security_scopes.scope_str}"'
         if security_scopes.scopes
@@ -108,7 +109,7 @@ async def authentication(
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": authenticate_value},
         )
-    async with get_session(CFG.auth_db) as session:
+    async with get_asession(CFG.auth_db) as session:
         result = await session.execute(
             text("SELECT user.yn FROM user WHERE user.name = :username"),
             {"username": username},

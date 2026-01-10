@@ -13,7 +13,7 @@ from typing import LiteralString, cast
 
 import jieba.analyse
 from config import DB_CFG, DBCfg, TableCfg
-from db_session import get_session, neo4j_session
+from db_session import get_asession, neo4j_session
 from loguru import logger
 from neo4j import AsyncSession
 from sqlalchemy import column, inspect, select, table, text
@@ -131,7 +131,7 @@ async def _get_column(db_cfg: DBCfg, tb_code: str, logger=None) -> list[dict]:
             return []
         tb_cfg = db_cfg.table[tb_code]
         columns = []
-        async with get_session(db_cfg) as session:
+        async with get_asession(db_cfg) as session:
             # 获取表的字段属性
             columns = await _get_column_attr(session, tb_code, tb_cfg, logger)
             # 获取字段示例数据
@@ -593,7 +593,7 @@ async def save_cell(
                 continue
             sync_col_names: list[str] = []
             # 获取表的字段属性
-            async with get_session(db_cfg) as db_session:
+            async with get_asession(db_cfg) as db_session:
                 columns = await _get_column_attr(db_session, tb_code, tb_cfg, logger)
             if not columns:
                 continue
@@ -614,7 +614,7 @@ async def save_cell(
                 continue
 
             # 查询字段值
-            async with get_session(db_cfg) as db_session:
+            async with get_asession(db_cfg) as db_session:
                 stmt = select(*[column(c) for c in sync_col_names]).select_from(
                     table(tb_cfg.tb_name)
                 )
