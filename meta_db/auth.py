@@ -117,6 +117,40 @@ async def _authenticate_user(username: str, password: str, client_ip: str) -> di
     }
 
 
+def _create_refresh_token(username: str, scopes: list[str]):
+    """创建刷新令牌"""
+    jti = str(uuid.uuid4())
+    refresh_expire = datetime.now() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    refresh_payload = {
+        "sub": username,
+        "scope": " ".join(scopes),
+        "exp": refresh_expire,
+        "jti": jti,
+    }
+    refresh_token = jwt.encode(
+        refresh_payload, CFG.auth.secret_key, algorithm=CFG.auth.algorithm
+    )
+    return {
+        "jti": jti,
+        "refresh_expire": refresh_expire,
+        "refresh_token": refresh_token,
+    }
+
+
+def _create_access_token(username: str, scopes: list[str]):
+    """创建访问令牌"""
+    access_expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_payload = {
+        "sub": username,
+        "scope": " ".join(scopes),
+        "exp": access_expire,
+    }
+    access_token = jwt.encode(
+        access_payload, CFG.auth.secret_key, algorithm=CFG.auth.algorithm
+    )
+    return access_token
+
+
 async def create_refresh_token(username: str, password: str, client_ip: str):
     """创建刷新令牌和访问令牌"""
     # 验证用户名、密码
@@ -124,28 +158,16 @@ async def create_refresh_token(username: str, password: str, client_ip: str):
     allowed_scopes = user["scopes"]
 
     # 创建刷新令牌
-    jti = str(uuid.uuid4())  # 生成 JWT ID
-    refresh_expire = datetime.now() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    refresh_token = jwt.encode(
-        {
-            "sub": username,
-            "scope": " ".join(allowed_scopes),
-            "exp": refresh_expire,
-            "jti": jti,
-        },
-        CFG.auth.secret_key,
-        algorithm=CFG.auth.algorithm,
-    )
+    _result = _create_refresh_token(username, allowed_scopes)
+    jti = _result["jti"]
+    refresh_expire = _result["refresh_expire"]
+    refresh_token = _result["refresh_token"]
     # 存储刷新令牌到数据库
     await _store_refresh_token(jti, username, refresh_expire)
 
     # 创建访问令牌
-    access_expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = jwt.encode(
-        {"sub": username, "scope": " ".join(allowed_scopes), "exp": access_expire},
-        CFG.auth.secret_key,
-        algorithm=CFG.auth.algorithm,
-    )
+    access_token = _create_access_token(username, allowed_scopes)
+
     auth_logger.info(f"{client_ip} | {username}: create tokens success")
 
     return {
@@ -185,29 +207,17 @@ async def create_access_token(refresh_token: str, scopes: list[str], client_ip: 
         )
 
     # 创建访问令牌
-    access_expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_payload = {"sub": username, "scope": " ".join(scopes), "exp": access_expire}
-    access_token = jwt.encode(
-        access_payload, CFG.auth.secret_key, algorithm=CFG.auth.algorithm
-    )
+    access_token = _create_access_token(username, scopes)
 
     # 撤销旧的刷新令牌
     await _revoke_refresh_token_in_db(jti, username)
     # 生成新的刷新令牌
-    jti = str(uuid.uuid4())  # 生成 JWT ID
-    refresh_expire = datetime.now() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    new_refresh_token = jwt.encode(
-        {
-            "sub": username,
-            "scope": " ".join(refresh_token_scopes),
-            "exp": refresh_expire,
-            "jti": jti,
-        },
-        CFG.auth.secret_key,
-        algorithm=CFG.auth.algorithm,
-    )
+    _result = _create_refresh_token(username, refresh_token_scopes)
+    new_jti = _result["jti"]
+    new_refresh_expire = _result["refresh_expire"]
+    new_refresh_token = _result["refresh_token"]
     # 存储新的刷新令牌到数据库
-    await _store_refresh_token(jti, username, refresh_expire)
+    await _store_refresh_token(new_jti, username, new_refresh_expire)
 
     auth_logger.info(
         f"{client_ip} | {username} | {scopes}: refresh token success with rotation"
@@ -250,6 +260,7 @@ async def authentication(
         if security_scopes.scopes
         else "Bearer"
     )
+    # 解码刷新令牌
     try:
         payload = jwt.decode(
             access_token, CFG.auth.secret_key, algorithms=[CFG.auth.algorithm]
