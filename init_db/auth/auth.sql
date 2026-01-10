@@ -35,6 +35,20 @@ CREATE TABLE `user` (
     FOREIGN KEY (`group_name`) REFERENCES `group` (`name`)
 ) COMMENT = '用户';
 
+CREATE TABLE `refresh_token` (
+    `id` SERIAL PRIMARY KEY,
+    `jti` VARCHAR(255) UNIQUE NOT NULL COMMENT 'JWT唯一标识',
+    `username` VARCHAR(100) NOT NULL COMMENT '用户名',
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `expires_at` TIMESTAMP NOT NULL COMMENT '过期时间',
+    `yn` TINYINT NOT NULL DEFAULT 1,
+    FOREIGN KEY (`username`) REFERENCES `user` (`name`) ON DELETE CASCADE
+) COMMENT = '刷新令牌';
+
+CREATE INDEX idx_refresh_token_jti ON refresh_token (jti);
+
+CREATE INDEX idx_refresh_token_username ON refresh_token (username);
+
 INSERT INTO `group` (`name`) VALUES ('root'), ('guest'), ('atguigu');
 
 INSERT INTO

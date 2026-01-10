@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta
 from typing import Annotated
 
@@ -55,9 +56,11 @@ async def create_refresh_token(username: str, password: str, client_ip: str):
         auth_logger.info(f"{client_ip} | {username}: validation user failed")
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     if not user["yn"]:
-        auth_logger.info(f"{client_ip} | {username}: inactive user")
         raise HTTPException(status_code=403, detail="Inactive user")
     allowed_scopes = user["scopes"].split(",") if user["scopes"] else []
+
+    # 生成 JWT ID
+    jti = str(uuid.uuid4())
 
     # 创建刷新令牌
     refresh_expire = datetime.now() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
@@ -65,10 +68,26 @@ async def create_refresh_token(username: str, password: str, client_ip: str):
         "sub": username,
         "scope": " ".join(allowed_scopes),
         "exp": refresh_expire,
+        "jti": jti,
     }
     refresh_token = jwt.encode(
         refresh_payload, CFG.auth.secret_key, algorithm=CFG.auth.algorithm
     )
+
+    # 存储刷新令牌到数据库
+    async with get_asession(CFG.auth_db) as session:
+        await session.execute(
+            text(
+                "INSERT INTO refresh_token (jti, username, expires_at) "
+                "VALUES (:jti, :username, :expires_at)"
+            ),
+            {
+                "jti": jti,
+                "username": username,
+                "expires_at": refresh_expire,
+            },
+        )
+        await session.commit()
 
     # 创建访问令牌
     access_expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -98,8 +117,27 @@ async def create_access_token(refresh_token: str, scopes: list[str], client_ip: 
         )
     except (jwt.ExpiredSignatureError, jwt.exceptions.InvalidTokenError):
         raise HTTPException(status_code=401, detail="Could not validate credentials")
-    if not (username := payload.get("sub")):
+    if (not (username := payload.get("sub"))) or (not (jti := payload.get("jti"))):
         raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+    # 验证 refresh_token 是否在数据库中且未被撤销
+    async with get_asession(CFG.auth_db) as session:
+        result = await session.execute(
+            text(
+                "SELECT expires_at, yn FROM refresh_token "
+                "WHERE jti = :jti AND username = :username"
+            ),
+            {"jti": jti, "username": username},
+        )
+        token_record = result.mappings().fetchone()
+
+    if not token_record:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+    if not token_record["yn"]:
+        raise HTTPException(status_code=401, detail="Refresh token has been revoked")
+    if token_record["expires_at"] < datetime.now():
+        raise HTTPException(status_code=401, detail="Refresh token has expired")
+
     # 验证权限范围
     refresh_token_scopes = payload.get("scope", "").split()
     # 如果没有选择权限，默认使用用户拥有的所有权限
@@ -115,11 +153,11 @@ async def create_access_token(refresh_token: str, scopes: list[str], client_ip: 
 
     # 创建访问令牌
     expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": username, "scope": " ".join(scopes), "exp": expire}
+    access_payload = {"sub": username, "scope": " ".join(scopes), "exp": expire}
     access_token = jwt.encode(
-        payload, CFG.auth.secret_key, algorithm=CFG.auth.algorithm
+        access_payload, CFG.auth.secret_key, algorithm=CFG.auth.algorithm
     )
-    auth_logger.info(f"{client_ip} | {username} | {scopes}: create token success")
+    auth_logger.info(f"{client_ip} | {username} | {scopes}: refresh token success")
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -133,8 +171,22 @@ async def revoke_refresh_token(refresh_token: str, client_ip: str):
         )
     except (jwt.ExpiredSignatureError, jwt.exceptions.InvalidTokenError):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
-    if not (username := payload.get("sub")):
+    if (not (username := payload.get("sub"))) or (not (jti := payload.get("jti"))):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    # 更新数据库中的撤销标记
+    async with get_asession(CFG.auth_db) as session:
+        result = await session.execute(
+            text(
+                "UPDATE refresh_token SET yn = 0 "
+                "WHERE jti = :jti AND username = :username"
+            ),
+            {"jti": jti, "username": username},
+        )
+        await session.commit()
+
+        if result.rowcount == 0:
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
 
     auth_logger.info(f"{client_ip} | {username}: revoke refresh token success")
     return {"message": "Logged out successfully"}
