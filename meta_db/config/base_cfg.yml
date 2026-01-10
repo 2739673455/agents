@@ -40,3 +40,7 @@ llm:
       base_url: https://api.siliconflow.cn/v1
       api_key: ${oc.env:SILICONFLOW_API_KEY}
       model: BAAI/bge-m3
+
+auth:
+  secret_key: "d6a5d730ec247d487f17419df966aec9d4c2a09d2efc9699d09757cf94c68b01"
+  algorithm: HS256

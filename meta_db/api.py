@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from auth import authentication, create_access_token
+from auth import authentication, create_access_token, create_refresh_token
 from fastapi import APIRouter, Depends, Request, Security
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
@@ -121,18 +121,28 @@ async def api_retrieve_cell(req: RetrieveCellRequest):
     return await retrieve_cell(req.db_code, req.keywords)
 
 
-@api_router.post("/token")
-async def login_for_access_token(
-    req: Request,
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+@api_router.post("/refresh_token")
+async def login_refresh_token(
+    req: Request, form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
 ):
     client_ip = req.headers.get("X-Forwarded-For", "").split(",")[0].strip()
     if not client_ip:
         client_ip = getattr(req.client, "host", "unknown")
     username = form_data.username
     password = form_data.password
+    return await create_refresh_token(username, password, client_ip)
+
+
+@api_router.post("/access_token")
+async def refresh_access_token(
+    req: Request, form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
+):
+    client_ip = req.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    if not client_ip:
+        client_ip = getattr(req.client, "host", "unknown")
+    refresh_token = form_data.refresh_token
     scopes = form_data.scopes
-    return await create_access_token(username, password, scopes, client_ip)
+    return await create_access_token(refresh_token, scopes, client_ip)
 
 
 api_router.include_router(metadata_router, prefix="/metadata")

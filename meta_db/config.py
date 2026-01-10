@@ -96,11 +96,17 @@ class LLMCfg(BaseModel):
     models: dict[str, ModelCfg]
 
 
+class AuthCfg(BaseModel):
+    secret_key: str
+    algorithm: str
+
+
 class BaseCfg(BaseModel):
     meta_db: MetaDBCfg
     auth_db: DBCfg
     logging: LoggingCfg
     llm: LLMCfg
+    auth: AuthCfg
 
 
 base_cfg = OmegaConf.load(CONFIG_DIR / "base_cfg.yml")  # 加载
