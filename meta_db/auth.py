@@ -11,7 +11,7 @@ from pwdlib._hash import PasswordHash
 from sqlalchemy import text
 from util import auth_logger
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 3
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 
@@ -47,7 +47,7 @@ async def _store_refresh_token(jti: str, username: str, expires_at: datetime):
 
 
 async def _revoke_refresh_token_in_db(jti: str, username: str) -> bool:
-    """撤销数据库中的刷新令牌，返回是否成功"""
+    """在数据库中撤销刷新令牌，返回是否成功"""
     async with get_asession(CFG.auth_db) as session:
         result = await session.execute(
             text(
@@ -60,9 +60,29 @@ async def _revoke_refresh_token_in_db(jti: str, username: str) -> bool:
         return result.rowcount > 0  # type: ignore
 
 
-async def create_refresh_token(username: str, password: str, client_ip: str):
-    """创建刷新令牌和访问令牌"""
-    # 验证用户名、密码
+async def _validate_refresh_token_in_db(jti: str, username: str):
+    """在数据库中验证刷新令牌"""
+    async with get_asession(CFG.auth_db) as session:
+        result = await session.execute(
+            text(
+                "SELECT yn, expires_at FROM refresh_token "
+                "WHERE jti = :jti AND username = :username"
+            ),
+            {"jti": jti, "username": username},
+        )
+        token_record = result.mappings().fetchone()
+
+    if not token_record:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+    if not token_record["yn"]:
+        raise HTTPException(status_code=401, detail="Refresh token has been revoked")
+    if token_record["expires_at"] < datetime.now():
+        raise HTTPException(status_code=401, detail="Refresh token has expired")
+
+
+async def _authenticate_user(username: str, password: str, client_ip: str) -> dict:
+    """验证用户名和密码，返回用户信息"""
+    # 查询用户信息
     async with get_asession(CFG.auth_db) as session:
         result = await session.execute(
             text(
@@ -76,19 +96,36 @@ async def create_refresh_token(username: str, password: str, client_ip: str):
             {"username": username},
         )
         user = result.mappings().fetchone()
-    # 获取哈希的用户密码；如果用户不存在，使用 dummy_password 进行验证，避免时间攻击
+
+    # 验证密码（使用 dummy_password 避免时间攻击）
     target_hash = user["hashed_password"] if user else HASHED_DUMMY_PASSWORD
     password_correct = password_hash.verify(password, target_hash)
+
     if not (password_correct and user):
         auth_logger.info(f"{client_ip} | {username}: validation user failed")
         raise HTTPException(status_code=401, detail="Incorrect username or password")
     if not user["yn"]:
         raise HTTPException(status_code=403, detail="Inactive user")
-    allowed_scopes = user["scopes"].split(",") if user["scopes"] else []
+
+    # 返回用户信息
+    scopes = user["scopes"].split(",") if user["scopes"] else []
+    return {
+        "name": user["name"],
+        "group_name": user["group_name"],
+        "email": user["email"],
+        "yn": user["yn"],
+        "scopes": scopes,
+    }
+
+
+async def create_refresh_token(username: str, password: str, client_ip: str):
+    """创建刷新令牌和访问令牌"""
+    # 验证用户名、密码
+    user = await _authenticate_user(username, password, client_ip)
+    allowed_scopes = user["scopes"]
 
     # 生成 JWT ID
     jti = str(uuid.uuid4())
-
     # 创建刷新令牌
     refresh_expire = datetime.now() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     refresh_payload = {
@@ -136,22 +173,7 @@ async def create_access_token(refresh_token: str, scopes: list[str], client_ip: 
         raise HTTPException(status_code=401, detail="Could not validate credentials")
 
     # 验证 refresh_token 是否在数据库中且未被撤销
-    async with get_asession(CFG.auth_db) as session:
-        result = await session.execute(
-            text(
-                "SELECT expires_at, yn FROM refresh_token "
-                "WHERE jti = :jti AND username = :username"
-            ),
-            {"jti": jti, "username": username},
-        )
-        token_record = result.mappings().fetchone()
-
-    if not token_record:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
-    if not token_record["yn"]:
-        raise HTTPException(status_code=401, detail="Refresh token has been revoked")
-    if token_record["expires_at"] < datetime.now():
-        raise HTTPException(status_code=401, detail="Refresh token has expired")
+    await _validate_refresh_token_in_db(jti, username)
 
     # 验证权限范围
     refresh_token_scopes = payload.get("scope", "").split()
@@ -177,8 +199,6 @@ async def create_access_token(refresh_token: str, scopes: list[str], client_ip: 
     await _revoke_refresh_token_in_db(jti, username)
 
     # 生成新的 refresh_token
-    import uuid
-
     new_jti = str(uuid.uuid4())
     refresh_expire = datetime.now() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     refresh_payload = {
