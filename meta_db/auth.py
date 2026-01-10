@@ -33,6 +33,33 @@ password_hash = PasswordHash.recommended()
 HASHED_DUMMY_PASSWORD = password_hash.hash("dummy_password")
 
 
+async def _store_refresh_token(jti: str, username: str, expires_at: datetime):
+    """存储刷新令牌到数据库"""
+    async with get_asession(CFG.auth_db) as session:
+        await session.execute(
+            text(
+                "INSERT INTO refresh_token (jti, username, expires_at) "
+                "VALUES (:jti, :username, :expires_at)"
+            ),
+            {"jti": jti, "username": username, "expires_at": expires_at},
+        )
+        await session.commit()
+
+
+async def _revoke_refresh_token_in_db(jti: str, username: str) -> bool:
+    """撤销数据库中的刷新令牌，返回是否成功"""
+    async with get_asession(CFG.auth_db) as session:
+        result = await session.execute(
+            text(
+                "UPDATE refresh_token SET yn = 0 "
+                "WHERE jti = :jti AND username = :username"
+            ),
+            {"jti": jti, "username": username},
+        )
+        await session.commit()
+        return result.rowcount > 0  # type: ignore
+
+
 async def create_refresh_token(username: str, password: str, client_ip: str):
     """创建刷新令牌和访问令牌"""
     # 验证用户名、密码
@@ -75,19 +102,7 @@ async def create_refresh_token(username: str, password: str, client_ip: str):
     )
 
     # 存储刷新令牌到数据库
-    async with get_asession(CFG.auth_db) as session:
-        await session.execute(
-            text(
-                "INSERT INTO refresh_token (jti, username, expires_at) "
-                "VALUES (:jti, :username, :expires_at)"
-            ),
-            {
-                "jti": jti,
-                "username": username,
-                "expires_at": refresh_expire,
-            },
-        )
-        await session.commit()
+    await _store_refresh_token(jti, username, refresh_expire)
 
     # 创建访问令牌
     access_expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -152,14 +167,42 @@ async def create_access_token(refresh_token: str, scopes: list[str], client_ip: 
         )
 
     # 创建访问令牌
-    expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_payload = {"sub": username, "scope": " ".join(scopes), "exp": expire}
+    access_expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_payload = {"sub": username, "scope": " ".join(scopes), "exp": access_expire}
     access_token = jwt.encode(
         access_payload, CFG.auth.secret_key, algorithm=CFG.auth.algorithm
     )
-    auth_logger.info(f"{client_ip} | {username} | {scopes}: refresh token success")
 
-    return {"access_token": access_token, "token_type": "bearer"}
+    # 撤销旧的 refresh_token
+    await _revoke_refresh_token_in_db(jti, username)
+
+    # 生成新的 refresh_token
+    import uuid
+
+    new_jti = str(uuid.uuid4())
+    refresh_expire = datetime.now() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    refresh_payload = {
+        "sub": username,
+        "scope": " ".join(refresh_token_scopes),
+        "exp": refresh_expire,
+        "jti": new_jti,
+    }
+    new_refresh_token = jwt.encode(
+        refresh_payload, CFG.auth.secret_key, algorithm=CFG.auth.algorithm
+    )
+
+    # 存储新的 refresh_token 到数据库
+    await _store_refresh_token(new_jti, username, refresh_expire)
+
+    auth_logger.info(
+        f"{client_ip} | {username} | {scopes}: refresh token success with rotation"
+    )
+
+    return {
+        "access_token": access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+    }
 
 
 async def revoke_refresh_token(refresh_token: str, client_ip: str):
@@ -175,18 +218,9 @@ async def revoke_refresh_token(refresh_token: str, client_ip: str):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
     # 更新数据库中的撤销标记
-    async with get_asession(CFG.auth_db) as session:
-        result = await session.execute(
-            text(
-                "UPDATE refresh_token SET yn = 0 "
-                "WHERE jti = :jti AND username = :username"
-            ),
-            {"jti": jti, "username": username},
-        )
-        await session.commit()
-
-        if result.rowcount == 0:
-            raise HTTPException(status_code=401, detail="Invalid refresh token")
+    success = await _revoke_refresh_token_in_db(jti, username)
+    if not success:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
 
     auth_logger.info(f"{client_ip} | {username}: revoke refresh token success")
     return {"message": "Logged out successfully"}
