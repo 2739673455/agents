@@ -4,7 +4,6 @@ from auth import (
     authentication,
     create_access_token,
     create_refresh_token,
-    oauth2_scheme,
     revoke_refresh_token,
 )
 from fastapi import APIRouter, Depends, Request, Security
@@ -141,20 +140,17 @@ async def login(
 
 
 class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(description="刷新令牌")
     scopes: list[str] = Field(default=[], description="请求的权限范围列表")
 
 
 @api_router.post("/auth/refresh")
-async def refresh(
-    req: Request,
-    refresh_token: Annotated[str, Depends(oauth2_scheme)],
-    body: RefreshTokenRequest,
-):
+async def refresh(req: Request, body: RefreshTokenRequest):
     """使用 refresh_token 换取新的 access_token"""
     client_ip = req.headers.get("X-Forwarded-For", "").split(",")[0].strip()
     if not client_ip:
         client_ip = getattr(req.client, "host", "unknown")
-    return await create_access_token(refresh_token, body.scopes, client_ip)
+    return await create_access_token(body.refresh_token, body.scopes, client_ip)
 
 
 class LogoutRequest(BaseModel):

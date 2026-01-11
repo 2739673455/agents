@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import jwt
@@ -11,8 +11,11 @@ from pwdlib._hash import PasswordHash
 from sqlalchemy import text
 from util import auth_logger
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 1
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+
+# 北京时间时区（UTC+8）
+BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 def init_all_scopes():
@@ -35,7 +38,9 @@ HASHED_DUMMY_PASSWORD = password_hash.hash("dummy_password")
 def _create_refresh_token(username: str, scopes: list[str]):
     """创建刷新令牌"""
     jti = str(uuid.uuid4())  # JWT ID
-    refresh_expire = datetime.now() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    refresh_expire = datetime.now(BEIJING_TZ) + timedelta(
+        days=REFRESH_TOKEN_EXPIRE_DAYS
+    )
     refresh_payload = {
         "sub": username,
         "scope": " ".join(scopes),
@@ -54,7 +59,9 @@ def _create_refresh_token(username: str, scopes: list[str]):
 
 def _create_access_token(username: str, scopes: list[str]):
     """创建访问令牌"""
-    access_expire = datetime.now() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_expire = datetime.now(BEIJING_TZ) + timedelta(
+        minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+    )
     access_payload = {
         "sub": username,
         "scope": " ".join(scopes),
@@ -109,7 +116,7 @@ async def _validate_refresh_token_in_db(jti: str, username: str):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     if not token_record["yn"]:
         raise HTTPException(status_code=401, detail="Refresh token has been revoked")
-    if token_record["expires_at"] < datetime.now():
+    if token_record["expires_at"] < datetime.now(BEIJING_TZ):
         raise HTTPException(status_code=401, detail="Refresh token has expired")
 
 
@@ -186,7 +193,6 @@ async def create_access_token(refresh_token: str, scopes: list[str], client_ip: 
     except (jwt.ExpiredSignatureError, jwt.exceptions.InvalidTokenError):
         raise HTTPException(status_code=401, detail="Could not validate credentials")
     if (not (username := payload.get("sub"))) or (not (jti := payload.get("jti"))):
-        print(payload)
         raise HTTPException(status_code=401, detail="Could not validate credentials")
 
     # 验证刷新令牌是否在数据库中且未被撤销
