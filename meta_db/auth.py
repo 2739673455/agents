@@ -93,7 +93,7 @@ async def _revoke_refresh_token_in_db(jti: str, username: str) -> bool:
         result = await session.execute(
             text(
                 "UPDATE refresh_token SET yn = 0 "
-                "WHERE jti = :jti AND username = :username"
+                "WHERE jti = :jti AND username = :username AND yn = 1"
             ),
             {"jti": jti, "username": username},
         )
@@ -117,7 +117,11 @@ async def _validate_refresh_token_in_db(jti: str, username: str):
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     if not token_record["yn"]:
         raise HTTPException(status_code=401, detail="Refresh token has been revoked")
-    if token_record["expires_at"] < datetime.now(BEIJING_TZ):
+    expires_at = token_record["expires_at"]
+    # 将数据库中的 naive datetime 转换为 aware datetime
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=BEIJING_TZ)
+    if expires_at < datetime.now(BEIJING_TZ):
         raise HTTPException(status_code=401, detail="Refresh token has expired")
 
 
@@ -280,8 +284,8 @@ async def authentication(
             headers={"WWW-Authenticate": authenticate_value},
         )
 
-    # 验证访问令牌中是否存在 sub 字段
-    if (not payload.get("sub")) or (not payload.get("jti")):
+    # 验证访问令牌中是否存在字段
+    if (not payload.get("sub")) or (not payload.get("exp")) or (not payload.get("jti")):
         raise HTTPException(
             status_code=401,
             detail="Could not validate credentials",

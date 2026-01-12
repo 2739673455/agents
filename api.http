@@ -1,0 +1,24 @@
+@baseUrl = http://localhost:12321/api/v1
+
+### 登录获取 token
+POST {{baseUrl}}/auth/login
+Content-Type: application/x-www-form-urlencoded
+
+username=root&password=123321
+
+### 刷新 token
+POST {{baseUrl}}/auth/refresh
+Content-Type: application/json
+
+{
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJyb290Iiwic2NvcGUiOiJjbGVhcl9tZXRhZGF0YSBnZXRfY29sdW1uIGdldF90YWJsZSByZXRyaWV2ZV9jZWxsIHJldHJpZXZlX2NvbHVtbiByZXRyaWV2ZV9rbm93bGVkZ2Ugc2F2ZV9tZXRhZGF0YSIsImV4cCI6MTc2ODc4ODg1MiwianRpIjoiNDQzMzFhOTctYTQ0ZC00YWQ4LTgxYzUtYWZmMWRmMDI4YzY5In0.W83cCvXQt32xH1frgpzqtMvMkC20qr8QlZAZ7hvAQ78",
+    "scope": []
+}
+
+### 登出
+POST {{baseUrl}}/auth/logout
+Content-Type: application/json
+
+{
+    "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJyb290Iiwic2NvcGUiOiJjbGVhcl9tZXRhZGF0YSBnZXRfY29sdW1uIGdldF90YWJsZSByZXRyaWV2ZV9jZWxsIHJldHJpZXZlX2NvbHVtbiByZXRyaWV2ZV9rbm93bGVkZ2Ugc2F2ZV9tZXRhZGF0YSIsImV4cCI6MTc2ODc4ODg1MiwianRpIjoiNDQzMzFhOTctYTQ0ZC00YWQ4LTgxYzUtYWZmMWRmMDI4YzY5In0.W83cCvXQt32xH1frgpzqtMvMkC20qr8QlZAZ7hvAQ78"
+}
