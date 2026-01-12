@@ -57,7 +57,7 @@ def _create_refresh_token(username: str, scopes: list[str]):
     }
 
 
-def _create_access_token(username: str, scopes: list[str]):
+def _create_access_token(jti: str, username: str, scopes: list[str]):
     """创建访问令牌"""
     access_expire = datetime.now(BEIJING_TZ) + timedelta(
         minutes=ACCESS_TOKEN_EXPIRE_MINUTES
@@ -66,6 +66,7 @@ def _create_access_token(username: str, scopes: list[str]):
         "sub": username,
         "scope": " ".join(scopes),
         "exp": access_expire,
+        "jti": jti,
     }
     access_token = jwt.encode(
         access_payload, CFG.auth.secret_key, algorithm=CFG.auth.algorithm
@@ -172,7 +173,7 @@ async def create_refresh_token(username: str, password: str, client_ip: str):
     await _store_refresh_token(jti, username, refresh_expire)
 
     # 创建访问令牌
-    access_token = _create_access_token(username, allowed_scopes)
+    access_token = _create_access_token(jti, username, allowed_scopes)
 
     auth_logger.info(f"{client_ip} | {username}: create tokens success")
 
@@ -212,18 +213,18 @@ async def create_access_token(refresh_token: str, scopes: list[str], client_ip: 
             detail=f"Requested scopes {exceed_scopes} exceed user's permissions",
         )
 
-    # 创建访问令牌
-    access_token = _create_access_token(username, scopes)
-
     # 撤销旧的刷新令牌
     await _revoke_refresh_token_in_db(jti, username)
     # 生成新的刷新令牌
     _result = _create_refresh_token(username, refresh_token_scopes)
-    new_jti = _result["jti"]
-    new_refresh_expire = _result["refresh_expire"]
-    new_refresh_token = _result["refresh_token"]
+    jti = _result["jti"]
+    refresh_expire = _result["refresh_expire"]
+    refresh_token = _result["refresh_token"]
     # 存储新的刷新令牌到数据库
-    await _store_refresh_token(new_jti, username, new_refresh_expire)
+    await _store_refresh_token(jti, username, refresh_expire)
+
+    # 创建访问令牌
+    access_token = _create_access_token(jti, username, scopes)
 
     auth_logger.info(
         f"{client_ip} | {username} | {scopes}: refresh token success with rotation"
@@ -231,7 +232,7 @@ async def create_access_token(refresh_token: str, scopes: list[str], client_ip: 
 
     return {
         "access_token": access_token,
-        "refresh_token": new_refresh_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
     }
 
@@ -266,6 +267,7 @@ async def authentication(
         if security_scopes.scopes
         else "Bearer"
     )
+
     # 解码访问令牌
     try:
         payload = jwt.decode(
@@ -279,7 +281,7 @@ async def authentication(
         )
 
     # 验证访问令牌中是否存在 sub 字段
-    if not payload.get("sub"):
+    if (not payload.get("sub")) or (not payload.get("jti")):
         raise HTTPException(
             status_code=401,
             detail="Could not validate credentials",
