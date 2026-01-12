@@ -1,22 +1,45 @@
 # 功能
 ## 规划
+维护一个结构化的待办列表 todo list
+维护多个任务的状态(pending,in_progress,completed,failed)
+
 
 ## 子代理
-主代理通过 Task 将任务委托给子代理
+主代理通过 task 工具将任务委托给子代理
 子代理拥有独立状态、独立上下文
 子代理执行结束后决定将哪些内容返回主状态、主上下文
 
-## 文件系统
+## 工具
+### 本地工具
+#### 命令行
 - bash
-- read
-- edit
-- write
-- skill
+#### 规划
+- read_todo
+- write_todo
+- edit_todo
+#### 文件系统
+- ls
+- read_file
+- write_file
+- edit_file
+- grep
+- glob
+#### 网络请求
+- http_request
+#### 状态管理
+- read_state
+- write_state
+#### 任务委派
+- task
+### MCP
+
 
 ## 状态管理
-用户的 access_token 存入状态
-代理将中间状态存入 .json 文件或者 sqlite 数据库
-隔离不同会话间的状态文件
+通过 .json 文件或者 sqlite 数据库存储会话状态
+用户 access_token 存入状态
+
+## 上下文管理
+
 
 ## 技能
 https://platform.claude.com/docs/zh-CN/agents-and-tools/agent-skills/overview
@@ -28,6 +51,20 @@ SKILL.md 文件所有内容
 3. 资源与代码(按需加载)
 附加技能目录或文件，在 SKILL.md 中引用
 
+# 架构
+```mermaid
+graph TB
+  FileSystem --> Tools
+  TodoList --> Tools
+  CLI --> Tools
+  HTTPRequest --> Tools
+  StateTool --> Tools
+  TaskTool --> Tools
+
+  MainAgent --> |task tool| SubAgent1
+  MainAgent --> |task tool| SubAgent2
+  MainAgent --> |task tool| SubAgent3
+```
 
 # Benchmark
 - BIRD-SQL
