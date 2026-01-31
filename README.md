@@ -1,76 +1,104 @@
-# 功能
-## 规划
-维护一个结构化的待办列表 todo list
-维护多个任务的状态(pending,in_progress,completed,failed)
+# 元数据
+## 配置信息
+### 数据库信息
+```yaml
+db_code: # 数据库编号
+db_name: # 数据库名称
+db_type: # 数据库类型
+database: # 数据库
+host: # 服务器地址
+port: # 端口号
+user: # 用户名
+password: # 密码
+```
+### 表信息
+```yaml
+table:
+  tb_code: # 表编号
+    tb_name: # 表名
+    tb_meaning: # 表含义
+    # fact_or_dim: # 事实表还是维度表
+    sync_col: # 同步字段值的字段，为空则同步所有字段
+    no_sync_col: # 不同步字段值的字段，先获取同步字段，再从中去掉不同步的字段
+    col_info: # 字段额外信息
+      col1:
+        col_meaning: # 字段含义
+        field_meaning: # JSONB字段中每个字段的含义
+        col_alias: # 字段别名
+        rel_col: table.column # 关联字段
 
-
-## 子代理
-主代理通过 task 工具将任务委托给子代理
-子代理拥有独立状态、独立上下文
-子代理执行结束后决定将哪些内容返回主状态、主上下文
-
-## 工具
-### 本地工具
-#### 命令行
-- bash
-#### 规划
-- read_todo
-- write_todo
-- edit_todo
-#### 文件系统
-- ls
-- read_file
-- write_file
-- edit_file
-- grep
-- glob
-#### 网络请求
-- http_request
-#### 状态管理
-- read_state
-- write_state
-#### 任务委派
-- task
-### MCP
-
-
-## 状态管理
-通过 .json 文件或者 sqlite 数据库存储会话状态
-用户 access_token 存入状态
-
-## 上下文管理
-
-
-## 技能
-https://platform.claude.com/docs/zh-CN/agents-and-tools/agent-skills/overview
-### 渐进式披露
-1. 技能元数据(始终加载)
-SKILL.md 文件最顶端 yaml 格式的元数据，包含 name、description
-2. 技能详细信息(技能触发时加载)
-SKILL.md 文件所有内容
-3. 资源与代码(按需加载)
-附加技能目录或文件，在 SKILL.md 中引用
-
-# 架构
-```mermaid
-graph TB
-  FileSystem --> Tools
-  TodoList --> Tools
-  CLI --> Tools
-  HTTPRequest --> Tools
-  StateTool --> Tools
-  TaskTool --> Tools
-
-  MainAgent --> |task tool| SubAgent1
-  MainAgent --> |task tool| SubAgent2
-  MainAgent --> |task tool| SubAgent3
+```
+### 指标知识
+```yaml
+knowledge: # 知识
+  0:
+    kn_name: # 名称
+    kn_desc: # 描述
+    kn_def: # 定义
+    kn_alias: # 别名
+    rel_kn: # 相关知识
+    rel_col: # 相关字段
+```
+### sql 骨架
+```yaml
+skeleton:
+  - query: # 查询
+    normal_query: # 标准化查询
+    rel_kn: # 相关知识
+    sql: # sql 语句
 ```
 
-# Benchmark
-- BIRD-SQL
-    https://bird-bench.github.io/
-- Spider 2.0
-    https://spider2-sql.github.io/
+## Neo4j Schema
+### 节点
+- DATABASE
+  - db_code # 数据库编号
+  - db_name # 数据库名称
+  - db_type # 数据库类型
+  - database # 数据库
+- TABLE
+  - tb_code # 表编号
+  - tb_name # 表名
+  - tb_meaning # 表含义
+- COLUMN
+  - tb_code # 表编号
+  - col_name # 字段名 (向量化)
+  - col_type # 字段类型
+  - col_comment # 字段注释 (向量化)
+  - fewshot # 示例值 (向量化)
+  - col_meaning # 字段含义 (向量化)
+  - field_meaning # JSONB字段中每个字段的含义 (向量化)
+  - col_alias # 字段别名 (向量化)
+  - rel_col # 相关字段
+- KNOWLEDGE
+  - db_code # 库编号
+  - kn_code # 知识编号
+  - kn_name # 知识名称 (向量化)
+  - kn_desc # 知识描述 (向量化)
+  - kn_def # 知识定义
+  - kn_alias # 知识别名 (向量化)
+  - rel_kn # 相关知识
+  - rel_col # 相关字段
+- EMBED_COL
+  - content # 嵌入内容
+  - embed # 嵌入向量
+- EMBED_KN
+  - content # 嵌入内容
+  - embed # 嵌入向量
+  - tscontent # 全文搜索字段
+- CELL
+  - content # 嵌入内容
+  - embed # 嵌入向量
+  - tscontent # 全文搜索字段
+### 关系
+- TABLE-[BELONG]->DATABASE
+- COLUMN-[BELONG]->TABLE
+- COLUMN-[REL]->COLUMN
+- KNOWLEDGE-[CONTAIN]->KNOWLEDGE
+- KNOWLEDGE-[REL]->COLUMN
+- EMBED_COL-[BELONG]->COLUMN
+- EMBED_KN-[BELONG]->KNOWLEDGE
+- CELL-[BELONG]->COLUMN
+
 # 流程
 ```mermaid
 graph TB
