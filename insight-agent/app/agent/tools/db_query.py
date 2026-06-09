@@ -18,13 +18,25 @@ DB_QUERY_URL = cfg.data_agent.base_url + cfg.data_agent.query
 PREVIEW_ROWS = 5
 
 
-async def _stream_db_query(query: str) -> AsyncIterator[dict[str, Any]]:
-    """流式调用 data-agent 查询接口并逐条产出 SSE 消息"""
+async def _stream_db_query(
+    query: str, conversation_id: int | None = None
+) -> AsyncIterator[dict[str, Any]]:
+    """流式调用 data-agent 查询接口并逐条产出 SSE 消息
+
+    2026-06-09 改造：新增 conversation_id 参数
+    原因：data-agent 端按 conversation_id 分文件记录日志（不限大小），
+          所以需要把 insight-agent 当前的 conversation_id 传过去。
+    """
     client = get_http_client()
+    # 2026-06-09 新增：把 conversation_id 加到 POST body
+    # 后端 data-agent 据此把日志写到 logs/conv-{id}.log
+    payload: dict[str, Any] = {"query": query}
+    if conversation_id is not None:
+        payload["conversation_id"] = conversation_id
     async with client.stream(
         "POST",
         DB_QUERY_URL,
-        json={"query": query},
+        json=payload,
         headers={"accept": "text/event-stream"},
     ) as resp:
         resp.raise_for_status()
@@ -107,9 +119,7 @@ def _write_json_result(file_path: Path, result: Any) -> None:
 @tool
 async def db_query(
     runtime: ToolRuntime,
-    query: Annotated[
-        str, "用户的自然语言数据查询需求，例如查看销量、库存、退货率等业务问题"
-    ],
+    query: Annotated[str, "用户的自然语言数据查询需求，例如查看销量、库存、退货率等业务问题"],
     file_name: Annotated[str, "输出查询结果文件的文件名"],
 ) -> dict[str, Any]:
     """查询数据库业务数据，将最终结果写入当前会话工作区，并返回文件路径、字段和前几行数据
@@ -126,11 +136,22 @@ async def db_query(
         return {"status": "error", "message": "workspace_dir not found in config"}
     workspace_dir = Path(workspace_dir)
 
+    # === 2026-06-09 新增：从 workspace_dir 路径里提取 conversation_id
+    # insight-agent 的 workspace_dir 格式：D:/.../user_{user_id}/{conversation_id}/
+    # 例：D:/.../user_1/6/ → conversation_id=6
+    # === 新增结束 ===
+    conversation_id: int | None = None
+    try:
+        conversation_id = int(workspace_dir.name)
+    except (ValueError, TypeError):
+        # 路径最后一段不是数字（旧测试场景 / 异常路径），不传 conversation_id
+        conversation_id = None
+
     # 流式消费 data-agent 响应，收集 final result
     result: Any = None
 
     try:
-        async for chunk in _stream_db_query(query):
+        async for chunk in _stream_db_query(query, conversation_id=conversation_id):
             chunk_type = chunk.get("type")
 
             # "result" 类型承载最终查询结果
@@ -139,10 +160,13 @@ async def db_query(
                 continue
 
             # "error" 类型表示 data-agent 查询失败
+            # === 2026-06-08 修复：data-agent execute_sql 节点异常时 emit {"type": "error", "error": "..."}
+            # 原因：之前没有 error 类型的解析，导致异常 chunk 被忽略，
+            #       流程走到 result is None → 返回 "finished without result" 让用户困惑
             if chunk_type == "error":
                 return {
                     "status": "error",
-                    "message": chunk.get("message", "unknown error"),
+                    "message": chunk.get("error", chunk.get("message", "unknown error")),
                 }
     except Exception as exc:
         # HTTP 错误、连接中断等底层异常
@@ -176,17 +200,13 @@ async def db_query(
             _write_json_result(file_path, result)
             fields = []
             # 返回前 N 行预览
-            preview_rows = (
-                result[:PREVIEW_ROWS] if isinstance(result, list) else [result]
-            )
+            preview_rows = result[:PREVIEW_ROWS] if isinstance(result, list) else [result]
             # Pandas 读取提示
             pandas_read_hint = f"pd.read_json('{file_path.as_posix()}')"
     except Exception as exc:
         return {
             "status": "error",
-            "message": (
-                f"failed to write query result file: {type(exc).__name__}: {exc!r}"
-            ),
+            "message": (f"failed to write query result file: {type(exc).__name__}: {exc!r}"),
         }
 
     return {

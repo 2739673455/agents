@@ -30,6 +30,9 @@ export const ROUTES = {
 
 export const CHAT_API_ROUTES = {
   createConversation: "/api/chat/create",
+  // === 2026-06-09 新增：双击会话名修改标题 ===
+  updateConversation: "/api/chat/update",
+  // === 新增结束 ===
   listConversations: "/api/chat/ls",
   deleteConversations: "/api/chat/delete",
   getMessages: (conversationId: number) => `/api/chat/ls/${conversationId}`,

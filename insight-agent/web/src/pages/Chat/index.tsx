@@ -75,6 +75,11 @@ export default function ChatPage() {
   const markStreaming = useChatStore((state) => state.markStreaming);
   const unmarkStreaming = useChatStore((state) => state.unmarkStreaming);
   const ensureConversation = useChatStore((state) => state.ensureConversation);
+  // === 2026-06-09 新增：监听后端 LLM 标题生成结果 ===
+  const updateConversationTitle = useChatStore((state) => state.updateConversationTitle);
+  // === 2026-06-09 新增：双击会话名→重命名（调 API + 本地更新）===
+  const renameConversation = useChatStore((state) => state.renameConversation);
+  // === 新增结束 ===
   const appendMessage = useChatStore((state) => state.appendMessage);
   const clearAuth = useAuthStore((state) => state.clearAuth);
   const user = useAuthStore((state) => state.user);
@@ -111,14 +116,19 @@ export default function ChatPage() {
     });
   }, []);
 
-  // 辅助函数：启动空闲断开定时器（agent 结束后 5s 关闭连接）
+  // 辅助函数：启动空闲断开定时器
+  // === 2026-06-09 改造：5s → 30 分钟 ===
+  // 原因：原 5s 太激进，agent 结束后立刻断 socket，但用户可能还要看几秒历史消息
+  //       或切换 sidebar 看其他会话，都不应该断
+  // 30 分钟是合理的"用户离开时间"上限，足够避免连接长时间挂起
+  // === 改造结束 ===
   const startIdleTimer = useCallback(
     (conversationId: number) => {
       const existing = idleTimersRef.current.get(conversationId);
       if (existing) clearTimeout(existing);
       const timer = setTimeout(() => {
         closeSocket(conversationId);
-      }, 5_000);
+      }, 30 * 60 * 1000);  // 30 分钟
       idleTimersRef.current.set(conversationId, timer);
     },
     [closeSocket]
@@ -308,14 +318,10 @@ export default function ChatPage() {
         existingSocket.readyState === WebSocket.CONNECTING)
     ) {
       return () => {
-        const socket = socketsRef.current.get(conversationId);
-        if (
-          socket &&
-          socket.readyState === WebSocket.OPEN &&
-          !useChatStore.getState().streamingConversations.has(conversationId)
-        ) {
-          startIdleTimer(conversationId);
-        }
+        // === 2026-06-09 改造：复用现有连接时不做任何事（保持连接） ===
+        // 原代码：5s 后断
+        // 新策略：保持连接，**只有页面卸载**才统一关闭
+        // === 改造结束 ===
       };
     }
 
@@ -332,13 +338,9 @@ export default function ChatPage() {
         socket.onopen = () => {
           closingSocketsRef.current.delete(conversationId);
           setOpenSocketIds((prev) => new Set([...prev, conversationId]));
-          // 若用户在 socket 建连期间已切走，且该会话未在生成，启动空闲定时器
-          if (
-            routeConversationIdRef.current !== conversationId &&
-            !useChatStore.getState().streamingConversations.has(conversationId)
-          ) {
-            startIdleTimer(conversationId);
-          }
+          // === 2026-06-09 改造：去掉"建连期间切走就 5s 关"逻辑
+          // 原因：同前——保持连接，**只有页面卸载**才统一关闭
+          // === 改造结束 ===
 
           // 新建会话时，首条消息会先暂存在 ref，待连接建立后补发
           if (pendingMessageRef.current?.conversationId === conversationId) {
@@ -354,11 +356,20 @@ export default function ChatPage() {
         socket.onmessage = (event) => {
           const payload = JSON.parse(event.data) as
             | WebSocketMessageResponse
-            | WebSocketErrorResponse;
+            | WebSocketErrorResponse
+            | { type: "conversation_renamed"; conversation_id: number; title: string };
 
           if (payload.type === "error") {
             unmarkStreaming(conversationId);
             toast.error(payload.content);
+            return;
+          }
+
+          // 2026-06-09 新增：监听后端推送的"标题已更新"事件
+          // 后端在收到首条用户消息后异步 LLM 总结 → 落库 → 推这个事件给前端
+          if (payload.type === "conversation_renamed") {
+            const renamedPayload = payload as { type: "conversation_renamed"; conversation_id: number; title: string };
+            updateConversationTitle(renamedPayload.conversation_id, renamedPayload.title);
             return;
           }
 
@@ -367,10 +378,11 @@ export default function ChatPage() {
             unmarkStreaming(conversationId);
             void loadConversations();
 
-            // 后台会话：agent 结束后启动空闲定时器；当前会话保持连接
-            if (routeConversationIdRef.current !== conversationId) {
-              startIdleTimer(conversationId);
-            }
+            // === 2026-06-09 改造：去掉"后台会话 agent 结束启动 idle timer 关 socket"
+            // 原因：原来 5s 激进断开 → 用户在主会话看消息时，后台会话的 socket 在 5s 后断
+            //       如果用户几秒后切到后台会话 → 又要重新建连 → 网络抖动
+            // 新策略：socket 保持连接，**只有页面卸载**才统一关闭
+            // === 改造结束 ===
           }
         };
 
@@ -420,15 +432,12 @@ export default function ChatPage() {
 
     return () => {
       cancelled = true;
-      // 切换离开时，若该会话未在生成中，5s 后断开连接
-      const socket = socketsRef.current.get(conversationId);
-      if (
-        socket &&
-        socket.readyState === WebSocket.OPEN &&
-        !useChatStore.getState().streamingConversations.has(conversationId)
-      ) {
-        startIdleTimer(conversationId);
-      }
+      // === 2026-06-09 改造：useEffect cleanup 不再主动关 socket ===
+      // 原因：原代码"切换离开时启动 5s idle timer 关 socket"——但 useEffect 可能因
+      //       非 routeConversationId 变化的依赖项变化而 cleanup（虽然现在不会，但 React Strict Mode 会双跑），
+      //       启动 idle timer 会导致"看似什么都没做，5s 后 WebSocket 就断了"
+      // 新策略：socket 持续保持，**只有页面卸载**才统一关闭（beforeunload 已有）
+      // === 改造结束 ===
     };
   }, [
     appendMessage,
@@ -663,6 +672,11 @@ export default function ChatPage() {
           user={user}
           onCreate={handleCreateConversation}
           onDelete={(conversationId) => void handleDeleteConversation(conversationId)}
+          // === 2026-06-09 新增：双击会话名→调 store.renameConversation ===
+          onRename={async (conversationId, newTitle) => {
+            await renameConversation(conversationId, newTitle);
+          }}
+          // === 新增结束 ===
           onLogout={() => {
             const token = getAccessToken();
             void authApi

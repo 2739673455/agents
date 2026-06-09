@@ -1,5 +1,9 @@
 import { LogOut, MessageSquareMore, Plus, Trash2, User2 } from "lucide-react";
-import { Link } from "react-router-dom";
+// === 2026-06-09 改造：去掉 import { Link }，改用 useNavigate + onClick
+// 原因：<Link> 默认响应 onClick 抢走双击事件，导致双击进入编辑的同时
+//       Link 触发 navigate → 路由参数变化 → useEffect cleanup → WebSocket 关闭
+// === 改造结束 ===
+import { useNavigate } from "react-router-dom";
 import { buildAuthProfileRedirectUrl } from "@/auth";
 import type { UserResponse } from "@/auth";
 import { Button } from "@/components/ui/button";
@@ -7,6 +11,9 @@ import { Separator } from "@/components/ui/separator";
 import { ROUTES } from "@/config/settings";
 import { cn } from "@/lib/utils";
 import type { ConversationResponse } from "@/types";
+// === 2026-06-09 新增：双击会话名编辑的子组件 ===
+import { ConversationTitleItem } from "./ConversationTitleItem";
+// === 新增结束 ===
 
 interface ChatSidebarProps {
   conversations: ConversationResponse[];
@@ -14,6 +21,9 @@ interface ChatSidebarProps {
   user: UserResponse | null;
   onCreate: () => void;
   onDelete: (conversationId: number) => void;
+  // === 2026-06-09 新增：重命名回调（由父组件传 store.renameConversation）===
+  onRename: (conversationId: number, newTitle: string) => Promise<void>;
+  // === 新增结束 ===
   onLogout: () => void;
 }
 
@@ -23,8 +33,15 @@ export function ChatSidebar({
   user,
   onCreate,
   onDelete,
+  onRename,
   onLogout,
 }: ChatSidebarProps) {
+  // === 2026-06-09 改造：用 useNavigate + onClick 替代 <Link>
+  // 原因：之前用 <Link> 包住 <ConversationTitleItem>，双击时 Link 的 onClick 抢先触发
+  //       navigate → 路由参数变化 → useEffect cleanup → WebSocket 关闭
+  //       改造后：手动调 navigate，ConversationTitleItem 内部可以正确处理双击
+  // === 改造结束 ===
+  const navigate = useNavigate();
   // 用户信息按钮跳转到认证中心个人页，并把当前聊天页作为返回地址
   const profileUrl = buildAuthProfileRedirectUrl(window.location.href);
 
@@ -56,9 +73,33 @@ export function ChatSidebar({
                     : "bg-transparent text-slate-700 hover:bg-[#e4e9f1] hover:text-slate-900"
                 )}
               >
-                <Link
-                  to={ROUTES.chatConversation(conversation.conversation_id)}
-                  className="relative flex min-w-0 flex-1 items-center gap-3 px-4 py-3"
+                {/* 2026-06-09 改造：去 <Link> 改 onClick + useNavigate
+                    原因：<Link> 默认响应 onClick 抢走双击事件（双击=2 次单击+1 次双击）
+                         导致双击进入编辑模式的同时 Link 触发 navigate →
+                         路由参数变化 → useEffect cleanup → WebSocket 关闭
+                    改后：ConversationTitleItem 内部可以正确处理双击（包括 input 失焦） */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className="relative flex min-w-0 flex-1 cursor-pointer items-center gap-3 px-4 py-3"
+                  onClick={() => {
+                    // === 2026-06-09 改造：只在不是当前路由时才 navigate
+                    // 原因：双击会触发 2 次 onClick + 1 次 onDoubleClick；
+                    //       如果 2 次 navigate 都跑，且当前已经在这个路由，会触发 React Router
+                    //       内部 state 更新（即使 path 不变），导致 useEffect 重新执行 → WebSocket cleanup
+                    // 改成只在 isActive = false 时 navigate
+                    if (!isActive) {
+                      navigate(ROUTES.chatConversation(conversation.conversation_id));
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      if (!isActive) {
+                        navigate(ROUTES.chatConversation(conversation.conversation_id));
+                      }
+                    }
+                  }}
                 >
                   <MessageSquareMore
                     className={cn(
@@ -66,15 +107,17 @@ export function ChatSidebar({
                       isActive ? "text-slate-700" : "text-slate-600 group-hover:text-slate-800"
                     )}
                   />
-                  <span
-                    className={cn(
-                      "line-clamp-1 min-w-0 text-sm font-medium transition-colors",
-                      isActive ? "text-slate-800" : "text-slate-700 group-hover:text-slate-900"
-                    )}
-                  >
-                    {conversation.title}
-                  </span>
-                </Link>
+                  <ConversationTitleItem
+                    title={conversation.title}
+                    isActive={isActive}
+                    onSubmit={(newTitle) =>
+                      onRename(conversation.conversation_id, newTitle)
+                    }
+                    onCancel={() => {
+                      /* nothing to clean */
+                    }}
+                  />
+                </div>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -85,7 +128,7 @@ export function ChatSidebar({
                       : "text-slate-400 hover:bg-red-100/80 hover:text-red-600"
                   )}
                   onClick={(event) => {
-                    // 删除按钮挂在链接卡片内部，需要阻止默认跳转
+                    // 删除按钮：阻止冒泡到外层 div（避免触发导航）
                     event.preventDefault();
                     event.stopPropagation();
                     onDelete(conversation.conversation_id);

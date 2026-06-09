@@ -20,6 +20,15 @@ export const chatApi = {
     });
   },
 
+  // === 2026-06-09 新增：修改会话标题（双击会话名调用）===
+  updateConversation(conversationId: number, title: string) {
+    return appClient.post(CHAT_API_ROUTES.updateConversation, {
+      conversation_id: conversationId,
+      title,
+    });
+  },
+  // === 新增结束 ===
+
   getMessages(conversationId: number) {
     return appClient.get<MessageListResponse>(CHAT_API_ROUTES.getMessages(conversationId));
   },

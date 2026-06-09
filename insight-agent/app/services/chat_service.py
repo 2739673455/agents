@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,10 +58,8 @@ async def load_conversation_context(
 
         # ======== 应用压缩上下文 =========
         # 从数据库加载最新压缩上下文
-        context_compaction_entity = (
-            await context_compaction_repo.get_latest_by_conversation_id(
-                db_session, conversation_id
-            )
+        context_compaction_entity = await context_compaction_repo.get_latest_by_conversation_id(
+            db_session, conversation_id
         )
         # 如果存在压缩上下文，则替换历史消息前缀
         if context_compaction_entity:
@@ -123,9 +122,7 @@ def _extract_compaction(
     cutoff_index = event["cutoff_index"]
     summary_payload = event["summary_message"]
     summary = (
-        summary_payload.content
-        if hasattr(summary_payload, "content")
-        else str(summary_payload)
+        summary_payload.content if hasattr(summary_payload, "content") else str(summary_payload)
     )
     logger.info(f"{conversation_id=}: {summary=}")
     # seq_offset: context_seq 与 messages 索引之间的偏移量
@@ -194,9 +191,7 @@ async def run_agent_turn(
                     cur_context_seq += 1  # 递增 context_seq
                     response.context_seq = cur_context_seq
                     # 消息入库，同时追加到内存消息列表
-                    await _add_message(
-                        db_session, user_id, conversation_id, messages, response
-                    )
+                    await _add_message(db_session, user_id, conversation_id, messages, response)
                     # 记录模型最后一条消息的 finish_reason
                     last_finish_reason = response.finish_reason
                     yield response
@@ -215,3 +210,130 @@ async def run_agent_turn(
             break
 
     logger.info(f"{conversation_id=}: agent finished")
+
+
+# === 会话标题生成（基于用户首个问题 LLM 总结） ===
+
+_title_llm = None
+_title_llm_lock = asyncio.Lock()
+
+
+async def _get_title_llm():
+    global _title_llm
+    if _title_llm is not None:
+        return _title_llm
+    async with _title_llm_lock:
+        if _title_llm is not None:
+            return _title_llm
+        from langchain.chat_models import init_chat_model
+        from app.core import settings
+
+        cfg = settings.cfg.lm_config
+        model_cfg = cfg.models[cfg.active]
+        _title_llm = init_chat_model(
+            model_provider="openai",
+            model=model_cfg.model,
+            base_url=model_cfg.base_url,
+            api_key=model_cfg.api_key,
+            profile=dict(model_cfg.profile),
+            request_timeout=30,
+            max_retries=1,
+        )
+        return _title_llm
+
+
+_TITLE_SYSTEM_PROMPT = """你是一个会话标题生成助手。你的任务是根据用户的首个问题，生成一个**5 到 10 个汉字**的简短对话标题。
+
+要求：
+- 用中文，简洁明了
+- 直接反映用户想问什么
+- 不要加标点符号（除非必要）
+- 不要用"关于..."等套话开头
+- 不要用引号包裹
+- 只输出标题本身，不要任何解释
+
+示例：
+用户问题：最近 3 个月的退款归因分析
+标题：3个月退款归因
+
+用户问题：帮我查一下订单总金额和退款金额
+标题：订单与退款金额
+
+用户问题：今天天气怎么样
+标题：天气查询
+
+用户问题：上周的销量下降了，是什么原因
+标题：上周销量下滑分析"""
+
+
+async def generate_conversation_title(user_message: str) -> str | None:
+    if not user_message or not user_message.strip():
+        return None
+    try:
+        logger.info(f"[title-gen] 开始生成标题，用户消息前30字: {user_message[:30]!r}")
+        llm = await _get_title_llm()
+        logger.info(f"[title-gen] LLM 实例已获取，开始调用 ainvoke")
+        resp = await asyncio.wait_for(
+            llm.ainvoke(
+                [
+                    SystemMessage(content=_TITLE_SYSTEM_PROMPT),
+                    HumanMessage(content=user_message[:500]),
+                ]
+            ),
+            timeout=30,
+        )
+        title = (resp.content or "").strip()
+        title = title.strip('"\'"').strip()
+        if len(title) > 30:
+            title = title[:30]
+        if not title:
+            logger.warning("[title-gen] LLM 返回空标题")
+            return None
+        logger.info(f"[title-gen] 生成成功: {title!r}")
+        return title
+    except asyncio.TimeoutError:
+        logger.warning("[title-gen] 调用超时（30s），跳过")
+        return None
+    except Exception as e:
+        logger.warning(f"[title-gen] 失败: {type(e).__name__}: {e!r}")
+        return None
+
+
+async def generate_and_save_title_background(
+    conversation_id: int,
+    user_id: int,
+    user_message: str,
+) -> str | None:
+    """后台异步任务：生成标题 + 落库
+
+    为什么不放在主流程：
+    - LLM 调用 1-3 秒，会阻塞首条消息响应
+    - 失败时不能影响主 Agent 流程
+    - 标题可以"迟一点"显示（用户已经在看 Agent 回复了）
+    """
+    title = await generate_conversation_title(user_message)
+    if not title:
+        return None
+    try:
+        # 独立 DB session（主流程的 session 可能已经关闭）
+        async with get_db_session() as db_session:
+            conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+            if conversation is None or conversation.user_id != user_id:
+                logger.warning(
+                    f"{conversation_id=}: 对话不存在或不属于用户，跳过标题更新"
+                )
+                return None
+            # 2026-06-09 改动：只有当前 title 还是"新对话"才更新
+            # 防止用户已经手动改过标题后被覆盖
+            if conversation.title and conversation.title != "新对话":
+                logger.info(
+                    f"{conversation_id=}: 标题已被改过 ({conversation.title!r})，跳过"
+                )
+                return None
+            await conversation_repo.update(db_session, conversation, title=title)
+            await db_session.commit()
+            logger.info(f"{conversation_id=}: 标题已更新为 {title!r}")
+            return title
+    except Exception as e:
+        logger.warning(f"{conversation_id=}: 保存标题失败: {type(e).__name__}: {e!r}")
+        return None

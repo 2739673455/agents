@@ -1398,7 +1398,12 @@ tables:
       - name: order_status
         role: dimension
         description: 订单状态
-        alias: []
+        # === 2026-06-08 追加 alias ===
+        alias:
+          - 订单状态
+          - 订单情况
+          - 订单进度
+        # === 追加结束 ===
         sync: true
       - name: seller_id
         role: dimension
@@ -1945,7 +1950,49 @@ tables:
       - name: refund_status
         role: dimension
         description: 退款状态
-        alias: []
+        # === 2026-06-08 追加 alias ===
+        alias:
+          - 退款状态
+          - 退款进度
+          - 退款结果
+        # === 追加结束 ===
+        sync: false
+      - name: refund_apply_amount
+        role: dimension
+        description: 申请退款金额
+        # === 2026-06-08 追加 alias ===
+        alias:
+          - 退款金额
+          - 申请金额
+          - 退款数
+        # === 追加结束 ===
+        sync: false
+      - name: is_quality_issue
+        role: dimension
+        description: 是否质量问题
+        # === 2026-06-08 追加 alias ===
+        alias:
+          - 质量问题
+          - 是否质量
+          - 品质问题
+          - 质量
+        # === 追加结束 ===
+        sync: false
+      - name: apply_time
+        role: dimension
+        description: 申请时间
+        alias:
+          - 退款申请时间
+        sync: false
+      - name: refund_success_time
+        role: dimension
+        description: 退款成功时间
+        # === 2026-06-08 追加 alias ===
+        alias:
+          - 退款完成时间
+          - 退款到账时间
+          - 退款成功
+        # === 追加结束 ===
         sync: false
       - name: refund_apply_amount
         role: measure
@@ -1995,27 +2042,58 @@ tables:
       - name: refund_reason_code
         role: dimension
         description: 退款原因编码
-        alias: []
+        # === 2026-06-08 追加 alias（解决 LLM 召回不到 → 幻觉 refund_reason 字段问题）===
+        alias:
+          - 退款原因
+          - 退款理由
+          - 退款类型
+          - 退款类别
+          - 退款编码
+          - 退款码
+          - 原因编码
+        # === 追加结束 ===
         sync: true
       - name: refund_reason_desc
         role: dimension
         description: 退款原因描述
-        alias: []
+        # === 2026-06-08 追加 alias ===
+        alias:
+          - 退款说明
+          - 退款描述
+          - 退款原因说明
+          - 原因描述
+        # === 追加结束 ===
         sync: true
       - name: refund_freight_amount
         role: measure
         description: 退运费金额
-        alias: []
+        # === 2026-06-08 追加 alias ===
+        alias:
+          - 退运费
+          - 运费退款
+          - 退款运费
+        # === 追加结束 ===
         sync: true
       - name: refund_tax_amount
         role: measure
         description: 退税金额
-        alias: []
+        # === 2026-06-08 追加 alias ===
+        alias:
+          - 退税
+          - 退款税
+          - 税费退款
+        # === 追加结束 ===
         sync: true
       - name: need_return_goods
         role: dimension
         description: 是否需要退货
-        alias: []
+        # === 2026-06-08 追加 alias ===
+        alias:
+          - 是否退货
+          - 需要退货
+          - 退货
+          - 退货标志
+        # === 追加结束 ===
         sync: true
       - name: return_tracking_no
         role: dimension

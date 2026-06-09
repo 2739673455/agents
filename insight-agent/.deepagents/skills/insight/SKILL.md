@@ -4,6 +4,11 @@ description: 当任务涉及归因分析、业务诊断、活动复盘、营销�
 ---
 
 # 归因分析技能
+
+> ⚠️ **读我自己的提示**：本文件 > 100 行。deepagents 的 read_file 工具默认只读 100 行。
+> 调用我时必须用 `read_file(path="/skills/insight/SKILL.md", limit=2000)` 才能读到全部内容，
+> 否则会丢掉后半段（退款归因专题、HTML 渲染规范等关键内容）。
+
 ## 什么时候进入归因分析模式
 出现以下任一情况时，不要只做单点查数：
 - 用户问“为什么”
@@ -13,20 +18,107 @@ description: 当任务涉及归因分析、业务诊断、活动复盘、营销�
 - 用户只给了一个核心指标，但本质是经营诊断问题
 
 ## 核心要求
-- 数据库数据只能通过 `db_query` 获取
+- 数据库数据**只能**通过 `db_query` 获取（**绝对不要**直接 exec python 读 MySQL）
 - 不要停留在单点查数；默认做多维拆解和归因判断
 - 查询结果要保存为 pandas 可直接加载的文件
 - 中间结果写入 `analysis/`
 - 最终输出 `outputs/*.html`
 - Python 一律使用 `uv run`，安装依赖一律使用 `uv add`
 
+## 电商数仓字段硬约束
+**这一节专门针对 warehouse 库的 dwd_fact_trade_* / dwd_dim_* 表，避免 AI 幻觉字段名和数值。**
+
+| 字段类别 | 真实取值 | 易错点 |
+|---|---|---|
+| `refund_status` | 中文枚举：`'退款成功'` / `'退款审核中'` / `'已拒绝'` / `'已关闭'` | **严禁用 `'SUCCESS'`**（数据库里不存在） |
+| `pay_status` | 中文枚举：`'支付成功'` / `'支付失败'` / `'处理中'` | 同上，**严禁用英文** |
+| `refund_reason_desc` | 中文：`'不想要了'` / `'商品质量问题'` / `'尺寸/规格不符'` 等 | 严禁用 `'refund_reason'`（字段不存在） |
+| `refund_success_time` | datetime，钱到账时间 | 用作"退款归因"时间窗口 |
+| `apply_time` | datetime，退款申请时间 | 用户感知到的"申请退款"时间 |
+| 所有 `*_amount` 字段 | 单位**分**（不是元）| SQL 必须 `* 0.01` 转元再展示 |
+| `dwd_dim_user_info_df.province_code` | 关联 `dwd_dim_geo_region_df.region_code` | 严禁直接 join `region_id`（字段不存在） |
+| `dwd_fact_trade_order_detail_di.paid_amount` | 实付金额（分）| 计算退款率分母用这个 |
+| `dwd_fact_trade_order_detail_di.payable_amount` | 应付金额 | 跟 paid_amount 差 = 优惠 |
+
+**SQL 必须显式写**：
+- 退款时间窗口：`WHERE refund_success_time >= 'YYYY-MM-DD' AND refund_success_time < 'YYYY-MM-DD'`
+- 退款状态：`AND refund_status = '退款成功'`
+- 金额转元：`SUM(refund_success_amount) * 0.01 AS refund_yuan`
+- 退款率口径：`SUM(refund_success_amount) / SUM(paid_amount)`（同窗口）
+
+**严禁**：
+- WHERE refund_status = 'SUCCESS' / 'PENDING'（**过滤掉所有行**）
+- SUM(refund_success_amount)（不 *0.01，数字大 100 倍）
+- 跨窗口的分子分母（3 个月退款金额 / 3 年订单金额 → 退款率 > 100%）
+
 ## 默认工作流
 1. 明确分析对象、目标指标、对比口径、归因目标
-2. 用 `db_query` 获取基础数据
-3. 用 pandas 清洗、聚合、对比、分层
+2. **【数据获取铁律】** 只能走 `db_query`：
+   - 1 个 db_query 拿基础数据（退款表 + 订单表 + 维表）
+   - **【绝对不要】** `uv run python -c "import pymysql; ..."`（绕开 db_query 会丢失元数据召回 + 字段别名 + 大表保护）
+3. 把 db_query 返回的 CSV/JSON 用 pandas 读、清洗、聚合、对比、分层
 4. 默认补齐关键维度并做交叉分析
-5. 形成归因判断、异常点和机会点
-6. 输出中间文件、报告 payload 和最终 HTML
+5. **【数据对账】** 至少做 3 步对账：
+   - A. 跑 1 个"总量校验" SQL，跟 AI 自己算的数对比，偏差 >10% 主动重算
+   - B. 跑 1 个"分类占比校验" SQL，确认各维度占比用的是同窗口数据
+   - C. 跑 1 个"金额单位校验" SQL，确认 *0.01 已加
+6. 形成归因判断、异常点和机会点
+7. 输出中间文件、报告 payload 和最终 HTML
+
+## 退款归因专题工作流
+针对"最近 3 个月退款归因"类问题，标准工作流：
+
+### Step 1: 明确时间口径
+"最近 3 个月"在业务上有 3 个可能含义，**必须问清或主动选定**：
+- **申请时间 `apply_time`**：用户感知到的"我申请退款了"——业务上最贴近"客户行为"
+- **退款成功时间 `refund_success_time`**：钱到账时间——财务上最贴近"实际损失金额"
+- **退款完结时间 `close_time`**：流程结束——含"已拒绝"和"已关闭"
+- **默认推荐 `refund_success_time`**（最常用，反馈"实际损失"）
+
+### Step 2: 1 个 db_query 拿核心数据
+让 data-agent 一次返回：
+```sql
+SELECT
+  DATE_FORMAT(r.refund_success_time, '%Y-%m')   AS refund_month,
+  r.refund_reason_desc                            AS reason,
+  g.province_name                                 AS province,
+  p.payment_channel_code                          AS channel,
+  SUM(r.refund_success_amount) * 0.01            AS refund_yuan,
+  COUNT(DISTINCT r.order_id)                      AS refund_orders
+FROM dwd_fact_trade_refund_detail_di r
+LEFT JOIN dwd_fact_trade_pay_detail_di p ON r.order_id = p.order_id
+LEFT JOIN dwd_dim_user_info_df u ON r.user_id = u.user_id
+LEFT JOIN dwd_dim_geo_region_df g ON u.province_code = g.region_code
+WHERE r.refund_status = '退款成功'
+  AND r.refund_success_time >= 'YYYY-MM-DD'
+  AND r.refund_success_time <  'YYYY-MM-DD'
+GROUP BY refund_month, reason, province, channel
+```
+**关键约束**：
+- `refund_status = '退款成功'`（中文）
+- `* 0.01` 转元
+- 时间窗口左闭右开
+- 4 个 GROUP BY 维度（月/原因/地域/渠道）够交叉
+
+### Step 3: pandas 拆解
+```python
+import pandas as pd
+df = pd.read_csv('/abs/path/result.csv')
+# 月度趋势
+df.groupby('refund_month')['refund_yuan'].sum()
+# 退款原因 Top 5
+df.groupby('reason')['refund_yuan'].sum().nlargest(5)
+# 渠道 × 原因 交叉
+df.pivot_table(index='channel', columns='reason', values='refund_yuan', aggfunc='sum', fill_value=0)
+# 地域 Top 10
+df.groupby('province')['refund_yuan'].sum().nlargest(10)
+```
+
+### Step 4: 写 HTML 报告
+- 必备 4 个 section：核心摘要 / 月度趋势 / 退款原因 / 渠道 × 原因交叉
+- 数字带单位（"元" / "万元"）
+- 退款率 14.25% 这种**口径标注**清楚（分子分母都是哪段时间）
+- 末尾"附录"标注：时间口径 / 状态过滤 / 金额单位 / 已知局限
 
 ## 必须补齐的分析动作
 - 基线对比：同比、环比、活动前后或对照组
@@ -59,7 +151,7 @@ description: 当任务涉及归因分析、业务诊断、活动复盘、营销�
 - 活动阶段 × 渠道表现
 
 ## 归因结论的写法
-不要只写“谁最高”“谁最低”，要明确：
+不要只写"谁最高""谁最低"，要明确：
 - 指标变了什么，幅度多少
 - 变化主要来自哪些维度
 - 哪个因素是主因，哪些只是表象
@@ -91,23 +183,26 @@ description: 当任务涉及归因分析、业务诊断、活动复盘、营销�
 ## pandas 与 uv 规则
 优先从 `db_query` 返回的文件继续分析，不要重复查库。
 
-正确示例：
+**正确示例（推荐）**：
 ```bash
+# 1. 短命令用 -c（命令行 < 4KB 时 OK）
 uv run python -c "import pandas as pd; df = pd.read_csv('/abs/path/result.csv'); print(df.head())"
+
+# 2. 长代码必须 write_file 写文件再执行（Windows 命令行有 8KB 上限）
+# Step 1: write_file 写 analysis_step1.py
+# Step 2: uv run python /abs/path/analysis_step1.py
 ```
 
-```bash
-uv run python -c "import pandas as pd; df = pd.read_json('/abs/path/result.json'); print(df.head())"
-```
+**关键约束**：
+- `uv run python -c "..."` 在 Windows 单行命令 **>4KB 时会报"命令行太长"**——必须拆成文件
+- 禁止 echo "长代码" > file.py（绕开 = 用 write_file）
+- 禁止 `python script.py`（直接 python 不会激活 venv）
+- 禁止 `pip install ...`（统一 `uv add xxx`）
 
+**安装依赖**：
 ```bash
 uv add seaborn
 ```
-
-禁止：
-- `python script.py`
-- `python -c "..."`
-- `pip install ...`
 
 ## HTML 报告要求
 如果用户要详细分析、汇报页、可分享结果，默认输出 HTML，而不是只在对话里贴结论。

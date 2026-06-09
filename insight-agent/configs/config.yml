@@ -22,22 +22,40 @@ log:
   max_file_size: 10MB # 单个日志文件最大大小
 
 lm_config:
-  active: deepseek-v4-flash-openrouter
+  # === 2026-06-08 切换：active 从 OpenRouter 切到 DeepSeek 官方 ===
+  # 原配置（OpenRouter 走 deepseek-v4-flash，收费模型）：
+  # active: deepseek-v4-flash-openrouter
+
+  # 新配置（DeepSeek 官方 deepseek-v4-flash，更便宜，国内直连）：
+  active: deepseek-v4-flash
   models:
-    deepseek-v4-flash-openrouter:
-      model: deepseek/deepseek-v4-flash
-      base_url: https://openrouter.ai/api/v1
-      api_key: ${oc.env:OPENROUTER_API_KEY}
+    # === 2026-06-08 新增：DeepSeek 官方主模型（active 用这个）===
+    # TODO: 用户需在 insight-agent/configs/.env 中填入真实 DEEPSEEK_API_KEY
+    deepseek-v4-flash:
+      model: deepseek-v4-flash
+      base_url: https://api.deepseek.com/v1
+      api_key: ${oc.env:DEEPSEEK_API_KEY}
       params: {}
       profile:
-        max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值
-    qwen3.6-plus-openrouter:
-      model: qwen/qwen3.6-plus
-      base_url: https://openrouter.ai/api/v1
-      api_key: ${oc.env:OPENROUTER_API_KEY}
-      params: {}
-      profile:
-        max_input_tokens: 1000000 # 模型上下文长度，用于计算对话压缩阈值
+        max_input_tokens: 1048576  # DeepSeek  上下文长度，用于计算对话压缩阈值
+    # === 新增结束 ===
+
+    # === 2026-06-08 保留：原 OpenRouter 配置注释掉（万一以后想用 OpenRouter 切回去，取消注释即可）===
+    # deepseek-v4-flash-openrouter:
+    #   model: deepseek/deepseek-v4-flash
+    #   base_url: https://openrouter.ai/api/v1
+    #   api_key: ${oc.env:OPENROUTER_API_KEY}
+    #   params: {}
+    #   profile:
+    #     max_input_tokens: 1048576
+    # qwen3.6-plus-openrouter:
+    #   model: qwen/qwen3.6-plus
+    #   base_url: https://openrouter.ai/api/v1
+    #   api_key: ${oc.env:OPENROUTER_API_KEY}
+    #   params: {}
+    #   profile:
+    #     max_input_tokens: 1000000
+    # === 保留结束 ===
 
 mcp:
   # MCP 工具

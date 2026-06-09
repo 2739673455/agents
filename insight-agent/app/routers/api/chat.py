@@ -78,9 +78,7 @@ async def api_delete_conversations(
         # 禁用对话
         await conversation_repo.update(db_session, conversation, yn=0)
         # 禁用对话下所有消息
-        await message_repo.update_yn_by_conversation_id(
-            db_session, conversation_id, yn=0
-        )
+        await message_repo.update_yn_by_conversation_id(db_session, conversation_id, yn=0)
         # 禁用对话下所有上下文压缩记录
         await context_compaction_repo.update_yn_by_conversation_id(
             db_session, conversation_id, yn=0
@@ -175,9 +173,7 @@ async def api_create_websocket_token(
     )
 
 
-async def _validate_and_accept(
-    websocket: WebSocket, conversation_id: int
-) -> int | None:
+async def _validate_and_accept(websocket: WebSocket, conversation_id: int) -> int | None:
     """校验 WebSocket 令牌并接受连接，返回 user_id；失败时关闭连接返回 None"""
     # 从请求参数中获取 WebSocket 临时令牌
     websocket_token = websocket.query_params.get("websocket_token")
@@ -222,9 +218,9 @@ async def _receive_user_message(
     except (json.JSONDecodeError, ValidationError) as e:
         # 格式错误则发送错误响应
         await websocket.send_json(
-            chat_schema.WebSocketErrorResponse(
-                content=f"Invalid request: {str(e)}"
-            ).model_dump(mode="json")
+            chat_schema.WebSocketErrorResponse(content=f"Invalid request: {str(e)}").model_dump(
+                mode="json"
+            )
         )
         return None
 
@@ -281,9 +277,7 @@ class _TurnStream:
         """向客户端推送 Agent 消息，断开时自动标记并通知 Agent 中断"""
         try:
             await self._ws.send_json(
-                chat_schema.WebSocketMessageResponse(message=msg).model_dump(
-                    mode="json"
-                )
+                chat_schema.WebSocketMessageResponse(message=msg).model_dump(mode="json")
             )
         except WebSocketDisconnect:
             self.disconnected = True  # 标记连接已断开
@@ -293,9 +287,7 @@ class _TurnStream:
         """向客户端推送错误消息"""
         try:
             await self._ws.send_json(
-                chat_schema.WebSocketErrorResponse(content=content).model_dump(
-                    mode="json"
-                )
+                chat_schema.WebSocketErrorResponse(content=content).model_dump(mode="json")
             )
         except WebSocketDisconnect:
             self.disconnected = True  # 标记连接已断开
@@ -348,6 +340,28 @@ async def api_websocket_chat(
             ctx.context_seq += 1
             user_message.context_seq = ctx.context_seq
 
+            # === 会话首条用户消息触发后台 LLM 生成标题 ===
+            # load_conversation_context 中空对话 cur_context_seq = -1
+            # 首条消息 ctx.context_seq += 1 → 0
+            if ctx.context_seq == 0:
+                _user_text = (
+                    user_message.parts[0].text
+                    if user_message.parts and hasattr(user_message.parts[0], "text")
+                    else ""
+                )
+                logger.info(f"{conversation_id=}: 首条用户消息(context_seq=0)，触发后台标题生成")
+                if _user_text and _user_text.strip():
+                    # 后台跑：起 1 个独立 task，**不阻塞主 Agent 流程**
+                    asyncio.create_task(
+                        _background_title_and_notify(
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            user_message=_user_text,
+                            websocket=websocket,
+                        )
+                    )
+            # === 新增结束 ===
+
             async with get_db_session() as db_session:
                 if ctx.is_draft:
                     # 草稿对话转正式对话
@@ -378,3 +392,43 @@ async def api_websocket_chat(
 
     except (WebSocketDisconnect, RuntimeError):
         logger.info(f"{conversation_id=}: WebSocket disconnected")
+
+
+# === 2026-06-09 新增：后台任务 + WebSocket 通知标题变更 ===
+async def _background_title_and_notify(
+    conversation_id: int,
+    user_id: int,
+    user_message: str,
+    websocket: WebSocket,
+) -> None:
+    try:
+        await asyncio.sleep(3)
+        new_title = await chat_service.generate_and_save_title_background(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            user_message=user_message,
+        )
+        if not new_title:
+            return
+        # 通过 WebSocket 推送标题更新事件
+        # 前端监听后更新 sidebar 的 conversation.title
+        try:
+            await websocket.send_json(
+                {
+                    "type": "conversation_renamed",
+                    "conversation_id": conversation_id,
+                    "title": new_title,
+                }
+            )
+            logger.info(
+                f"{conversation_id=}: 已通过 WebSocket 推送标题更新: {new_title!r}"
+            )
+        except Exception as send_err:
+            # 客户端可能已断开连接，不算严重错误
+            logger.debug(
+                f"{conversation_id=}: 推送标题更新失败（连接可能已断开）: {send_err!r}"
+            )
+    except Exception as e:
+        logger.warning(
+            f"{conversation_id=}: 后台标题生成异常: {type(e).__name__}: {e!r}"
+        )
