@@ -10,8 +10,8 @@ class File:
     enable: bool
     level: str
     path: str
-    rotation: str
-    retention: str
+    rotation: str = ""
+    retention: str = ""
 
 
 @dataclass

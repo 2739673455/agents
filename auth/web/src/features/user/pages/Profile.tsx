@@ -1,9 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, LogOut, PanelsTopLeft, Pencil, User } from "lucide-react";
+import { LogOut, PanelsTopLeft, Pencil, User } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { clearAccessToken, useAuthStore } from "@/features/auth";
+import { BackButton } from "@/shared/components/BackButton";
 import { Badge } from "@/shared/components/ui/badge";
 import { Button } from "@/shared/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/ui/card";
@@ -27,26 +28,11 @@ export default function Profile() {
   const [sourceReturnUri, setSourceReturnUri] = useState<string | null>(() =>
     new URLSearchParams(location.search).get("redirect_uri")
   );
-  const [showReturnButton, setShowReturnButton] = useState(false);
   const [editingField, setEditingField] = useState<EditField>(null);
 
   useEffect(() => {
     setSourceReturnUri(new URLSearchParams(location.search).get("redirect_uri"));
   }, [location.search]);
-
-  useEffect(() => {
-    if (!sourceReturnUri) {
-      setShowReturnButton(false);
-      return;
-    }
-    const handleMouseMove = (event: MouseEvent) => {
-      const isNearTop = event.clientY <= 72;
-      const isNearCenter = Math.abs(event.clientX - window.innerWidth / 2) <= 180;
-      setShowReturnButton(isNearTop && isNearCenter);
-    };
-    window.addEventListener("mousemove", handleMouseMove);
-    return () => window.removeEventListener("mousemove", handleMouseMove);
-  }, [sourceReturnUri]);
 
   const handleEditSuccess = async () => {
     await refetchUser();
@@ -68,7 +54,8 @@ export default function Profile() {
 
   const handleBackToSource = () => {
     if (!sourceReturnUri) return;
-    window.location.assign(sourceReturnUri);
+    // 跨应用回跳必须整页跳转；用 replace 不留历史，避免用户"后退"又回到个人中心
+    window.location.replace(sourceReturnUri);
   };
 
   const renderInfoRow = (
@@ -109,22 +96,17 @@ export default function Profile() {
 
   return (
     <div className="min-h-screen flex bg-[#e8e4df]">
-      {sourceReturnUri ? (
-        <div className="fixed left-1/2 top-0 z-50 -translate-x-1/2 pointer-events-none">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleBackToSource}
-            className={`pointer-events-auto mt-2 bg-[#f0ece6] border-stone-300/60 text-stone-700 hover:bg-stone-200/50 rounded-xl shadow-[6px_6px_12px_#c9c5be,-6px_-6px_12px_#ffffff] transition-all duration-300 ${
-              showReturnButton ? "translate-y-0 opacity-100" : "-translate-y-16 opacity-0"
-            }`}
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            返回
-          </Button>
-        </div>
-      ) : null}
       <aside className="w-64 border-r border-stone-300/60 bg-[#f0ece6] flex flex-col">
+        {sourceReturnUri ? (
+          // 2026-06-12 改造：返回按钮作为侧边栏第一个元素，与"用户中心"标题、菜单、登出按钮并列
+          <div className="p-3 border-b border-stone-300/60">
+            <BackButton
+              onClick={handleBackToSource}
+              variant="inline"
+              className="w-full justify-center"
+            />
+          </div>
+        ) : null}
         <div className="p-4 text-center font-semibold text-lg text-stone-700">用户中心</div>
         <nav className="flex-1 space-y-1 p-2">
           <button

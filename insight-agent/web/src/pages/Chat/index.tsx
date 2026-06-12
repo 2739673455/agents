@@ -696,6 +696,7 @@ export default function ChatPage() {
               conversationId={routeConversationId}
               conversationSelected={Boolean(routeConversationId)}
               isLoading={isLoadingMessages}
+              isStreaming={isStreaming}
               messages={currentMessages}
               onOpenHtmlAttachment={handleOpenHtmlAttachment}
               viewportRef={messageViewportRef}

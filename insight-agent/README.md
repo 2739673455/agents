@@ -3,6 +3,13 @@
 运行 dbmock 项目  
 启动 data-agent 服务，构建元数据索引  
 启动 auth 服务  
+启动 Redis 服务（WebSocket 令牌存储，必须）  
+启动 MySQL 服务（数据库，必须）  
+
+> 可直接用 docker-compose 一键启动 Redis + MySQL：
+> ```bash
+> cd docker && docker compose up -d
+> ```
 
 # 快速开始
 后端配置：  

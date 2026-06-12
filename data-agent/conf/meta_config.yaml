@@ -1994,11 +1994,6 @@ tables:
           - 退款成功
         # === 追加结束 ===
         sync: false
-      - name: refund_apply_amount
-        role: measure
-        description: 申请退款金额
-        alias: []
-        sync: false
       - name: refund_approve_amount
         role: measure
         description: 审核通过退款金额
@@ -2011,22 +2006,6 @@ tables:
         description: 退款成功金额
         alias:
           - 实际退款金额
-        sync: false
-      - name: is_quality_issue
-        role: dimension
-        description: 是否质量问题
-        alias: []
-        sync: false
-      - name: apply_time
-        role: dimension
-        description: 申请时间
-        alias:
-          - 退款申请时间
-        sync: false
-      - name: refund_success_time
-        role: dimension
-        description: 退款成功时间
-        alias: []
         sync: false
       - name: etl_date
         role: dimension

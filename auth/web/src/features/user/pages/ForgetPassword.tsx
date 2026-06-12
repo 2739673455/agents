@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { BackButton } from "@/shared/components/BackButton";
 import { Button } from "@/shared/components/ui/button";
 import {
   Card,
@@ -91,6 +92,8 @@ export default function ForgetPassword() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#e8e4df] p-8">
+      {/* 2026-06-12 新增：固定左上角的立体感"返回登录"按钮 */}
+      <BackButton onClick={() => navigate(loginLink)} label="返回登录" />
       <div className="w-full max-w-md rounded-3xl bg-[#e8e4df] p-8 shadow-[inset_6px_6px_12px_#c9c5be,inset_-6px_-6px_12px_#ffffff]">
         <Card className="rounded-2xl border-0 bg-[#e8e4df] shadow-none">
           <CardHeader className="text-center pb-2">

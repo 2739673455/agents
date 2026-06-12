@@ -1,4 +1,4 @@
-import { LayoutGrid, Loader2, User } from "lucide-react";
+import { LayoutGrid, Loader2, User, ArrowLeft } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -47,6 +47,13 @@ export default function Platform() {
 	const { hasScope, isAuthenticated, isLoading } = useAuthStore();
 	const { user } = useCurrentUserStore();
 	const [hoveredFeature, setHoveredFeature] = useState<string | null>(null);
+
+	// 2026-06-12 新增：识别 redirect_uri 查询参数，作为"返回来源应用"入口
+	// 例如其它子应用在跳来平台中心时附加 redirect_uri，平台 header 显示返回按钮
+	const sourceReturnUri = useMemo(() => {
+		if (typeof window === "undefined") return null;
+		return new URLSearchParams(window.location.search).get("redirect_uri");
+	}, []);
 
 	// 为每个功能预计算颜色
 	const featureColors = useMemo(() => {
@@ -103,8 +110,22 @@ export default function Platform() {
 			{/* 顶部导航栏 */}
 			<header className="sticky top-0 z-50 w-full border-b border-stone-300/60 bg-[#f0ece6] shadow-[0_4px_12px_rgba(0,0,0,0.08)]">
 				<div className="flex h-16 items-center justify-between px-6">
-					{/* Logo */}
+					{/* Logo 与返回按钮 */}
 					<div className="flex items-center gap-3">
+						{sourceReturnUri ? (
+							// 2026-06-12 新增：立体感返回按钮，回到 redirect_uri 来源应用
+							<button
+								type="button"
+								onClick={() => window.location.replace(sourceReturnUri)}
+								title="返回来源应用"
+								className="inline-flex items-center gap-2 rounded-2xl bg-[#f0ece6] px-4 h-10 text-sm font-medium text-stone-700 border border-stone-300/60 shadow-[6px_6px_14px_#c9c5be,-6px_-6px_14px_#ffffff] transition-all duration-200 hover:shadow-[3px_3px_8px_#c9c5be,-3px_-3px_8px_#ffffff] hover:translate-y-[1px] hover:text-stone-900 active:shadow-[inset_4px_4px_8px_#c9c5be,inset_-4px_-4px_8px_#ffffff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-500/40"
+							>
+								<span className="flex h-6 w-6 items-center justify-center rounded-lg bg-[#e8e4df] shadow-[inset_2px_2px_4px_#c9c5be,inset_-2px_-2px_4px_#ffffff]">
+									<ArrowLeft className="h-4 w-4 text-stone-700" />
+								</span>
+								<span>返回</span>
+							</button>
+						) : null}
 						<div className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-600 shadow-lg">
 							<LayoutGrid className="h-5 w-5 text-white" />
 						</div>

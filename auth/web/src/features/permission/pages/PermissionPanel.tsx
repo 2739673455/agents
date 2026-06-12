@@ -1,4 +1,6 @@
 import { Link2Off, Loader2, Shield, User, Users, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { BackButton } from "@/shared/components/BackButton";
 import { Button } from "@/shared/components/ui/button";
 import {
   Tooltip,
@@ -21,6 +23,7 @@ import {
 } from "../hooks";
 
 export default function PermissionPanel() {
+  const navigate = useNavigate();
   const { loading, data, detail } = usePermissionData();
   const {
     filter,
@@ -68,8 +71,24 @@ export default function PermissionPanel() {
 
   return (
     <TooltipProvider>
-      <div className="h-screen bg-[#e8e4df] p-6 overflow-hidden">
-        <div className="grid grid-cols-3 gap-6 h-full min-h-0">
+      <div className="h-screen bg-[#e8e4df] overflow-hidden flex">
+        {/* 2026-06-12 改造：左侧栏，返回按钮作为第一个元素 */}
+        <aside className="w-64 shrink-0 border-r border-stone-300/60 bg-[#f0ece6] flex flex-col">
+          <div className="p-3 border-b border-stone-300/60">
+            <BackButton
+              // 2026-06-12 改造：直接用浏览器后退（navigate(-1)），与浏览器后退行为完全一致
+              // 这样从 /profile?redirect_uri=... 进入 /permission 后，返回能回到 /profile?redirect_uri=...，
+              // URL 上的 redirect_uri 不丢失，Profile 侧栏的"返回源应用"按钮能正常渲染
+              onClick={() => navigate(-1)}
+              variant="inline"
+              className="w-full justify-center"
+            />
+          </div>
+          <div className="p-4 text-center font-semibold text-lg text-stone-700">权限管理</div>
+          <nav className="flex-1" />
+        </aside>
+        <div className="flex-1 min-w-0 p-6 flex flex-col gap-4">
+          <div className="grid grid-cols-3 gap-6 flex-1 min-h-0">
           <PermissionColumn
             title="用户"
             icon={<User className="h-5 w-5 text-stone-600" />}
@@ -315,7 +334,7 @@ export default function PermissionPanel() {
             </button>
           </div>
         )}
-
+        </div>
         <UserDialogs roles={data.roles} />
 
         <RoleDialogs users={data.users} permissions={data.permissions} />

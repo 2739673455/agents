@@ -45,7 +45,7 @@ admin:
 
 email:
   # 邮件服务
-  smtp_host: smtp.qq.com # SMTP 服务器地址
+  smtp_host: smtp.163.com # SMTP 服务器地址
   smtp_port: 465 # SMTP 端口
   smtp_user: ${oc.env:SMTP_USER} # SMTP 用户名（邮箱地址）
   smtp_password: ${oc.env:SMTP_PASSWORD} # SMTP 密码

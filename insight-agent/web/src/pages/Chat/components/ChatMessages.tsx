@@ -200,6 +200,33 @@ function getToolArgsPreview(args?: Record<string, unknown>): string | null {
   return `${preview.slice(0, TOOL_ARGS_PREVIEW_MAX_LENGTH).trimEnd()}...`;
 }
 
+// 当 Agent 正在处理时显示的思考指示器（三颗脉冲圆点 + "正在思考，请稍等..."）
+function ThinkingIndicator() {
+  return (
+    <div className="flex w-full justify-start">
+      <div className="rounded-[1.75rem] bg-transparent px-4 py-3 text-slate-800">
+        <div className="flex items-center gap-2.5">
+          <div className="flex gap-1.5">
+            <span
+              className="h-2 w-2 animate-thinking-dot rounded-full bg-slate-400"
+              style={{ animationDelay: "0s" }}
+            />
+            <span
+              className="h-2 w-2 animate-thinking-dot rounded-full bg-slate-400"
+              style={{ animationDelay: "0.2s" }}
+            />
+            <span
+              className="h-2 w-2 animate-thinking-dot rounded-full bg-slate-400"
+              style={{ animationDelay: "0.4s" }}
+            />
+          </div>
+          <span className="text-sm text-slate-500">正在思考，请稍等...</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // 助手文本支持 Markdown，用户文本保持原样展示
 function MarkdownText({ text }: { text: string }) {
   return (
@@ -671,6 +698,7 @@ interface ChatMessagesProps {
   conversationId: number | null;
   conversationSelected: boolean;
   isLoading: boolean;
+  isStreaming?: boolean;
   messages: MessageSchema[];
   onOpenHtmlAttachment?: (attachment: Attachment) => void;
   viewportRef: RefObject<HTMLDivElement | null>;
@@ -680,12 +708,17 @@ export function ChatMessages({
   conversationId,
   conversationSelected,
   isLoading,
+  isStreaming,
   messages,
   onOpenHtmlAttachment,
   viewportRef,
 }: ChatMessagesProps) {
   // 渲染前先把原始消息整理成适合 UI 的扁平列表
   const displayItems = buildDisplayItems(conversationId, messages);
+
+  // 当流式输出中，且最后一条消息是用户消息（助手还未响应）时，显示思考指示器
+  const showThinking =
+    isStreaming && messages.length > 0 && messages[messages.length - 1].role === "user";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-0 bg-[#fefdfa] shadow-none">
@@ -720,6 +753,7 @@ export function ChatMessages({
                 />
               )
             )}
+            {showThinking ? <ThinkingIndicator /> : null}
           </div>
         )}
       </div>

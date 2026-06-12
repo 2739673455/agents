@@ -9,6 +9,7 @@ import {
   handleAuthCallback,
   useAuthStore,
 } from "@/features/auth";
+import { BackButton } from "@/shared/components/BackButton";
 import { ROUTE_PATHS } from "@/shared/config/settings";
 
 export default function AuthCallbackPage() {
@@ -65,11 +66,18 @@ export default function AuthCallbackPage() {
   }
 
   return (
-    <AuthErrorScreen
-      title="登录状态建立失败"
-      message={errorMessage}
-      actionLabel="回到首页"
-      onAction={() => navigate(ROUTE_PATHS.home, { replace: true })}
-    />
+    <>
+      {/* 2026-06-12 新增：固定左上角的立体感"返回首页"按钮，让出错时也能随时离开 */}
+      <BackButton
+        onClick={() => navigate(ROUTE_PATHS.home, { replace: true })}
+        label="返回首页"
+      />
+      <AuthErrorScreen
+        title="登录状态建立失败"
+        message={errorMessage}
+        actionLabel="回到首页"
+        onAction={() => navigate(ROUTE_PATHS.home, { replace: true })}
+      />
+    </>
   );
 }
