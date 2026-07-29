@@ -58,12 +58,6 @@ class LMConfigCfg(BaseModel):
     models: dict[str, ModelCfg]
 
 
-# 认证服务
-class AuthServiceCfg(BaseModel):
-    base_url: str
-    introspection: str
-
-
 class DataAgentCfg(BaseModel):
     base_url: str
     query: str
@@ -75,7 +69,6 @@ class Cfg(BaseModel):
     log: LogCfg
     mcp: dict[str, MCPCfg]
     lm_config: LMConfigCfg
-    auth_service: AuthServiceCfg
     data_agent: DataAgentCfg
     cors_origins: list[str]
     port: int

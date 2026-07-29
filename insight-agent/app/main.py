@@ -2,11 +2,6 @@ from contextlib import asynccontextmanager
 from typing import cast
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.types import ExceptionHandler
-
 from app import routers
 from app.core import middlewares
 from app.core.database import close_db
@@ -16,6 +11,10 @@ from app.core.log_setup import setup_logger
 from app.core.redis import close_redis
 from app.core.settings import cfg
 from app.plugins.lifespan import init_database
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.types import ExceptionHandler
 
 
 @asynccontextmanager
