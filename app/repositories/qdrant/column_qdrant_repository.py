@@ -2,7 +2,7 @@ from dataclasses import asdict
 from typing import Any
 
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import VectorParams, Distance, PointStruct
+from qdrant_client.models import Distance, PointStruct, VectorParams
 
 from app.conf.app_config import app_config
 from app.entities.column_info import ColumnInfo

@@ -4,9 +4,9 @@
 - 执行 `docker compose up -d`
 
 ## 在数据库中建表并导入数据
-- 元数据表 [app/scripts/meta.sql](app/scripts/meta.sql)
+- 数据库表 [app/scripts/sql/mysql](app/scripts/sql/mysql)
   ```bash
-  uv run -m app.scripts.init_db  # 初始化元数据库
+  uv run app/scripts/init_db.py  # 初始化 meta 和 chat 数据库
   ```
 - 业务数据: dbmock
 

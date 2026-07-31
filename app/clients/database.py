@@ -1,6 +1,6 @@
 """数据库管理 — 引擎、会话工厂、FastAPI 依赖、上下文管理器"""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import (
@@ -12,15 +12,13 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.settings import MySQLCfg, cfg
 
-ENGINE_KWARGS_MAP: dict[str, dict[str, object]] = {
-    "mysql": {
-        "echo": False,
-        "pool_size": 10,
-        "max_overflow": 20,
-        "pool_pre_ping": True,
-        "pool_recycle": 1800,
-        "pool_timeout": 30,
-    },
+ENGINE_KWARGS_MAP: dict[str, object] = {
+    "echo": False,
+    "pool_size": 10,
+    "max_overflow": 20,
+    "pool_pre_ping": True,
+    "pool_recycle": 1800,
+    "pool_timeout": 30,
 }
 
 
@@ -28,33 +26,33 @@ class DatabaseManager:
     """数据库管理器"""
 
     def __init__(self) -> None:
-        self._engines: dict[str, AsyncEngine] = {}
-        self._session_makers: dict[str, async_sessionmaker[AsyncSession]] = {}
+        self._url: str | None = None
+        self._engine: AsyncEngine | None = None
+        self._session_maker: async_sessionmaker[AsyncSession] | None = None
 
     def _get_engine(self, db_url: str, db_driver: str) -> AsyncEngine:
         """获取或创建数据库引擎"""
-        if db_url not in self._engines:
-            self._engines[db_url] = create_async_engine(
-                db_url,
-                **ENGINE_KWARGS_MAP[db_driver],
-            )
-        return self._engines[db_url]
+        if self._engine is None:
+            self._engine = create_async_engine(db_url, **ENGINE_KWARGS_MAP)
+        return self._engine
 
     def _get_session_maker(
         self, db_url: str, db_driver: str
     ) -> async_sessionmaker[AsyncSession]:
         """获取或创建会话工厂"""
-        if db_url not in self._session_makers:
+        if self._session_maker is None:
             engine = self._get_engine(db_url, db_driver)
-            self._session_makers[db_url] = async_sessionmaker(
+            self._session_maker = async_sessionmaker(
                 engine,
                 class_=AsyncSession,
                 expire_on_commit=False,
             )
-        return self._session_makers[db_url]
+        return self._session_maker
 
     @asynccontextmanager
-    async def session(self, db_url: str, db_driver: str) -> AsyncIterator[AsyncSession]:
+    async def session(
+        self, db_url: str, db_driver: str
+    ) -> AsyncGenerator[AsyncSession]:
         """创建数据库会话上下文"""
         session_maker = self._get_session_maker(db_url, db_driver)
         async with session_maker() as db_session:
@@ -62,23 +60,18 @@ class DatabaseManager:
 
     async def close_all(self) -> None:
         """关闭所有数据库引擎"""
-        for engine in self._engines.values():
+        for engine in self._engine.values():
             await engine.dispose()
-        self._engines.clear()
-        self._session_makers.clear()
+        self._engine.clear()
+        self._session_maker.clear()
 
 
-def _get_db_url(db_cfg: MySQLCfg, db_driver: str, async_mode: bool = True) -> str:
+def _get_db_url(db_cfg: MySQLCfg) -> str:
     """获取数据库连接 URL"""
-    if db_driver == "mysql":
-        if not isinstance(db_cfg, MySQLCfg):
-            raise TypeError("MySQL 配置错误")
-        driver = "mysql+asyncmy" if async_mode else "mysql+pymysql"
-        return (
-            f"{driver}://{db_cfg.user}:{db_cfg.password}@"
-            f"{db_cfg.host}:{db_cfg.port}/{db_cfg.database}"
-        )
-    raise ValueError(f"不支持的数据库驱动: {db_driver}")
+    return (
+        f"mysql+asyncmy://{db_cfg.user}:{db_cfg.password}@"
+        f"{db_cfg.host}:{db_cfg.port}/{db_cfg.database}"
+    )
 
 
 _db_manager = DatabaseManager()

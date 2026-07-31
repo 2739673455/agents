@@ -18,18 +18,6 @@ from app.agent.nodes.recall_metric import recall_metric
 from app.agent.nodes.recall_value import recall_value
 from app.agent.nodes.validate_sql import validate_sql
 from app.agent.state import DataAgentState
-from app.clients.embedding_client_manager import embedding_client_manager
-from app.clients.es_client_manager import es_client_manager
-from app.clients.mysql_client_manager import (
-    dw_mysql_client_manager,
-    meta_mysql_client_manager,
-)
-from app.clients.qdrant_client_manager import qdrant_client_manager
-from app.repositories.es.value_es_repository import ValueESRepository
-from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
-from app.repositories.mysql.meta.meta_mysql_repository import MetaMySQLRepository
-from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantRepository
-from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
 
 graph_builder = StateGraph(state_schema=DataAgentState, context_schema=DataAgentContext)
 

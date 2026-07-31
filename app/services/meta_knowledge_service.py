@@ -41,9 +41,7 @@ class MetaKnowledgeService:
 
         serialized = []
         for value in examples:
-            if isinstance(value, datetime):
-                serialized.append(value.isoformat())
-            elif isinstance(value, date):
+            if isinstance(value, (datetime, date)):
                 serialized.append(value.isoformat())
             elif isinstance(value, Decimal):
                 serialized.append(float(value))
