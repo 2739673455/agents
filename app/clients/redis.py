@@ -1,6 +1,6 @@
 from redis.asyncio import Redis
 
-from app.core.settings import cfg
+from app.conf.app_config import cfg
 
 _redis_client: Redis | None = None
 

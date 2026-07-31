@@ -10,7 +10,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.agent.mcp import get_mcp_tools
 from app.agent.tools import db_query, return_file
-from app.core import settings
+from app.conf import app_config
 
 # 路径常量
 CURRENT_DIR = Path(__file__).parent  # agent
@@ -59,7 +59,7 @@ def _backend_factory(rt: Any) -> CompositeBackend:
 async def _build_agent() -> CompiledStateGraph:
     """创建 Agent 实例"""
     # 初始化模型
-    model_cfg = settings.cfg.lm_config.models[settings.cfg.lm_config.active]
+    model_cfg = app_config.cfg.lm_config.models[app_config.cfg.lm_config.active]
     model = init_chat_model(
         model_provider="openai",
         model=model_cfg.model,

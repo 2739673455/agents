@@ -1,12 +1,14 @@
 from langchain.chat_models import init_chat_model
 
-from app.conf.app_config import app_config
+from app.conf.app_config import cfg
+
+model_cfg = cfg.lm_config.models[cfg.lm_config.active]
 
 llm = init_chat_model(
-    model=app_config.llm.model_name,
+    model=model_cfg.model,
     model_provider="openai",
-    api_key=app_config.llm.api_key,
-    base_url=app_config.llm.base_url,
+    api_key=model_cfg.api_key,
+    base_url=model_cfg.base_url,
     temperature=0,
 )
 

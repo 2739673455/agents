@@ -5,8 +5,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from app.conf.app_config import LogCfg, cfg
 from app.core import context
-from app.core.settings import LogCfg, cfg
 
 # 路径常量
 CURRENT_DIR = Path(__file__).parent
@@ -74,7 +74,7 @@ def _setup_file_logger(cfg: LogCfg):
         sink=str(LOG_DIR / "{time:YYYY-MM-DD}.jsonl"),
         level=cfg.level,
         format="{extra[json]}",
-        rotation=cfg.max_file_size,
+        rotation=cfg.rotation,
         encoding="utf-8",
         catch=True,
         enqueue=True,

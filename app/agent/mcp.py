@@ -1,8 +1,9 @@
 from typing import cast
 
-from app.core import settings
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import Connection
+
+from app.conf import app_config
 
 
 async def get_mcp_tools() -> list:
@@ -12,7 +13,7 @@ async def get_mcp_tools() -> list:
             Connection,
             mcp_cfg.model_dump(exclude_none=True),
         )
-        for name, mcp_cfg in settings.cfg.mcp.items()
+        for name, mcp_cfg in app_config.cfg.mcp.items()
     }
     client = MultiServerMCPClient(connections)
     return await client.get_tools()

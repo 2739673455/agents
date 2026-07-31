@@ -1,34 +1,23 @@
-from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
+from typing import Annotated, Any, Literal, cast
 
-from app.conf.config_loader import load_config
+import dotenv
+from omegaconf import OmegaConf
+from pydantic import BaseModel, Field
+
+# 路径常量
+ROOT_DIR = Path(__file__).parents[2]
+CONFIG_DIR = ROOT_DIR / "conf"
+CONFIG_FILE = CONFIG_DIR / "app_config.yaml"
 
 
-# 日志配置
-@dataclass
-class File:
-    enable: bool
+class LogCfg(BaseModel):
     level: str
-    path: str
     rotation: str
-    retention: str
 
 
-@dataclass
-class Console:
-    enable: bool
-    level: str
-
-
-@dataclass
-class LoggingConfig:
-    file: File
-    console: Console
-
-
-# 数据库配置
-@dataclass
-class DBConfig:
+class DBConfig(BaseModel):
     host: str
     port: int
     user: str
@@ -36,48 +25,113 @@ class DBConfig:
     database: str
 
 
-@dataclass
-class QdrantConfig:
+class RedisCfg(BaseModel):
+    host: str
+    port: int
+    password: str
+    db: int
+
+
+class QdrantConfig(BaseModel):
     host: str
     port: int
     embedding_size: int
 
 
-@dataclass
-class EmbeddingConfig:
+class ESConfig(BaseModel):
+    host: str
+    port: int
+    index_name: str
+
+
+class EmbeddingConfig(BaseModel):
     base_url: str
     api_key: str | None
     model: str
     timeout: float
 
 
-@dataclass
-class ESConfig:
-    host: str
-    port: int
-    index_name: str
+class SSEMCPCfg(BaseModel):
+    transport: Literal["sse"]
+    url: str
+    headers: dict[str, str] | None = None
+    timeout: float | None = None
+    sse_read_timeout: float | None = None
+    session_kwargs: dict[str, Any] | None = None
 
 
-@dataclass
-class LLMConfig:
-    model_name: str
-    api_key: str
+class StdioMCPCfg(BaseModel):
+    transport: Literal["stdio"]
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] | None = None
+    cwd: str | None = None
+    encoding: str | None = None
+    encoding_error_handler: Literal["strict", "ignore", "replace"] | None = None
+    session_kwargs: dict[str, Any] | None = None
+
+
+class WebsocketMCPCfg(BaseModel):
+    transport: Literal["websocket"]
+    url: str
+    session_kwargs: dict[str, Any] | None = None
+
+
+class StreamableHttpMCPCfg(BaseModel):
+    transport: Literal["streamable_http"]
+    url: str
+    headers: dict[str, str] | None = None
+    timeout: timedelta | None = None
+    sse_read_timeout: timedelta | None = None
+    terminate_on_close: bool | None = None
+    session_kwargs: dict[str, Any] | None = None
+
+
+MCPCfg = Annotated[
+    SSEMCPCfg | StdioMCPCfg | WebsocketMCPCfg | StreamableHttpMCPCfg,
+    Field(discriminator="transport"),
+]
+
+
+class ModelCfg(BaseModel):
+    model: str
     base_url: str
+    api_key: str
+    params: dict[str, Any]
+    profile: dict[str, Any]
 
 
-@dataclass
-class AppConfig:
-    logging: LoggingConfig
+class LMConfigCfg(BaseModel):
+    active: str
+    models: dict[str, ModelCfg]
+
+
+class Cfg(BaseModel):
+    log: LogCfg
+    db_source: DBConfig
     db_meta: DBConfig
-    db_dw: DBConfig
+    redis: RedisCfg
     qdrant: QdrantConfig
+    elasticsearch: ESConfig
     embedding: EmbeddingConfig
-    es: ESConfig
-    llm: LLMConfig
+    lm_config: LMConfigCfg
+    mcp: dict[str, MCPCfg]
+    cors_origins: list[str]
+    port: int
 
 
-config_file = Path(__file__).parents[2] / "conf" / "app_config.yaml"
-app_config = load_config(config_file, AppConfig)
+def _load_config() -> Cfg:
+    """从 .env 和 app_config.yaml 加载配置"""
+    dotenv.load_dotenv(CONFIG_DIR / ".env")
+    loaded_cfg = OmegaConf.load(CONFIG_FILE)
+    primitive_cfg = OmegaConf.to_container(loaded_cfg, resolve=True)
+    return Cfg.model_validate(cast(dict[str, Any], primitive_cfg))
 
-if __name__ == "__main__":
-    print(app_config.es.host)
+
+def reload_config() -> None:
+    """重新加载配置"""
+    global cfg
+    cfg = _load_config()
+
+
+cfg = _load_config()

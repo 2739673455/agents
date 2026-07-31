@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from starlette.types import ExceptionHandler
 
+from app.conf.app_config import cfg
 from app.core.exceptions import base, exc_handlers
 from app.core.lifespan import lifespan
 from app.core.middlewares import trace
@@ -58,4 +59,4 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=7000)
+    uvicorn.run("main:app", host="0.0.0.0", port=cfg.port)

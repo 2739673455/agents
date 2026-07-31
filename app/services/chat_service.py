@@ -7,7 +7,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.agent import get_agent, get_workspace_dir
-from app.core.database import get_db_session
+from app.clients.database import get_db_session
 from app.entities.chat import ContextCompaction
 from app.mappers import message_mapper
 from app.repositories import context_compaction_repo, conversation_repo, message_repo

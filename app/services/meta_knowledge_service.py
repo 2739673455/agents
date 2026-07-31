@@ -2,8 +2,7 @@ import uuid
 from pathlib import Path
 
 from app.clients.embedding_client_manager import EmbeddingClient
-from app.conf.config_loader import load_config
-from app.conf.meta_config import MetaConfig
+from app.conf.meta_config import MetaConfig, load_config
 from app.core.log import logger
 from app.entities.column_info import ColumnInfo
 from app.entities.column_metric import ColumnMetric
@@ -245,7 +244,7 @@ class MetaKnowledgeService:
 
     async def build(self, config_path: Path):
         # 1.加载配置文件
-        meta_config = load_config(config_path, MetaConfig)
+        meta_config = load_config(config_path)
         logger.info("加载配置文件")
         # 2.处理表信息
         if meta_config.tables:

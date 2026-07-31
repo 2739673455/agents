@@ -12,7 +12,7 @@ from sqlalchemy import MetaData, create_engine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PROJECT_DIR = Path(__file__).resolve().parents[2]
+PROJECT_DIR = Path(__file__).parents[2]
 ENV_FILE = PROJECT_DIR / "conf" / ".env"
 MYSQL_SQL_DIR = PROJECT_DIR / "app" / "scripts" / "sql" / "mysql"
 ENTITIES_DIR = PROJECT_DIR / "app" / "entities"

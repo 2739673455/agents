@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 import httpx
 
-from app.conf.app_config import EmbeddingConfig, app_config
+from app.conf.app_config import EmbeddingConfig, cfg
 
 
 class EmbeddingClient(Protocol):
@@ -86,7 +86,7 @@ class RemoteEmbeddingClient:
 
 class EmbeddingClientManager:
     def __init__(self, config: EmbeddingConfig):
-        self.client: Optional[EmbeddingClient] = None
+        self.client: EmbeddingClient | None = None
         self.config = config
 
     def init(self):
@@ -103,4 +103,4 @@ class EmbeddingClientManager:
         self.client = None
 
 
-embedding_client_manager = EmbeddingClientManager(app_config.embedding)
+embedding_client_manager = EmbeddingClientManager(cfg.embedding)

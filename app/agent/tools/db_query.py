@@ -1,4 +1,4 @@
-"""数据库查询工具 — 通过 data-agent SSE 接口查询业务数据，结果写入工作区文件"""
+"""数据库查询工具 — 调用查询服务并将结果写入工作区文件"""
 
 import csv
 import json
@@ -9,44 +9,58 @@ from typing import Annotated, Any
 from langchain.tools import tool
 from langgraph.prebuilt.tool_node import ToolRuntime
 
-from app.core.http_client import get_http_client
-from app.core.settings import cfg
+from app.clients.embedding_client_manager import embedding_client_manager
+from app.clients.es_client_manager import es_client_manager
+from app.clients.mysql_client_manager import (
+    dw_mysql_client_manager,
+    meta_mysql_client_manager,
+)
+from app.clients.qdrant_client_manager import qdrant_client_manager
+from app.repositories.es.value_es_repository import ValueESRepository
+from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
+from app.repositories.mysql.meta.meta_mysql_repository import MetaMySQLRepository
+from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantRepository
+from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
+from app.services.query_service import QueryService
 
-# data-agent 查询接口完整 URL
-DB_QUERY_URL = cfg.data_agent.base_url + cfg.data_agent.query
 # 预览行数：写入文件后返回给 Agent 的前几行数据，便于 Agent 理解结果结构
 PREVIEW_ROWS = 5
 
 
 async def _stream_db_query(query: str) -> AsyncIterator[dict[str, Any]]:
-    """流式调用 data-agent 查询接口并逐条产出 SSE 消息"""
-    client = get_http_client()
-    async with client.stream(
-        "POST",
-        DB_QUERY_URL,
-        json={"query": query},
-        headers={"accept": "text/event-stream"},
-    ) as resp:
-        resp.raise_for_status()
+    """流式调用进程内查询服务并逐条产出消息"""
+    async with (
+        meta_mysql_client_manager.get_session_factory()() as meta_session,
+        dw_mysql_client_manager.get_session_factory()() as source_session,
+    ):
+        query_service = QueryService(
+            embedding_client=embedding_client_manager.get_client(),
+            column_qdrant_repository=ColumnQdrantRepository(
+                qdrant_client_manager.get_client()
+            ),
+            value_es_repository=ValueESRepository(es_client_manager.get_client()),
+            metric_qdrant_repository=MetricQdrantRepository(
+                qdrant_client_manager.get_client()
+            ),
+            meta_mysql_repository=MetaMySQLRepository(meta_session),
+            dw_mysql_repository=DWMySQLRepository(source_session),
+        )
 
-        # data-agent 返回 SSE (Server-Sent Events) 流，逐行解析
-        async for line in resp.aiter_lines():
-            # 跳过非 "data:" 开头的数据
-            if not line or not line.startswith("data:"):
-                continue
-            # 去掉 "data:" 前缀并去除首尾空白
-            payload = line.removeprefix("data:").strip()
-            if not payload:
-                continue
-            # 尝试解析 JSON；解析失败时抛出错误消息而非中断流
-            try:
-                yield json.loads(payload)
-            except json.JSONDecodeError as exc:
-                yield {
-                    "type": "error",
-                    "message": f"SSE payload JSON decode failed: {exc}",
-                    "raw_payload": payload,
-                }
+        async for event in query_service.query(query):
+            for line in event.splitlines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line.removeprefix("data:").strip()
+                if not payload:
+                    continue
+                try:
+                    yield json.loads(payload)
+                except json.JSONDecodeError as exc:
+                    yield {
+                        "type": "error",
+                        "message": f"SSE payload JSON decode failed: {exc}",
+                        "raw_payload": payload,
+                    }
 
 
 def _as_tabular_rows(result: Any) -> list[dict[str, Any]] | None:
@@ -116,7 +130,7 @@ async def db_query(
 
     流程：
     1. 从 runtime 获取当前会话工作区目录
-    2. 流式调用 data-agent，收集 SSE 消息
+    2. 流式调用进程内查询服务，收集查询消息
     3. 将最终结果解释为表格（CSV）或非表格（JSON）写入工作区
     4. 返回文件路径、格式、字段列表、前几行预览，供 Agent 后续使用
     """
@@ -126,7 +140,7 @@ async def db_query(
         return {"status": "error", "message": "workspace_dir not found in config"}
     workspace_dir = Path(workspace_dir)
 
-    # 流式消费 data-agent 响应，收集 final result
+    # 流式消费查询服务响应，收集 final result
     result: Any = None
 
     try:
@@ -138,22 +152,22 @@ async def db_query(
                 result = chunk.get("data")
                 continue
 
-            # "error" 类型表示 data-agent 查询失败
+            # "error" 类型表示数据查询失败
             if chunk_type == "error":
                 return {
                     "status": "error",
                     "message": chunk.get("message", "unknown error"),
                 }
     except Exception as exc:
-        # HTTP 错误、连接中断等底层异常
+        # 查询服务或基础设施异常
         return {
             "status": "error",
             "message": f"db_query failed: {type(exc).__name__}: {exc!r}",
         }
 
-    # data-agent 返回了消息但缺少最终结果
+    # 查询服务返回了消息但缺少最终结果
     if result is None:
-        return {"status": "error", "message": "data query API finished without result"}
+        return {"status": "error", "message": "data query finished without result"}
 
     # 将结果写入工作区文件（表格→CSV，非表格→JSON）
     try:

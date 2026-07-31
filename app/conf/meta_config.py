@@ -1,9 +1,11 @@
-from dataclasses import dataclass
-from typing import Optional
+from pathlib import Path
+from typing import Any, cast
+
+from omegaconf import OmegaConf
+from pydantic import BaseModel
 
 
-@dataclass
-class ColumnConfig:
+class ColumnConfig(BaseModel):
     name: str
     role: str
     description: str
@@ -11,23 +13,27 @@ class ColumnConfig:
     sync: bool
 
 
-@dataclass
-class TableConfig:
+class TableConfig(BaseModel):
     name: str
     role: str
     description: str
     columns: list[ColumnConfig]
 
 
-@dataclass
-class MetricConfig:
+class MetricConfig(BaseModel):
     name: str
     description: str
     relevant_columns: list[str]
     alias: list[str]
 
 
-@dataclass
-class MetaConfig:
-    tables: Optional[list[TableConfig]] = None
-    metrics: Optional[list[MetricConfig]] = None
+class MetaConfig(BaseModel):
+    tables: list[TableConfig] | None = None
+    metrics: list[MetricConfig] | None = None
+
+
+def load_config(config_file: Path) -> MetaConfig:
+    """加载元数据配置文件"""
+    loaded_cfg = OmegaConf.load(config_file)
+    primitive_cfg = OmegaConf.to_container(loaded_cfg, resolve=True)
+    return MetaConfig.model_validate(cast(dict[str, Any], primitive_cfg))

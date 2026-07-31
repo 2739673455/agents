@@ -2,9 +2,9 @@ from dataclasses import asdict
 from typing import Any
 
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import VectorParams, Distance, PointStruct
+from qdrant_client.models import Distance, PointStruct, VectorParams
 
-from app.conf.app_config import app_config
+from app.conf.app_config import cfg
 from app.entities.metric_info import MetricInfo
 
 
@@ -19,7 +19,7 @@ class MetricQdrantRepository:
             await self.client.create_collection(
                 self.collection_name,
                 vectors_config=VectorParams(
-                    size=app_config.qdrant.embedding_size, distance=Distance.COSINE
+                    size=cfg.qdrant.embedding_size, distance=Distance.COSINE
                 ),
             )
 
