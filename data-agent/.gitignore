@@ -6,9 +6,7 @@ dist/
 wheels/
 *.egg-info
 
-# Virtual environments
 .venv
 logs
-
-docker/embedding
-.env
+node_modules
+.deepagents/workspaces/

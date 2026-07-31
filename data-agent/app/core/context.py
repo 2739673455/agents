@@ -1,3 +1,8 @@
 from contextvars import ContextVar
 
-request_id_ctx_var = ContextVar("request_id", default="1")
+request_id_ctx: ContextVar[str | None] = ContextVar("request_id", default=None)
+trace_id_ctx: ContextVar[str | None] = ContextVar("trace_id", default=None)
+client_ip_ctx: ContextVar[str | None] = ContextVar("client_ip", default=None)
+method_ctx: ContextVar[str | None] = ContextVar("method", default=None)
+path_ctx: ContextVar[str | None] = ContextVar("path", default=None)
+user_id_ctx: ContextVar[str | None] = ContextVar("user_id", default=None)

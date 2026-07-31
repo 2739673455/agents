@@ -1,71 +1,97 @@
-import asyncio
+import json
 import sys
+import traceback
 from pathlib import Path
 
 from loguru import logger
 
-from app.conf.app_config import app_config
-from app.core.context import request_id_ctx_var
+from app.core import context
+from app.core.settings import LogCfg, cfg
 
-# 配置日志格式
-log_format = (
-    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-    "<level>{level: <8}</level> | "
-    "<magenta>request_id - {extra[request_id]}</magenta> | "
-    "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-    "<level>{message}</level>"
-)
+# 路径常量
+CURRENT_DIR = Path(__file__).parent
+ROOT_DIR = CURRENT_DIR.parent.parent  # 项目根目录
+
+LOGGER_CONFIGURED = False  # 日志是否已初始化
+LOG_DIR = ROOT_DIR / "logs"  # 日志文件目录
 
 
-# 注入request_id到日志记录中
-def inject_request_id(record):
-    request_id = request_id_ctx_var.get()
-    record["extra"]["request_id"] = request_id
+def _build_log_json(record):
+    """格式化为 JSON"""
+    log_json = {
+        "time": record["time"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+        "level": record["level"].name,
+        "method": context.method_ctx.get(),
+        "path": context.path_ctx.get(),
+        "user_id": context.user_id_ctx.get(),
+        "message": record["message"],
+        "request_id": context.request_id_ctx.get(),
+        "trace_id": context.trace_id_ctx.get(),
+        "client_ip": context.client_ip_ctx.get(),
+    }
+
+    # 将 extra 中的信息添加到输出
+    extra = {k: v for k, v in record.get("extra", {}).items() if k != "json"}
+    log_json.update(extra)
+
+    # 捕获异常信息（如果有），格式化为字符串
+    exc_info = record.get("exception")
+    if exc_info:
+        if exc_info.value is not None:
+            log_json["exception"] = "".join(
+                traceback.format_exception(
+                    exc_info.type, exc_info.value, exc_info.traceback
+                )
+            )
+        # 清除 exception，阻止 loguru 默认格式化
+        record["exception"] = None
+
+    log_json = {k: v for k, v in log_json.items() if v}  # 滤空
+    record["extra"]["json"] = json.dumps(log_json, ensure_ascii=False)
 
 
-logger.remove()
-
-# 给日志打补丁，使其支持注入request_id
-logger = logger.patch(inject_request_id)
-if app_config.logging.console.enable:
+def _setup_console_logger(cfg: LogCfg):
+    """配置控制台日志输出"""
     logger.add(
-        sink=sys.stdout, level=app_config.logging.console.level, format=log_format
+        sink=sys.stdout,
+        level=cfg.level,
+        format=(
+            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+            "<level>{level:^8}</level> | "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<level>{message}</level>"
+        ),
+        colorize=True,
+        catch=True,
+        enqueue=True,
     )
-if app_config.logging.file.enable:
-    path = Path(app_config.logging.file.path)
-    path.mkdir(parents=True, exist_ok=True)
+
+
+def _setup_file_logger(cfg: LogCfg):
+    """配置文件日志输出（JSON 格式）"""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     logger.add(
-        sink=path / "app.log",
-        level=app_config.logging.file.level,
-        format=log_format,
-        rotation=app_config.logging.file.rotation,
-        retention=app_config.logging.file.retention,
+        sink=str(LOG_DIR / "{time:YYYY-MM-DD}.jsonl"),
+        level=cfg.level,
+        format="{extra[json]}",
+        rotation=cfg.max_file_size,
         encoding="utf-8",
+        catch=True,
+        enqueue=True,
     )
 
-if __name__ == "__main__":
 
-    async def graph(request: str):
-        # 打印日志
-        logger.info(request)
+def _setup_logger(cfg: LogCfg):
+    """配置日志输出"""
+    _setup_console_logger(cfg)
+    _setup_file_logger(cfg)
 
-    async def test1():
-        # 接收到请求
-        request_id_ctx_var.set("request-1")
 
-        # 模拟处理
-        await asyncio.sleep(1)
-        await graph("request-1")
-
-    async def test2():
-        # 接收到请求
-        request_id_ctx_var.set("request-2")
-
-        # 模拟处理
-        await asyncio.sleep(1)
-        await graph("request-2")
-
-    async def main():
-        await asyncio.gather(test1(), test2())
-
-    asyncio.run(main())
+def setup_logger():
+    """初始化日志配置"""
+    global LOGGER_CONFIGURED
+    if not LOGGER_CONFIGURED:
+        logger.remove()  # 移除默认的日志输出
+        logger.configure(patcher=_build_log_json)
+        _setup_logger(cfg.log)
+        LOGGER_CONFIGURED = True

@@ -1,33 +1,38 @@
 [project]
-name = "data-agent"
-version = "0.1.0"
-description = "Add your description here"
-requires-python = ">=3.12"
 dependencies = [
-    "asyncmy>=0.2.11",
-    "cryptography>=46.0.4",
-    "elasticsearch[async]>=8,<9",
-    "fastapi[standard]>=0.128.0",
-    "huggingface-hub>=0.36.0",
-    "httpx>=0.28.1",
-    "jieba>=0.42.1",
-    "langchain>=1.2.7",
-    "langchain-deepseek>=1.0.1",
-    "langchain-huggingface>=1.2.0",
-    "langgraph>=1.0.7",
-    "loguru>=0.7.3",
-    "omegaconf>=2.3.0",
-    "pyyaml>=6.0.3",
-    "qdrant-client>=1.16.2",
-    "sqlalchemy>=2.0.46",
+  "asyncmy>=0.2.11",
+  "cryptography>=46.0.4",
+  "deepagents>=0.4.7",
+  "elasticsearch[async]>=8,<10",
+  "fastapi[standard]>=0.135.1",
+  "httpx>=0.28.1",
+  "jieba>=0.42.1",
+  "langchain>=1.2.7",
+  "langchain-mcp-adapters>=0.2.1",
+  "langchain-openai>=1.1.7",
+  "langgraph>=1.0.7",
+  "loguru>=0.7.3",
+  "omegaconf>=2.3.0",
+  "openai>=2.16.0",
+  "pandas>=3.0.1",
+  "pymysql>=1.1.2",
+  "pyyaml>=6.0.3",
+  "qdrant-client>=1.16.2",
+  "redis>=7.2.0",
+  "sqlacodegen>=3.2.0",
+  "sqlalchemy>=2.0.46",
 ]
+description = "Intelligent data querying and analysis"
+name = "data-agent"
+requires-python = ">=3.12"
+version = "0.1.0"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.15.16",
-    "pyright>=1.1.410",
+  "pyright>=1.1.410",
+  "ruff>=0.15.16",
 ]
 
 [tool.pyright]
-venvPath = "."
 venv = ".venv"
+venvPath = "."
