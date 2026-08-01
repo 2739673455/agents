@@ -18,16 +18,15 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.agent import get_workspace_dir
-from app.clients.database import get_db, get_db_session
+from app.clients.mysql_client_manager import chat_mysql_client_manager
+from app.clients.redis_client_manager import redis_client_manager
 from app.core import context
 from app.errors import chat_error
 from app.mappers import message_mapper
-from app.repositories.mysql import (
-    context_compaction_repo,
-    conversation_repo,
-    message_repo,
-    websocket_token_repo,
-)
+from app.repositories.compaction_mysql_repo import CompactionMySQLRepo
+from app.repositories.conversation_mysql_repo import ConversationMySQLRepo
+from app.repositories.message_mysql_repo import MessageMySQLRepo
+from app.repositories.websocket_token_redis_repo import WebSocketTokenRedisRepo
 from app.routes.api.v1.chat import schemas as chat_schema
 from app.services import chat_service
 
@@ -38,13 +37,16 @@ router = APIRouter(tags=["chat"])
 async def api_create_conversation(
     request: Request,
     body: chat_schema.CreateConversationRequest,
-    db_session: Annotated[AsyncSession, Depends(get_db)],
+    db_session: Annotated[
+        AsyncSession,
+        Depends(chat_mysql_client_manager.get_session),
+    ],
 ) -> chat_schema.ConversationResponse:
     """创建新对话"""
     user_id = request.state.payload.sub
+    conversation_repo = ConversationMySQLRepo(db_session)
 
     conversation = await conversation_repo.create(
-        db_session,
         user_id,
         "新对话",
         is_draft=body.is_draft,
@@ -64,27 +66,29 @@ async def api_create_conversation(
 async def api_delete_conversations(
     request: Request,
     body: chat_schema.DeleteConversationRequest,
-    db_session: Annotated[AsyncSession, Depends(get_db)],
+    db_session: Annotated[
+        AsyncSession,
+        Depends(chat_mysql_client_manager.get_session),
+    ],
 ) -> None:
     """删除对话(逻辑删除)"""
     user_id = request.state.payload.sub
+    conversation_repo = ConversationMySQLRepo(db_session)
+    message_repo = MessageMySQLRepo(db_session)
+    compaction_repo = CompactionMySQLRepo(db_session)
 
     for conversation_id in body.conversation_ids:
         # 检查对话是否存在且属于当前用户
-        conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+        conversation = await conversation_repo.get_by_id(conversation_id)
         if (conversation is None) or (conversation.user_id != user_id):
             raise chat_error.ConversationNotFoundError
 
         # 禁用对话
-        await conversation_repo.update(db_session, conversation, yn=0)
+        await conversation_repo.update(conversation, yn=0)
         # 禁用对话下所有消息
-        await message_repo.update_yn_by_conversation_id(
-            db_session, conversation_id, yn=0
-        )
+        await message_repo.update_yn_by_conversation_id(conversation_id, yn=0)
         # 禁用对话下所有上下文压缩记录
-        await context_compaction_repo.update_yn_by_conversation_id(
-            db_session, conversation_id, yn=0
-        )
+        await compaction_repo.update_yn_by_conversation_id(conversation_id, yn=0)
 
         # 删除对话对应工作区
         await asyncio.to_thread(
@@ -100,28 +104,37 @@ async def api_delete_conversations(
 async def api_update_conversation(
     request: Request,
     body: chat_schema.UpdateConversationRequest,
-    db_session: Annotated[AsyncSession, Depends(get_db)],
+    db_session: Annotated[
+        AsyncSession,
+        Depends(chat_mysql_client_manager.get_session),
+    ],
 ) -> None:
     """修改对话信息"""
     user_id = request.state.payload.sub
+    conversation_repo = ConversationMySQLRepo(db_session)
 
     # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get_by_id(db_session, body.conversation_id)
+    conversation = await conversation_repo.get_by_id(body.conversation_id)
     if (conversation is None) or (conversation.user_id != user_id):
         raise chat_error.ConversationNotFoundError
 
-    await conversation_repo.update(db_session, conversation, title=body.title)
+    await conversation_repo.update(conversation, title=body.title)
 
     logger.info(f"conversation_id={body.conversation_id}: Update conversation")
 
 
 @router.get("/ls")
 async def api_get_conversations(
-    request: Request, db_session: Annotated[AsyncSession, Depends(get_db)]
+    request: Request,
+    db_session: Annotated[
+        AsyncSession,
+        Depends(chat_mysql_client_manager.get_session),
+    ],
 ) -> chat_schema.ConversationListResponse:
     """获取所有对话"""
     user_id = request.state.payload.sub
-    conversations = await conversation_repo.ls(db_session, user_id)
+    conversation_repo = ConversationMySQLRepo(db_session)
+    conversations = await conversation_repo.ls(user_id)
     logger.info(f"Get conversations: conversation_ids={[i.id for i in conversations]}")
     return chat_schema.ConversationListResponse(
         conversations=[
@@ -137,10 +150,15 @@ async def api_get_conversations(
 
 @router.get("/ls/{conversation_id}")
 async def api_get_messages(
-    conversation_id: int, db_session: Annotated[AsyncSession, Depends(get_db)]
+    conversation_id: int,
+    db_session: Annotated[
+        AsyncSession,
+        Depends(chat_mysql_client_manager.get_session),
+    ],
 ) -> chat_schema.MessageListResponse:
     """获取某个对话所有消息"""
-    messages = await message_repo.ls(db_session, conversation_id)
+    message_repo = MessageMySQLRepo(db_session)
+    messages = await message_repo.ls(conversation_id)
     logger.info(f"{conversation_id=}: Get messages(count={len(messages)})")
     return chat_schema.MessageListResponse(
         messages=[message_mapper.entity_to_schema(message) for message in messages]
@@ -160,8 +178,9 @@ async def api_create_websocket_token(
 
     # 创建 WebSocket 临时令牌
     websocket_token = secrets.token_urlsafe(32)
+    token_repo = WebSocketTokenRedisRepo(redis_client_manager.get_client())
     # 存储 WebSocket 临时令牌
-    await websocket_token_repo.create(
+    await token_repo.create(
         token=websocket_token,
         user_id=user_id,
         expire_seconds=ws_token_expire_seconds,
@@ -187,7 +206,8 @@ async def _validate_and_accept(
         return None
 
     # 使用 WebSocket 临时令牌获取用户信息
-    token_data = await websocket_token_repo.consume(websocket_token)
+    token_repo = WebSocketTokenRedisRepo(redis_client_manager.get_client())
+    token_data = await token_repo.consume(websocket_token)
     if token_data is None:
         # 无法获取用户信息则拒绝连接
         await websocket.close(code=4401)
@@ -243,9 +263,10 @@ async def _receive_user_message(
 
 async def _ensure_not_draft(db_session: AsyncSession, conversation_id: int) -> None:
     """草稿对话转正式对话"""
-    conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+    conversation_repo = ConversationMySQLRepo(db_session)
+    conversation = await conversation_repo.get_by_id(conversation_id)
     if conversation:
-        await conversation_repo.update(db_session, conversation, is_draft=0)
+        await conversation_repo.update(conversation, is_draft=0)
 
 
 class _TurnStream:
@@ -348,7 +369,7 @@ async def api_websocket_chat(
             ctx.context_seq += 1
             user_message.context_seq = ctx.context_seq
 
-            async with get_db_session() as db_session:
+            async with chat_mysql_client_manager.session() as db_session:
                 if ctx.is_draft:
                     # 草稿对话转正式对话
                     await _ensure_not_draft(db_session, conversation_id)

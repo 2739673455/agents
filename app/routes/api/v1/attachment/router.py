@@ -8,9 +8,9 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.agent import get_workspace_dir
-from app.clients.database import get_db
+from app.clients.mysql_client_manager import chat_mysql_client_manager
 from app.errors import attachment_error, chat_error
-from app.repositories.mysql import conversation_repo
+from app.repositories.conversation_mysql_repo import ConversationMySQLRepo
 from app.routes.api.v1.chat import schemas as chat_schema
 
 router = APIRouter(tags=["attachment"])
@@ -27,15 +27,19 @@ def _build_attachment_path(target_dir: Path, path: str) -> Path:
 @router.post("/upload")
 async def api_upload_attachment(
     request: Request,
-    db_session: Annotated[AsyncSession, Depends(get_db)],
+    db_session: Annotated[
+        AsyncSession,
+        Depends(chat_mysql_client_manager.get_session),
+    ],
     conversation_id: Annotated[int, Form()],
     file: Annotated[UploadFile, File()],
 ) -> chat_schema.UploadAttachmentResponse:
     """上传附件到当前会话工作区"""
     user_id = request.state.payload.sub
+    conversation_repo = ConversationMySQLRepo(db_session)
 
     # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+    conversation = await conversation_repo.get_by_id(conversation_id)
     if (conversation is None) or (conversation.user_id != user_id):
         raise chat_error.ConversationNotFoundError
 
@@ -59,13 +63,17 @@ async def api_upload_attachment(
 async def api_delete_attachment(
     request: Request,
     body: chat_schema.DeleteAttachmentRequest,
-    db_session: Annotated[AsyncSession, Depends(get_db)],
+    db_session: Annotated[
+        AsyncSession,
+        Depends(chat_mysql_client_manager.get_session),
+    ],
 ) -> None:
     """删除当前会话工作区中的附件"""
     user_id = request.state.payload.sub
+    conversation_repo = ConversationMySQLRepo(db_session)
 
     # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get_by_id(db_session, body.conversation_id)
+    conversation = await conversation_repo.get_by_id(body.conversation_id)
     if (conversation is None) or (conversation.user_id != user_id):
         raise chat_error.ConversationNotFoundError
 
@@ -87,13 +95,17 @@ async def api_get_attachment(
     request: Request,
     conversation_id: int,
     f_path: str,
-    db_session: Annotated[AsyncSession, Depends(get_db)],
+    db_session: Annotated[
+        AsyncSession,
+        Depends(chat_mysql_client_manager.get_session),
+    ],
 ) -> FileResponse:
     """获取当前会话工作区中的附件文件"""
     user_id = request.state.payload.sub
+    conversation_repo = ConversationMySQLRepo(db_session)
 
     # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+    conversation = await conversation_repo.get_by_id(conversation_id)
     if (conversation is None) or (conversation.user_id != user_id):
         raise chat_error.ConversationNotFoundError
 

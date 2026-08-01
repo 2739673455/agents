@@ -1,13 +1,18 @@
+"""字段值索引访问"""
+
 from dataclasses import asdict
+from typing import Any, ClassVar
 
 from elasticsearch import AsyncElasticsearch
 
 from app.entities.value_info import ValueInfo
 
 
-class ValueESRepository:
-    index_name = "data-agent-value"
-    index_mappings = {
+class ValueESRepo:
+    """字段取值索引存储"""
+
+    _index_name = "data-agent-value"
+    _index_mappings: ClassVar[dict[str, Any]] = {
         "dynamic": False,
         "properties": {
             "id": {"type": "keyword"},
@@ -20,31 +25,35 @@ class ValueESRepository:
         },
     }
 
-    def __init__(self, client: AsyncElasticsearch):
-        self.client = client
+    def __init__(self, client: AsyncElasticsearch) -> None:
+        """初始化字段取值索引存储"""
+        self._client = client
 
-    async def ensure_index(self):
-        if not await self.client.indices.exists(index=self.index_name):
-            await self.client.indices.create(
-                index=self.index_name, mappings=self.index_mappings
+    async def ensure_index(self) -> None:
+        """确保字段取值索引存在"""
+        if not await self._client.indices.exists(index=self._index_name):
+            await self._client.indices.create(
+                index=self._index_name, mappings=self._index_mappings
             )
 
-    async def index(self, value_infos: list[ValueInfo], batch_size=20):
+    async def index(self, value_infos: list[ValueInfo], batch_size: int = 20) -> None:
+        """批量写入字段取值索引"""
         for i in range(0, len(value_infos), batch_size):
             batch = value_infos[i : i + batch_size]
             operations = []
             for value_info in batch:
                 operations.append(
-                    {"index": {"_index": self.index_name, "_id": value_info.id}}
+                    {"index": {"_index": self._index_name, "_id": value_info.id}}
                 )
                 operations.append(asdict(value_info))
-            await self.client.bulk(operations=operations)
+            await self._client.bulk(operations=operations)
 
     async def search(
         self, keyword: str, score_threshold: float = 0.6, limit: int = 5
     ) -> list[ValueInfo]:
-        result = await self.client.search(
-            index=self.index_name,
+        """根据关键词检索字段取值"""
+        result = await self._client.search(
+            index=self._index_name,
             query={"match": {"value": keyword}},
             min_score=score_threshold,
             size=limit,

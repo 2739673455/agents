@@ -7,10 +7,12 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.agent import get_agent, get_workspace_dir
-from app.clients.database import get_db_session
+from app.clients.mysql_client_manager import chat_mysql_client_manager
 from app.entities.chat import ContextCompaction
 from app.mappers import message_mapper
-from app.repositories import context_compaction_repo, conversation_repo, message_repo
+from app.repositories.compaction_mysql_repo import CompactionMySQLRepo
+from app.repositories.conversation_mysql_repo import ConversationMySQLRepo
+from app.repositories.message_mysql_repo import MessageMySQLRepo
 from app.routes.api.v1.chat import schemas as chat_schema
 
 
@@ -31,10 +33,14 @@ async def load_conversation_context(
 
     对话不存在或不属于当前用户时返回 None
     """
-    async with get_db_session() as db_session:
+    async with chat_mysql_client_manager.session() as db_session:
+        conversation_repo = ConversationMySQLRepo(db_session)
+        message_repo = MessageMySQLRepo(db_session)
+        compaction_repo = CompactionMySQLRepo(db_session)
+
         # ========= 检查对话归属 =========
         # 检查对话是否存在且属于当前用户
-        conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+        conversation = await conversation_repo.get_by_id(conversation_id)
         if conversation is None or conversation.user_id != user_id:
             return None
         # 标记是否为草稿对话
@@ -42,7 +48,7 @@ async def load_conversation_context(
 
         # ========= 加载历史消息 =========
         # 从数据库加载历史消息
-        message_entities = await message_repo.ls(db_session, conversation_id)
+        message_entities = await message_repo.ls(conversation_id)
         # 获取最后一个消息的 context_seq；若没有历史消息，则将 context_seq 设置为 -1
         cur_context_seq = message_entities[-1].context_seq if message_entities else -1
         # 将历史消息转换为 LangChain Message
@@ -57,10 +63,8 @@ async def load_conversation_context(
 
         # ======== 应用压缩上下文 =========
         # 从数据库加载最新压缩上下文
-        context_compaction_entity = (
-            await context_compaction_repo.get_latest_by_conversation_id(
-                db_session, conversation_id
-            )
+        context_compaction_entity = await compaction_repo.get_latest_by_conversation_id(
+            conversation_id
         )
         # 如果存在压缩上下文，则替换历史消息前缀
         if context_compaction_entity:
@@ -76,16 +80,17 @@ async def load_conversation_context(
 
 
 async def _add_message(
-    db_session: AsyncSession,
+    message_repo: MessageMySQLRepo,
+    conversation_repo: ConversationMySQLRepo,
     user_id: int,
     conversation_id: int,
     messages: list[dict],
     message: chat_schema.MessageSchema,
-):
+) -> None:
     """将消息写入数据库与消息列表，并同步刷新对话更新时间"""
     # 消息入库
     message_entity = message_mapper.schema_to_entity(message, conversation_id)
-    await message_repo.create(db_session, message_entity)
+    await message_repo.create(message_entity)
     # 追加内存消息列表
     messages.append(
         message_mapper.schema_to_langchain_message(
@@ -93,7 +98,7 @@ async def _add_message(
         )
     )
     # 刷新对话更新时间
-    await conversation_repo.touch_update_at(db_session, conversation_id)
+    await conversation_repo.touch_update_at(conversation_id)
 
 
 async def _execute_agent(
@@ -161,8 +166,19 @@ async def run_agent_turn(
     """
     logger.info(f"{conversation_id=}: {user_message=}")
 
+    conversation_repo = ConversationMySQLRepo(db_session)
+    message_repo = MessageMySQLRepo(db_session)
+    compaction_repo = CompactionMySQLRepo(db_session)
+
     # 消息入库，同时追加到内存消息列表
-    await _add_message(db_session, user_id, conversation_id, messages, user_message)
+    await _add_message(
+        message_repo,
+        conversation_repo,
+        user_id,
+        conversation_id,
+        messages,
+        user_message,
+    )
 
     # 获取最新消息的 context_seq
     cur_context_seq = user_message.context_seq or 0
@@ -195,7 +211,12 @@ async def run_agent_turn(
                     response.context_seq = cur_context_seq
                     # 消息入库，同时追加到内存消息列表
                     await _add_message(
-                        db_session, user_id, conversation_id, messages, response
+                        message_repo,
+                        conversation_repo,
+                        user_id,
+                        conversation_id,
+                        messages,
+                        response,
                     )
                     # 记录模型最后一条消息的 finish_reason
                     last_finish_reason = response.finish_reason
@@ -203,7 +224,7 @@ async def run_agent_turn(
 
             # 写入压缩记录
             if pending_compaction is not None:
-                await context_compaction_repo.create(db_session, pending_compaction)
+                await compaction_repo.create(pending_compaction)
                 pending_compaction = None
 
         # 应用最后一次压缩到消息列表

@@ -9,22 +9,22 @@ from app.entities.column_metric import ColumnMetric
 from app.entities.metric_info import MetricInfo
 from app.entities.table_info import TableInfo
 from app.entities.value_info import ValueInfo
-from app.repositories.es.value_es_repository import ValueESRepository
-from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
-from app.repositories.mysql.meta.meta_mysql_repository import MetaMySQLRepository
-from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantRepository
-from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
+from app.repositories.column_qdrant_repo import ColumnQdrantRepo
+from app.repositories.meta_mysql_repo import MetaMySQLRepo
+from app.repositories.metric_qdrant_repo import MetricQdrantRepo
+from app.repositories.source_mysql_repo import SourceMySQLRepo
+from app.repositories.value_es_repo import ValueESRepo
 
 
 class MetaKnowledgeService:
     def __init__(
         self,
-        meta_mysql_repository: MetaMySQLRepository,
-        dw_mysql_repository: DWMySQLRepository,
-        column_qdrant_repository: ColumnQdrantRepository,
+        meta_mysql_repository: MetaMySQLRepo,
+        dw_mysql_repository: SourceMySQLRepo,
+        column_qdrant_repository: ColumnQdrantRepo,
         embedding_client: EmbeddingClient,
-        value_es_repository: ValueESRepository,
-        metric_qdrant_repository: MetricQdrantRepository,
+        value_es_repository: ValueESRepo,
+        metric_qdrant_repository: MetricQdrantRepo,
     ):
         self.meta_mysql_repository = meta_mysql_repository
         self.dw_mysql_repository = dw_mysql_repository
@@ -89,7 +89,7 @@ class MetaKnowledgeService:
                 column_infos.append(column_info)
 
         # 保存表信息和字段信息到元数据数据库
-        async with self.meta_mysql_repository.session.begin():
+        async with self.meta_mysql_repository.transaction():
             await self.meta_mysql_repository.save_table_infos(table_infos)
             await self.meta_mysql_repository.save_column_infos(column_infos)
 
@@ -195,7 +195,7 @@ class MetaKnowledgeService:
                 )
                 column_metrics.append(column_metric)
         # 保存到元数据数据库
-        async with self.meta_mysql_repository.session.begin():
+        async with self.meta_mysql_repository.transaction():
             await self.meta_mysql_repository.save_metric_infos(metric_infos)
             await self.meta_mysql_repository.save_column_metrics(column_metrics)
 

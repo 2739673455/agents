@@ -12,15 +12,15 @@ from langgraph.prebuilt.tool_node import ToolRuntime
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
 from app.clients.mysql_client_manager import (
-    dw_mysql_client_manager,
     meta_mysql_client_manager,
+    source_mysql_client_manager,
 )
 from app.clients.qdrant_client_manager import qdrant_client_manager
-from app.repositories.es.value_es_repository import ValueESRepository
-from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
-from app.repositories.mysql.meta.meta_mysql_repository import MetaMySQLRepository
-from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantRepository
-from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
+from app.repositories.column_qdrant_repo import ColumnQdrantRepo
+from app.repositories.meta_mysql_repo import MetaMySQLRepo
+from app.repositories.metric_qdrant_repo import MetricQdrantRepo
+from app.repositories.source_mysql_repo import SourceMySQLRepo
+from app.repositories.value_es_repo import ValueESRepo
 from app.services.query_service import QueryService
 
 # 预览行数：写入文件后返回给 Agent 的前几行数据，便于 Agent 理解结果结构
@@ -30,20 +30,20 @@ PREVIEW_ROWS = 5
 async def _stream_db_query(query: str) -> AsyncIterator[dict[str, Any]]:
     """流式调用进程内查询服务并逐条产出消息"""
     async with (
-        meta_mysql_client_manager.get_session_factory()() as meta_session,
-        dw_mysql_client_manager.get_session_factory()() as source_session,
+        meta_mysql_client_manager.session() as meta_session,
+        source_mysql_client_manager.session() as source_session,
     ):
         query_service = QueryService(
             embedding_client=embedding_client_manager.get_client(),
-            column_qdrant_repository=ColumnQdrantRepository(
+            column_qdrant_repository=ColumnQdrantRepo(
                 qdrant_client_manager.get_client()
             ),
-            value_es_repository=ValueESRepository(es_client_manager.get_client()),
-            metric_qdrant_repository=MetricQdrantRepository(
+            value_es_repository=ValueESRepo(es_client_manager.get_client()),
+            metric_qdrant_repository=MetricQdrantRepo(
                 qdrant_client_manager.get_client()
             ),
-            meta_mysql_repository=MetaMySQLRepository(meta_session),
-            dw_mysql_repository=DWMySQLRepository(source_session),
+            meta_mysql_repository=MetaMySQLRepo(meta_session),
+            dw_mysql_repository=SourceMySQLRepo(source_session),
         )
 
         async for event in query_service.query(query):

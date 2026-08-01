@@ -1,4 +1,4 @@
-from __future__ import annotations
+"""Embedding 客户端管理"""
 
 from typing import Any, Protocol
 
@@ -8,23 +8,27 @@ from app.conf.app_config import EmbeddingConfig, cfg
 
 
 class EmbeddingClient(Protocol):
-    async def aembed_documents(self, texts: list[str]) -> list[list[float]]: ...
+    """Embedding 客户端协议"""
 
-    async def aembed_query(self, text: str) -> list[float]: ...
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        """生成多个文本的向量"""
+        ...
 
-    async def aclose(self) -> None: ...
+    async def aembed_query(self, text: str) -> list[float]:
+        """生成单个文本的向量"""
+        ...
+
+    async def aclose(self) -> None:
+        """关闭 Embedding 客户端"""
+        ...
 
 
 class RemoteEmbeddingClient:
-    """OpenAI-compatible remote embedding client.
+    """OpenAI 兼容的远程 Embedding 客户端"""
 
-    The public return values match LangChain embeddings:
-    - aembed_documents -> list[list[float]]
-    - aembed_query -> list[float]
-    """
-
-    def __init__(self, config: EmbeddingConfig):
-        self.config = config
+    def __init__(self, config: EmbeddingConfig) -> None:
+        """初始化远程 Embedding 客户端"""
+        self._config = config
         self._client = httpx.AsyncClient(
             base_url=config.base_url.rstrip("/"),
             timeout=config.timeout,
@@ -33,16 +37,18 @@ class RemoteEmbeddingClient:
 
     @staticmethod
     def _build_headers(api_key: str | None) -> dict[str, str]:
+        """构建 HTTP 请求头"""
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         return headers
 
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        """生成多个文本的向量"""
         if not texts:
             return []
         payload = {
-            "model": self.config.model,
+            "model": self._config.model,
             "input": texts,
         }
         response = await self._client.post("/embeddings", json=payload)
@@ -50,19 +56,22 @@ class RemoteEmbeddingClient:
         return self._parse_embeddings(response.json(), expected_count=len(texts))
 
     async def aembed_query(self, text: str) -> list[float]:
+        """生成单个文本的向量"""
         embeddings = await self.aembed_documents([text])
         return embeddings[0]
 
     async def aclose(self) -> None:
+        """关闭远程 Embedding 客户端"""
         await self._client.aclose()
 
     @staticmethod
     def _parse_embeddings(
         payload: dict[str, Any], expected_count: int
     ) -> list[list[float]]:
+        """解析 Embedding 响应数据"""
         data = payload.get("data")
         if not isinstance(data, list):
-            raise ValueError("Embedding response missing data list")
+            raise TypeError("Embedding response missing data list")
 
         if data and all(isinstance(item, dict) and "index" in item for item in data):
             data = sorted(data, key=lambda item: item["index"])
@@ -70,10 +79,10 @@ class RemoteEmbeddingClient:
         embeddings: list[list[float]] = []
         for item in data:
             if not isinstance(item, dict):
-                raise ValueError("Embedding response data item must be an object")
+                raise TypeError("Embedding response data item must be an object")
             embedding = item.get("embedding")
             if not isinstance(embedding, list):
-                raise ValueError("Embedding response data item missing embedding list")
+                raise TypeError("Embedding response data item missing embedding list")
             embeddings.append([float(value) for value in embedding])
 
         if len(embeddings) != expected_count:
@@ -85,22 +94,43 @@ class RemoteEmbeddingClient:
 
 
 class EmbeddingClientManager:
-    def __init__(self, config: EmbeddingConfig):
-        self.client: EmbeddingClient | None = None
-        self.config = config
+    """Embedding 客户端管理器"""
 
-    def init(self):
-        self.client = RemoteEmbeddingClient(self.config)
+    def __init__(self, config: EmbeddingConfig) -> None:
+        """初始化 Embedding 客户端管理器"""
+        self._config = config
+        self._client: EmbeddingClient | None = None
+
+    def init(self) -> None:
+        """初始化 Embedding 客户端"""
+        self._client = RemoteEmbeddingClient(self._config)
 
     def get_client(self) -> EmbeddingClient:
-        if self.client is None:
+        """获取 Embedding 客户端"""
+        if self._client is None:
             raise RuntimeError("Embedding client manager is not initialized")
-        return self.client
+        return self._client
 
-    async def close(self):
-        if self.client:
-            await self.client.aclose()
-        self.client = None
+    async def close(self) -> None:
+        """关闭 Embedding 客户端并释放资源"""
+        if self._client is not None:
+            await self._client.aclose()
+        self._client = None
 
 
 embedding_client_manager = EmbeddingClientManager(cfg.embedding)
+
+if __name__ == "__main__":
+    import asyncio
+
+    embedding_client_manager.init()
+
+    async def test() -> None:
+        try:
+            client = embedding_client_manager.get_client()
+            embedding = await client.aembed_query("测试")
+            print(len(embedding))
+        finally:
+            await embedding_client_manager.close()
+
+    asyncio.run(test())

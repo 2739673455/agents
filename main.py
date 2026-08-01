@@ -13,7 +13,7 @@ from app.routes import api
 
 
 def register_routes(app: FastAPI) -> None:
-    """注册所有后端接口"""
+    """注册接口"""
     app.include_router(api.v1.chat.router, prefix="/api/v1/chat")
     app.include_router(
         api.v1.attachment.router,
@@ -22,12 +22,12 @@ def register_routes(app: FastAPI) -> None:
 
 
 def register_middlewares(app: FastAPI) -> None:
-    """注册全局中间件"""
+    """注册中间件"""
     app.middleware("http")(trace.middleware)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """注册全局异常处理器"""
+    """注册异常处理器"""
     app.add_exception_handler(
         base.ProblemError,
         cast(ExceptionHandler, exc_handlers.problem_error_handler),

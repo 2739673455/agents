@@ -21,7 +21,7 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
-    command: redis --appendonly yes
+    command: redis-server --appendonly yes
 
   qdrant:
     image: qdrant/qdrant:v1.16

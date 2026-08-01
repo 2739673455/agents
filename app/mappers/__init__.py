@@ -1,3 +1,1 @@
-from . import message_mapper
-
-__all__ = ["message_mapper"]
+"""实体映射"""

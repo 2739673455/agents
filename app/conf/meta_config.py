@@ -33,7 +33,6 @@ class MetaConfig(BaseModel):
 
 
 def load_config(config_file: Path) -> MetaConfig:
-    """加载元数据配置文件"""
     loaded_cfg = OmegaConf.load(config_file)
     primitive_cfg = OmegaConf.to_container(loaded_cfg, resolve=True)
     return MetaConfig.model_validate(cast(dict[str, Any], primitive_cfg))

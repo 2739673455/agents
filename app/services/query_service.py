@@ -5,22 +5,22 @@ from app.agent.context import DataAgentContext
 from app.agent.graph import graph
 from app.agent.state import DataAgentState
 from app.clients.embedding_client_manager import EmbeddingClient
-from app.repositories.es.value_es_repository import ValueESRepository
-from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
-from app.repositories.mysql.meta.meta_mysql_repository import MetaMySQLRepository
-from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantRepository
-from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
+from app.repositories.column_qdrant_repo import ColumnQdrantRepo
+from app.repositories.meta_mysql_repo import MetaMySQLRepo
+from app.repositories.metric_qdrant_repo import MetricQdrantRepo
+from app.repositories.source_mysql_repo import SourceMySQLRepo
+from app.repositories.value_es_repo import ValueESRepo
 
 
 class QueryService:
     def __init__(
         self,
         embedding_client: EmbeddingClient,
-        column_qdrant_repository: ColumnQdrantRepository,
-        value_es_repository: ValueESRepository,
-        metric_qdrant_repository: MetricQdrantRepository,
-        meta_mysql_repository: MetaMySQLRepository,
-        dw_mysql_repository: DWMySQLRepository,
+        column_qdrant_repository: ColumnQdrantRepo,
+        value_es_repository: ValueESRepo,
+        metric_qdrant_repository: MetricQdrantRepo,
+        meta_mysql_repository: MetaMySQLRepo,
+        dw_mysql_repository: SourceMySQLRepo,
     ):
         self.embedding_client = embedding_client
         self.column_qdrant_repository = column_qdrant_repository
