@@ -8,6 +8,7 @@ CREATE TABLE table_info
     id VARCHAR(256) PRIMARY KEY COMMENT '表编号',
     name VARCHAR(256) COMMENT '表名称',
     role VARCHAR(256) COMMENT '表类型(fact/dim)',
+    primary_key_columns JSON NOT NULL COMMENT '主键字段',
     description TEXT COMMENT '表描述'
 );
 
@@ -18,10 +19,11 @@ CREATE TABLE column_info
     id VARCHAR(256) PRIMARY KEY COMMENT '列编号',
     name VARCHAR(256) COMMENT '列名称',
     type VARCHAR(256) COMMENT '数据类型',
-    role VARCHAR(256) COMMENT '列类型(primary_key,foreign_key,measure,dimension)',
     description TEXT COMMENT '列描述',
     examples JSON COMMENT '数据示例',
     alias JSON COMMENT '列别名',
+    reference_column_id VARCHAR(256) COMMENT '引用字段编号',
+    index_values BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否索引字段值',
     table_id VARCHAR(256) COMMENT '所属表编号'
 );
 

@@ -6,7 +6,7 @@ from app.agent.context import DataAgentContext
 from app.agent.llm import llm
 from app.agent.state import DataAgentState
 from app.core.log import logger
-from app.entities.value_info import ValueInfo
+from app.entities.meta import ValueInfo
 from app.prompt.prompt_loader import load_prompt
 
 
@@ -50,5 +50,5 @@ async def recall_value(state: DataAgentState, runtime: Runtime[DataAgentContext]
         return {"retrieved_values": retrieved_values}
     except Exception as e:
         writer({"type": "progress", "step": "召回字段取值", "status": "error"})
-        logger.error(f"召回字段取值失败: {str(e)}")
+        logger.error(f"召回字段取值失败: {e!s}")
         raise

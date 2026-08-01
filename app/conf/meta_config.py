@@ -1,38 +1,67 @@
-from pathlib import Path
-from typing import Any, cast
+"""元数据导入导出配置模型"""
 
-from omegaconf import OmegaConf
-from pydantic import BaseModel
+from typing import Literal
 
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-class ColumnConfig(BaseModel):
-    name: str
-    role: str
-    description: str
-    alias: list[str]
-    sync: bool
+TableRole = Literal["fact", "dim"]
 
 
-class TableConfig(BaseModel):
-    name: str
-    role: str
-    description: str
-    columns: list[ColumnConfig]
+class MetaConfigModel(BaseModel):
+    """元数据配置模型基类"""
+
+    model_config = ConfigDict(extra="forbid")
 
 
-class MetricConfig(BaseModel):
+class ColumnConfig(MetaConfigModel):
+    """字段元数据配置"""
+
+    id: str | None = None
     name: str
     description: str
-    relevant_columns: list[str]
-    alias: list[str]
+    alias: list[str] = Field(default_factory=list)
+    index_values: bool
+    reference_column_id: str | None = None
 
 
-class MetaConfig(BaseModel):
-    tables: list[TableConfig] | None = None
-    metrics: list[MetricConfig] | None = None
+class TableConfig(MetaConfigModel):
+    """表元数据配置"""
+
+    id: str | None = None
+    name: str
+    role: TableRole
+    primary_key_columns: list[str] = Field(default_factory=list)
+    description: str
+    columns: list[ColumnConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_primary_key_columns(self) -> "TableConfig":
+        """校验表的主键字段"""
+        if len(self.primary_key_columns) != len(set(self.primary_key_columns)):
+            raise ValueError("Primary key columns cannot contain duplicates")
+        column_names = {column.name for column in self.columns}
+        missing_columns = set(self.primary_key_columns) - column_names
+        if missing_columns:
+            raise ValueError(
+                "Primary key columns are missing from table columns: "
+                f"{', '.join(sorted(missing_columns))}"
+            )
+        return self
 
 
-def load_config(config_file: Path) -> MetaConfig:
-    loaded_cfg = OmegaConf.load(config_file)
-    primitive_cfg = OmegaConf.to_container(loaded_cfg, resolve=True)
-    return MetaConfig.model_validate(cast(dict[str, Any], primitive_cfg))
+class MetricConfig(MetaConfigModel):
+    """指标元数据配置"""
+
+    id: str | None = None
+    name: str
+    description: str
+    relevant_columns: list[str] = Field(default_factory=list)
+    alias: list[str] = Field(default_factory=list)
+
+
+class MetaConfig(MetaConfigModel):
+    """元数据导入导出配置"""
+
+    version: Literal[1] = 1
+    tables: list[TableConfig] = Field(default_factory=list)
+    metrics: list[MetricConfig] = Field(default_factory=list)

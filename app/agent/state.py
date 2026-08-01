@@ -1,22 +1,21 @@
 from typing import TypedDict
 
-from app.entities.column_info import ColumnInfo
-from app.entities.metric_info import MetricInfo
-from app.entities.value_info import ValueInfo
+from app.entities.meta import ColumnInfo, MetricInfo, ValueInfo
 
 
 class ColumnInfoState(TypedDict):
     name: str
     type: str
-    role: str
     examples: list
     description: str
     alias: list[str]
+    reference_column_id: str | None
 
 
 class TableInfoState(TypedDict):
     name: str
     role: str
+    primary_key_columns: list[str]
     description: str
     columns: list[ColumnInfoState]
 

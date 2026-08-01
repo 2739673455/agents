@@ -1,13 +1,19 @@
 """字段向量数据访问"""
 
-from dataclasses import asdict
 from typing import Any
 
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PointStruct,
+    VectorParams,
+)
 
 from app.conf.app_config import cfg
-from app.entities.column_info import ColumnInfo
+from app.entities.meta import ColumnInfo
 
 
 class ColumnQdrantRepo:
@@ -18,6 +24,21 @@ class ColumnQdrantRepo:
     def __init__(self, client: AsyncQdrantClient) -> None:
         """初始化字段向量存储"""
         self._client = client
+
+    @staticmethod
+    def _to_payload(column_info: ColumnInfo) -> dict[str, Any]:
+        """将字段 ORM 转换为向量载荷"""
+        return {
+            "id": column_info.id,
+            "name": column_info.name,
+            "type": column_info.type,
+            "examples": column_info.examples,
+            "description": column_info.description,
+            "alias": column_info.alias,
+            "index_values": column_info.index_values,
+            "reference_column_id": column_info.reference_column_id,
+            "table_id": column_info.table_id,
+        }
 
     async def ensure_collection(self) -> None:
         """确保字段向量集合存在"""
@@ -41,12 +62,27 @@ class ColumnQdrantRepo:
         for i in range(0, len(zipped), batch_size):
             batch = zipped[i : i + batch_size]
             batch_points = [
-                PointStruct(id=id, vector=embedding, payload=asdict(payload))
+                PointStruct(
+                    id=id,
+                    vector=embedding,
+                    payload=self._to_payload(payload),
+                )
                 for id, embedding, payload in batch
             ]
             await self._client.upsert(
                 collection_name=self._collection_name, points=batch_points
             )
+
+    async def delete_by_id(self, column_id: str) -> None:
+        """删除字段对应的全部向量"""
+        await self._client.delete(
+            collection_name=self._collection_name,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(key="id", match=MatchValue(value=column_id)),
+                ]
+            ),
+        )
 
     async def search(
         self, embedding: list[float], score_threshold: float = 0.6, limit: int = 5

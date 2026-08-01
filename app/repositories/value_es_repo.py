@@ -5,7 +5,7 @@ from typing import Any, ClassVar
 
 from elasticsearch import AsyncElasticsearch
 
-from app.entities.value_info import ValueInfo
+from app.entities.meta import ValueInfo
 
 
 class ValueESRepo:
@@ -46,7 +46,16 @@ class ValueESRepo:
                     {"index": {"_index": self._index_name, "_id": value_info.id}}
                 )
                 operations.append(asdict(value_info))
-            await self._client.bulk(operations=operations)
+            await self._client.bulk(operations=operations, refresh="wait_for")
+
+    async def delete_by_column_id(self, column_id: str) -> None:
+        """删除字段对应的全部取值"""
+        await self._client.delete_by_query(
+            index=self._index_name,
+            query={"term": {"column_id": column_id}},
+            conflicts="proceed",
+            refresh=True,
+        )
 
     async def search(
         self, keyword: str, score_threshold: float = 0.6, limit: int = 5

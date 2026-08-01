@@ -19,6 +19,7 @@ def register_routes(app: FastAPI) -> None:
         api.v1.attachment.router,
         prefix="/api/v1/chat/attachment",
     )
+    app.include_router(api.v1.meta.router, prefix="/api/v1/meta")
 
 
 def register_middlewares(app: FastAPI) -> None:

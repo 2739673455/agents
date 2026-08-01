@@ -2,14 +2,13 @@ from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
 from app.agent.state import (
-    DataAgentState,
-    TableInfoState,
-    MetricInfoState,
     ColumnInfoState,
+    DataAgentState,
+    MetricInfoState,
+    TableInfoState,
 )
 from app.core.log import logger
-from app.entities.column_info import ColumnInfo
-from app.entities.table_info import TableInfo
+from app.entities.meta import ColumnInfo, TableInfo
 
 
 async def merge_retrieved_info(
@@ -48,7 +47,6 @@ async def merge_retrieved_info(
         for retrieved_value in retrieved_values:
             column_id = retrieved_value.column_id
             column_value = retrieved_value.value
-            #
             if column_id not in retrieved_columns_map:
                 column_info = await meta_mysql_repository.get_column_info_by_id(
                     column_id
@@ -66,18 +64,36 @@ async def merge_retrieved_info(
             table_to_columns_map[table_id].append(column)
 
         # 显式的添加每个表的主外键
-        for table_id in table_to_columns_map.keys():
+        for table_id, columns in table_to_columns_map.items():
             # 查询主外键字段
             key_columns: list[
                 ColumnInfo
             ] = await meta_mysql_repository.get_key_columns_by_table_id(table_id)
 
             # 当前表已有的所有列的ID
-            column_ids = [column.id for column in table_to_columns_map[table_id]]
+            column_ids = {column.id for column in columns}
 
             for key_column in key_columns:
                 if key_column.id not in column_ids:
-                    table_to_columns_map[table_id].append(key_column)
+                    columns.append(key_column)
+
+        # 补充外键引用的目标字段及其所属表
+        known_column_ids = {
+            column.id for columns in table_to_columns_map.values() for column in columns
+        }
+        reference_column_ids = {
+            column.reference_column_id
+            for columns in table_to_columns_map.values()
+            for column in columns
+            if column.reference_column_id
+        }
+        for reference_column_id in sorted(reference_column_ids - known_column_ids):
+            reference_column = await meta_mysql_repository.get_column_info_by_id(
+                reference_column_id
+            )
+            table_to_columns_map.setdefault(reference_column.table_id, []).append(
+                reference_column
+            )
 
         # 将table_id->columns映射 转换为 list[TableInfoState]
         for table_id, columns in table_to_columns_map.items():
@@ -88,16 +104,17 @@ async def merge_retrieved_info(
                 ColumnInfoState(
                     name=column.name,
                     type=column.type,
-                    role=column.role,
                     examples=column.examples,
                     description=column.description,
                     alias=column.alias,
+                    reference_column_id=column.reference_column_id,
                 )
                 for column in columns
             ]
             table_info_state = TableInfoState(
                 name=table.name,
                 role=table.role,
+                primary_key_columns=table.primary_key_columns,
                 description=table.description,
                 columns=columns,
             )
@@ -122,5 +139,5 @@ async def merge_retrieved_info(
         return {"table_infos": table_infos, "metric_infos": metric_infos}
     except Exception as e:
         writer({"type": "progress", "step": "合并召回信息", "status": "error"})
-        logger.error(f"合并召回信息失败: {str(e)}")
+        logger.error(f"合并召回信息失败: {e!s}")
         raise

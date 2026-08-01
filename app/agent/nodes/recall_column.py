@@ -6,7 +6,7 @@ from app.agent.context import DataAgentContext
 from app.agent.llm import llm
 from app.agent.state import DataAgentState
 from app.core.log import logger
-from app.entities.column_info import ColumnInfo
+from app.entities.meta import ColumnInfo
 from app.prompt.prompt_loader import load_prompt
 
 

@@ -167,7 +167,5 @@ if __name__ == "__main__":
     )
 
     db_initializer.init_db("meta", MYSQL_SQL_DIR / "meta.sql")
-    db_initializer.gen_tb_model("meta", ENTITIES_DIR / "meta.py")
 
     db_initializer.init_db("chat", MYSQL_SQL_DIR / "chat.sql")
-    db_initializer.gen_tb_model("chat", ENTITIES_DIR / "chat.py")

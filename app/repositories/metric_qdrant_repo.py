@@ -1,13 +1,19 @@
 """指标向量数据访问"""
 
-from dataclasses import asdict
 from typing import Any
 
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PointStruct,
+    VectorParams,
+)
 
 from app.conf.app_config import cfg
-from app.entities.metric_info import MetricInfo
+from app.entities.meta import MetricInfo
 
 
 class MetricQdrantRepo:
@@ -18,6 +24,17 @@ class MetricQdrantRepo:
     def __init__(self, client: AsyncQdrantClient) -> None:
         """初始化指标向量存储"""
         self._client = client
+
+    @staticmethod
+    def _to_payload(metric_info: MetricInfo) -> dict[str, Any]:
+        """将指标 ORM 转换为向量载荷"""
+        return {
+            "id": metric_info.id,
+            "name": metric_info.name,
+            "description": metric_info.description,
+            "relevant_columns": metric_info.relevant_columns,
+            "alias": metric_info.alias,
+        }
 
     async def ensure_collection(self) -> None:
         """确保指标向量集合存在"""
@@ -41,12 +58,27 @@ class MetricQdrantRepo:
         for i in range(0, len(zipped), batch_size):
             batch = zipped[i : i + batch_size]
             batch_points = [
-                PointStruct(id=id, vector=embedding, payload=asdict(payload))
+                PointStruct(
+                    id=id,
+                    vector=embedding,
+                    payload=self._to_payload(payload),
+                )
                 for id, embedding, payload in batch
             ]
             await self._client.upsert(
                 collection_name=self._collection_name, points=batch_points
             )
+
+    async def delete_by_id(self, metric_id: str) -> None:
+        """删除指标对应的全部向量"""
+        await self._client.delete(
+            collection_name=self._collection_name,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(key="id", match=MatchValue(value=metric_id)),
+                ]
+            ),
+        )
 
     async def search(
         self, embedding: list[float], score_threshold: float = 0.6, limit: int = 5

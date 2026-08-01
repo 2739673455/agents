@@ -1,5 +1,7 @@
 """业务数据访问"""
 
+import re
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,17 +13,32 @@ class SourceMySQLRepo:
         """初始化业务数据存储"""
         self._session = session
 
+    @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        """校验并引用数据库标识符"""
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", identifier):
+            raise ValueError(f"Invalid database identifier: {identifier}")
+        return f"`{identifier}`"
+
     async def get_column_types(self, table_name: str) -> dict[str, str]:
         """获取表的字段类型"""
-        sql = f"show columns from {table_name}"
+        table_identifier = self._quote_identifier(table_name)
+        sql = f"show columns from {table_identifier}"
         result = await self._session.execute(text(sql))
         return {row.Field: row.Type for row in result.fetchall()}
 
     async def get_column_values(
-        self, table_name: str, column_name: str, limit: int
+        self,
+        table_name: str,
+        column_name: str,
+        limit: int | None = None,
     ) -> list:
         """获取字段的去重取值"""
-        sql = f"select distinct {column_name} from {table_name} limit {limit}"
+        table_identifier = self._quote_identifier(table_name)
+        column_identifier = self._quote_identifier(column_name)
+        sql = f"select distinct {column_identifier} from {table_identifier}"
+        if limit is not None:
+            sql = f"{sql} limit {limit}"
         result = await self._session.execute(text(sql))
         return list(result.scalars().fetchall())
 

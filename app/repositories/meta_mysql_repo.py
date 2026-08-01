@@ -1,18 +1,9 @@
 """元数据访问"""
 
-from sqlalchemy import text
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
-from app.entities.column_info import ColumnInfo
-from app.entities.column_metric import ColumnMetric
-from app.entities.metric_info import MetricInfo
-from app.entities.table_info import TableInfo
-from app.mappers.column_info_mapper import ColumnInfoMapper
-from app.mappers.column_metric_mapper import ColumnMetricMapper
-from app.mappers.metric_info_mapper import MetricInfoMapper
-from app.mappers.table_info_mapper import TableInfoMapper
-from app.models.column_info_mysql import ColumnInfoMySQL
-from app.models.table_info_mysql import TableInfoMySQL
+from app.entities.meta import ColumnInfo, ColumnMetric, MetricInfo, TableInfo
 
 
 class MetaMySQLRepo:
@@ -26,58 +17,110 @@ class MetaMySQLRepo:
         """创建事务上下文"""
         return self._session.begin()
 
-    async def save_table_infos(self, table_infos: list[TableInfo]) -> None:
-        """保存表信息"""
-        models = [TableInfoMapper.to_model(table_info) for table_info in table_infos]
-        self._session.add_all(models)
+    async def upsert_table_info(self, table_info: TableInfo) -> None:
+        """新增或更新表信息"""
+        await self._session.merge(table_info)
 
-    async def save_column_infos(self, columns_info: list[ColumnInfo]) -> None:
-        """保存字段信息"""
-        models = [
-            ColumnInfoMapper.to_model(column_info) for column_info in columns_info
-        ]
-        self._session.add_all(models)
+    async def upsert_column_info(self, column_info: ColumnInfo) -> None:
+        """新增或更新字段信息"""
+        await self._session.merge(column_info)
 
-    async def save_metric_infos(self, metric_infos: list[MetricInfo]) -> None:
-        """保存指标信息"""
-        self._session.add_all(
-            [MetricInfoMapper.to_model(metric_info) for metric_info in metric_infos]
+    async def upsert_metric_info(self, metric_info: MetricInfo) -> None:
+        """新增或更新指标信息及字段关联"""
+        await self._session.merge(metric_info)
+        await self._session.execute(
+            delete(ColumnMetric).where(ColumnMetric.metric_id == metric_info.id)
         )
-
-    async def save_column_metrics(self, column_metrics: list[ColumnMetric]) -> None:
-        """保存字段与指标的关联关系"""
         self._session.add_all(
             [
-                ColumnMetricMapper.to_model(column_metric)
-                for column_metric in column_metrics
+                ColumnMetric(column_id=column_id, metric_id=metric_info.id)
+                for column_id in dict.fromkeys(metric_info.relevant_columns)
             ]
+        )
+
+    async def list_table_infos(self) -> list[TableInfo]:
+        """获取全部表信息"""
+        result = await self._session.scalars(select(TableInfo).order_by(TableInfo.id))
+        return list(result.all())
+
+    async def list_column_infos(self) -> list[ColumnInfo]:
+        """获取全部字段信息"""
+        result = await self._session.scalars(select(ColumnInfo).order_by(ColumnInfo.id))
+        return list(result.all())
+
+    async def list_metric_infos(self) -> list[MetricInfo]:
+        """获取全部指标信息"""
+        result = await self._session.scalars(select(MetricInfo).order_by(MetricInfo.id))
+        return list(result.all())
+
+    async def delete_metric_infos(self, metric_ids: list[str]) -> None:
+        """删除指标信息及字段关联"""
+        if not metric_ids:
+            return
+        await self._session.execute(
+            delete(ColumnMetric).where(ColumnMetric.metric_id.in_(metric_ids))
+        )
+        await self._session.execute(
+            delete(MetricInfo).where(MetricInfo.id.in_(metric_ids))
+        )
+
+    async def delete_column_infos(self, column_ids: list[str]) -> None:
+        """删除字段信息及指标关联"""
+        if not column_ids:
+            return
+        await self._session.execute(
+            delete(ColumnMetric).where(ColumnMetric.column_id.in_(column_ids))
+        )
+        await self._session.execute(
+            delete(ColumnInfo).where(ColumnInfo.id.in_(column_ids))
+        )
+
+    async def delete_table_infos(self, table_ids: list[str]) -> None:
+        """删除表信息"""
+        if not table_ids:
+            return
+        await self._session.execute(
+            delete(TableInfo).where(TableInfo.id.in_(table_ids))
         )
 
     async def get_column_info_by_id(self, column_id: str) -> ColumnInfo:
         """根据编号获取字段信息"""
-        result: ColumnInfoMySQL | None = await self._session.get(
-            ColumnInfoMySQL, column_id
-        )
+        result = await self._session.get(ColumnInfo, column_id)
         if result:
-            return ColumnInfoMapper.to_entity(result)
+            return result
         raise ValueError(f"Column info not found: {column_id}")
 
     async def get_table_info_by_id(self, table_id: str) -> TableInfo:
         """根据编号获取表信息"""
-        result: TableInfoMySQL | None = await self._session.get(
-            TableInfoMySQL, table_id
-        )
+        result = await self._session.get(TableInfo, table_id)
         if result:
-            return TableInfoMapper.to_entity(result)
+            return result
         raise ValueError(f"Table info not found: {table_id}")
+
+    async def get_metric_info_by_id(self, metric_id: str) -> MetricInfo:
+        """根据编号获取指标信息"""
+        result = await self._session.get(MetricInfo, metric_id)
+        if result:
+            return result
+        raise ValueError(f"Metric info not found: {metric_id}")
+
+    async def get_columns_by_table_id(self, table_id: str) -> list[ColumnInfo]:
+        """获取表的全部字段信息"""
+        result = await self._session.scalars(
+            select(ColumnInfo).where(ColumnInfo.table_id == table_id)
+        )
+        return list(result.all())
 
     async def get_key_columns_by_table_id(self, table_id: str) -> list[ColumnInfo]:
         """获取表的主键和外键字段"""
-        sql = """
-            select *
-            from column_info
-            where table_id = :table_id
-            and role in ('primary_key', 'foreign_key')
-        """
-        result = await self._session.execute(text(sql), {"table_id": table_id})
-        return [ColumnInfo(**row) for row in result.mappings().fetchall()]
+        table_info = await self.get_table_info_by_id(table_id)
+        result = await self._session.scalars(
+            select(ColumnInfo).where(
+                ColumnInfo.table_id == table_id,
+                or_(
+                    ColumnInfo.name.in_(table_info.primary_key_columns),
+                    ColumnInfo.reference_column_id.is_not(None),
+                ),
+            )
+        )
+        return list(result.all())
