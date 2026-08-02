@@ -8,6 +8,7 @@ from typing import Any
 
 from app.conf.meta_config import MetaConfig
 from app.entities.meta import ColumnInfo, MetricInfo, TableInfo
+from app.errors import meta_error
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
 from app.repositories.source_mysql_repo import SourceMySQLRepo
 
@@ -64,7 +65,9 @@ class MetaImportService:
     ) -> MetaImportResult:
         """校验并批量导入元数据"""
         if not meta_config.tables and not meta_config.metrics:
-            raise ValueError("Metadata import document cannot be empty")
+            raise meta_error.InvalidMetadataError(
+                detail="Metadata import document cannot be empty"
+            )
 
         async with self._meta_repo.transaction():
             existing_tables = {
@@ -80,9 +83,12 @@ class MetaImportService:
                 for metric_info in await self._meta_repo.list_metric_infos()
             }
 
-            table_infos, column_infos, metric_infos = await self._build_metadata(
-                meta_config
-            )
+            try:
+                table_infos, column_infos, metric_infos = await self._build_metadata(
+                    meta_config
+                )
+            except ValueError as exc:
+                raise meta_error.InvalidMetadataError(detail=str(exc)) from exc
             imported_tables = self._index_by_id(table_infos, "table")
             imported_columns = self._index_by_id(column_infos, "column")
             imported_metrics = self._index_by_id(metric_infos, "metric")
@@ -158,16 +164,20 @@ class MetaImportService:
             for column_config in table_config.columns:
                 source_column = (table_config.name, column_config.name)
                 if source_column in source_columns:
-                    raise ValueError(
-                        "Duplicate source column in metadata import: "
-                        f"{table_config.name}.{column_config.name}"
+                    raise meta_error.InvalidMetadataError(
+                        detail=(
+                            "Duplicate source column in metadata import: "
+                            f"{table_config.name}.{column_config.name}"
+                        )
                     )
                 source_columns.add(source_column)
 
                 if column_config.name not in column_types:
-                    raise ValueError(
-                        "Column not found in source table: "
-                        f"{table_config.name}.{column_config.name}"
+                    raise meta_error.InvalidMetadataError(
+                        detail=(
+                            "Column not found in source table: "
+                            f"{table_config.name}.{column_config.name}"
+                        )
                     )
                 column_values = await self._source_repo.get_column_values(
                     table_config.name,
@@ -201,16 +211,16 @@ class MetaImportService:
         return table_infos, column_infos, metric_infos
 
     @staticmethod
-    def _index_by_id[T](items: list[T], resource: str) -> dict[str, T]:
+    def _index_by_id[T: TableInfo | ColumnInfo | MetricInfo](
+        items: list[T], resource: str
+    ) -> dict[str, T]:
         """按编号索引实体并校验重复编号"""
         indexed: dict[str, T] = {}
         for item in items:
-            item_id = getattr(item, "id", None)
-            if not isinstance(item_id, str):
-                raise TypeError(f"{resource.title()} metadata is missing an id")
+            item_id = item.id
             if item_id in indexed:
-                raise ValueError(
-                    f"Duplicate {resource} id in metadata import: {item_id}"
+                raise meta_error.InvalidMetadataError(
+                    detail=f"Duplicate {resource} id in metadata import: {item_id}"
                 )
             indexed[item_id] = item
         return indexed
@@ -226,9 +236,11 @@ class MetaImportService:
                 set(metric_info.relevant_columns) - available_column_ids
             )
             if missing_column_ids:
-                raise ValueError(
-                    f"Metric {metric_info.id} references missing columns: "
-                    f"{', '.join(missing_column_ids)}"
+                raise meta_error.InvalidMetadataError(
+                    detail=(
+                        f"Metric {metric_info.id} references missing columns: "
+                        f"{', '.join(missing_column_ids)}"
+                    )
                 )
 
     @staticmethod
@@ -242,11 +254,15 @@ class MetaImportService:
             if not reference_column_id:
                 continue
             if reference_column_id == column_info.id:
-                raise ValueError(f"Column cannot reference itself: {column_info.id}")
+                raise meta_error.InvalidMetadataError(
+                    detail=f"Column cannot reference itself: {column_info.id}"
+                )
             if reference_column_id not in available_column_ids:
-                raise ValueError(
-                    f"Column {column_info.id} references missing column: "
-                    f"{reference_column_id}"
+                raise meta_error.InvalidMetadataError(
+                    detail=(
+                        f"Column {column_info.id} references missing column: "
+                        f"{reference_column_id}"
+                    )
                 )
 
     @staticmethod

@@ -10,6 +10,7 @@ from app.conf.meta_config import (
     TableRole,
 )
 from app.entities.meta import ColumnInfo, MetricInfo, TableInfo
+from app.errors import meta_error
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
 
 
@@ -31,10 +32,15 @@ class MetaService:
             reference_column_id = column_info.reference_column_id
             if reference_column_id:
                 if reference_column_id == column_info.id:
-                    raise ValueError(
-                        f"Column cannot reference itself: {column_info.id}"
+                    raise meta_error.InvalidMetadataError(
+                        detail=f"Column cannot reference itself: {column_info.id}"
                     )
-                await self._meta_repo.get_column_info_by_id(reference_column_id)
+                try:
+                    await self._meta_repo.get_column_info_by_id(reference_column_id)
+                except meta_error.MetadataNotFoundError as exc:
+                    raise meta_error.InvalidMetadataError(
+                        detail=f"Reference column not found: {reference_column_id}"
+                    ) from exc
             await self._meta_repo.upsert_column_info(column_info)
 
     async def upsert_metric_info(self, metric_info: MetricInfo) -> None:
@@ -58,9 +64,11 @@ class MetaService:
                 continue
             columns_by_table[column_info.table_id].append(column_info)
         if orphan_column_ids:
-            raise ValueError(
-                "Columns reference missing tables: "
-                f"{', '.join(sorted(orphan_column_ids))}"
+            raise meta_error.MetadataConflictError(
+                detail=(
+                    "Columns reference missing tables: "
+                    f"{', '.join(sorted(orphan_column_ids))}"
+                )
             )
 
         return MetaConfig(

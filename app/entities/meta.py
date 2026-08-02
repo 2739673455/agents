@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, String, Text, text
+from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -51,7 +51,10 @@ class ColumnInfo(Base):
         String(256), comment="引用字段编号"
     )
     table_id: Mapped[str] = mapped_column(
-        String(256), nullable=False, comment="所属表编号"
+        String(256),
+        ForeignKey("table_info.id"),
+        nullable=False,
+        comment="所属表编号",
     )
 
 
@@ -84,8 +87,14 @@ class ColumnMetric(Base):
     __tablename__ = "column_metric"
 
     metric_id: Mapped[str] = mapped_column(
-        String(256), primary_key=True, comment="指标编号"
+        String(256),
+        ForeignKey("metric_info.id"),
+        primary_key=True,
+        comment="指标编号",
     )
     column_id: Mapped[str] = mapped_column(
-        String(256), primary_key=True, comment="列编号"
+        String(256),
+        ForeignKey("column_info.id"),
+        primary_key=True,
+        comment="列编号",
     )

@@ -1,3 +1,5 @@
-from . import attachment_error, auth_error, chat_error
+"""应用异常定义与处理"""
 
-__all__ = ["attachment_error", "auth_error", "chat_error"]
+from . import attachment_error, base, chat_error, exc_handlers, meta_error
+
+__all__ = ["attachment_error", "base", "chat_error", "exc_handlers", "meta_error"]

@@ -1,4 +1,4 @@
-from app.core.exceptions.base import NotFoundError
+from app.errors.base import NotFoundError
 
 
 class ConversationNotFoundError(NotFoundError):

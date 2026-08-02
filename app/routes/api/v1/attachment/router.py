@@ -2,7 +2,7 @@ import mimetypes
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -115,7 +115,7 @@ async def api_get_attachment(
     target_path = _build_attachment_path(workspace_dir, f_path)
     # 文件不存在则报错
     if not target_path.is_file():
-        raise HTTPException(status_code=404, detail="Attachment not found")
+        raise attachment_error.AttachmentNotFoundError(detail=f_path)
 
     # 获取文件 MIME 类型
     media_type, _ = mimetypes.guess_type(target_path.name)

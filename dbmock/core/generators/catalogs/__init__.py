@@ -1,3 +1,5 @@
+"""数据生成目录"""
+
 from .behavior_generation_rules import (
     APP_VERSIONS,
     APP_CLIENT_TYPES,

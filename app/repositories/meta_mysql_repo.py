@@ -4,6 +4,7 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
 from app.entities.meta import ColumnInfo, ColumnMetric, MetricInfo, TableInfo
+from app.errors import meta_error
 
 
 class MetaMySQLRepo:
@@ -88,21 +89,27 @@ class MetaMySQLRepo:
         result = await self._session.get(ColumnInfo, column_id)
         if result:
             return result
-        raise ValueError(f"Column info not found: {column_id}")
+        raise meta_error.MetadataNotFoundError(
+            detail=f"Column info not found: {column_id}"
+        )
 
     async def get_table_info_by_id(self, table_id: str) -> TableInfo:
         """根据编号获取表信息"""
         result = await self._session.get(TableInfo, table_id)
         if result:
             return result
-        raise ValueError(f"Table info not found: {table_id}")
+        raise meta_error.MetadataNotFoundError(
+            detail=f"Table info not found: {table_id}"
+        )
 
     async def get_metric_info_by_id(self, metric_id: str) -> MetricInfo:
         """根据编号获取指标信息"""
         result = await self._session.get(MetricInfo, metric_id)
         if result:
             return result
-        raise ValueError(f"Metric info not found: {metric_id}")
+        raise meta_error.MetadataNotFoundError(
+            detail=f"Metric info not found: {metric_id}"
+        )
 
     async def get_columns_by_table_id(self, table_id: str) -> list[ColumnInfo]:
         """获取表的全部字段信息"""

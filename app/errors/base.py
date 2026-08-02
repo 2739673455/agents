@@ -1,16 +1,16 @@
-"""应用层异常基类 — RFC 9457 Problem Details 风格"""
+"""应用异常与 RFC 9457 Problem Details 响应模型"""
 
+from collections.abc import Mapping
+from http import HTTPStatus
 from typing import Any
-
-from fastapi import status as http_status
 
 
 class ProblemError(Exception):
-    """异常基类，可转换为结构化错误响应"""
+    """可由全局处理器转换为 Problem Details 响应的应用异常"""
 
     type: str = "internal-server-error"
     title: str = "服务器内部错误"
-    status: int = http_status.HTTP_500_INTERNAL_SERVER_ERROR
+    status: int = HTTPStatus.INTERNAL_SERVER_ERROR
 
     def __init__(
         self,
@@ -19,15 +19,17 @@ class ProblemError(Exception):
         detail: str | None = None,
         type: str | None = None,
         status: int | None = None,
+        extensions: Mapping[str, Any] | None = None,
     ) -> None:
         self.title = title or self.title
         self.detail = detail
+        self.extensions = dict(extensions or {})
         if type is not None:
             self.type = type
         if status is not None:
             self.status = status
 
-        super().__init__(self.title)
+        super().__init__(detail or self.title)
 
     def to_problem(
         self,
@@ -35,57 +37,47 @@ class ProblemError(Exception):
         instance: str | None = None,
     ) -> dict[str, Any]:
         """转换为响应体"""
-        payload: dict[str, Any] = {
-            "type": self.type,
-            "title": self.title,
-            "status": self.status,
-        }
+        payload: dict[str, Any] = dict(self.extensions)
+        payload.update(
+            {
+                "type": self.type,
+                "title": self.title,
+                "status": self.status,
+            }
+        )
 
         if self.detail is not None:
             payload["detail"] = self.detail
         if instance:
             payload["instance"] = instance
-
         return payload
 
 
 class InternalServerError(ProblemError):
     type = "internal-server-error"
     title = "服务器内部错误"
-    status = http_status.HTTP_500_INTERNAL_SERVER_ERROR
+    status = HTTPStatus.INTERNAL_SERVER_ERROR
 
 
 class ValidationError(ProblemError):
     type = "validation-error"
     title = "参数校验失败"
-    status = http_status.HTTP_422_UNPROCESSABLE_CONTENT
-
-
-class AuthError(ProblemError):
-    type = "authentication-failed"
-    title = "认证失败"
-    status = http_status.HTTP_401_UNAUTHORIZED
+    status = HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 class PermissionDeniedError(ProblemError):
     type = "permission-denied"
     title = "权限不足"
-    status = http_status.HTTP_403_FORBIDDEN
+    status = HTTPStatus.FORBIDDEN
 
 
 class NotFoundError(ProblemError):
     type = "not-found"
     title = "资源不存在"
-    status = http_status.HTTP_404_NOT_FOUND
+    status = HTTPStatus.NOT_FOUND
 
 
 class ConflictError(ProblemError):
     type = "conflict"
     title = "资源冲突"
-    status = http_status.HTTP_409_CONFLICT
-
-
-class BadRequestError(ProblemError):
-    type = "bad-request"
-    title = "请求参数错误"
-    status = http_status.HTTP_400_BAD_REQUEST
+    status = HTTPStatus.CONFLICT
