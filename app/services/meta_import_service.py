@@ -7,7 +7,13 @@ from enum import StrEnum
 from typing import Any
 
 from app.conf.meta_config import MetaConfig
-from app.entities.meta import ColumnInfo, MetricInfo, TableInfo
+from app.entities.meta import (
+    ColumnInfo,
+    ColumnKey,
+    ColumnReference,
+    MetricInfo,
+    TableInfo,
+)
 from app.errors import meta_error
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
 from app.repositories.source_mysql_repo import SourceMySQLRepo
@@ -21,12 +27,12 @@ class ImportMode(StrEnum):
 
 
 @dataclass(frozen=True)
-class ResourceChanges:
+class ResourceChanges[T]:
     """单类元数据变更"""
 
-    created_ids: list[str]
-    updated_ids: list[str]
-    deleted_ids: list[str]
+    created: list[T]
+    updated: list[T]
+    deleted: list[T]
 
 
 @dataclass(frozen=True)
@@ -35,17 +41,16 @@ class MetaImportResult:
 
     mode: ImportMode
     dry_run: bool
-    tables: ResourceChanges
-    columns: ResourceChanges
-    metrics: ResourceChanges
+    tables: ResourceChanges[str]
+    columns: ResourceChanges[ColumnKey]
+    metrics: ResourceChanges[str]
 
     @property
     def index_sync_required(self) -> bool:
         """判断导入后是否需要处理检索索引"""
         changes = (self.tables, self.columns, self.metrics)
         return any(
-            change.created_ids or change.updated_ids or change.deleted_ids
-            for change in changes
+            change.created or change.updated or change.deleted for change in changes
         )
 
 
@@ -71,15 +76,15 @@ class MetaImportService:
 
         async with self._meta_repo.transaction():
             existing_tables = {
-                table_info.id: table_info
+                table_info.name: table_info
                 for table_info in await self._meta_repo.list_table_infos()
             }
             existing_columns = {
-                column_info.id: column_info
+                (column_info.t_name, column_info.name): column_info
                 for column_info in await self._meta_repo.list_column_infos()
             }
             existing_metrics = {
-                metric_info.id: metric_info
+                metric_info.name: metric_info
                 for metric_info in await self._meta_repo.list_metric_infos()
             }
 
@@ -89,15 +94,15 @@ class MetaImportService:
                 )
             except ValueError as exc:
                 raise meta_error.InvalidMetadataError(detail=str(exc)) from exc
-            imported_tables = self._index_by_id(table_infos, "table")
-            imported_columns = self._index_by_id(column_infos, "column")
-            imported_metrics = self._index_by_id(metric_infos, "metric")
+            imported_tables = self._index_tables(table_infos)
+            imported_columns = self._index_columns(column_infos)
+            imported_metrics = self._index_metrics(metric_infos)
 
-            available_column_ids = set(imported_columns)
+            available_columns = set(imported_columns)
             if mode is ImportMode.MERGE:
-                available_column_ids.update(existing_columns)
-            self._validate_column_references(column_infos, available_column_ids)
-            self._validate_metric_columns(metric_infos, available_column_ids)
+                available_columns.update(existing_columns)
+            self._validate_column_references(column_infos, available_columns)
+            self._validate_metric_columns(metric_infos, available_columns)
 
             table_changes = self._get_changes(
                 self._table_snapshots(existing_tables),
@@ -126,16 +131,28 @@ class MetaImportService:
                 return result
 
             if mode is ImportMode.REPLACE:
-                await self._meta_repo.delete_metric_infos(metric_changes.deleted_ids)
-                await self._meta_repo.delete_column_infos(column_changes.deleted_ids)
-                await self._meta_repo.delete_table_infos(table_changes.deleted_ids)
+                await self._meta_repo.delete_metric_infos(metric_changes.deleted)
+                await self._meta_repo.delete_column_infos(column_changes.deleted)
+                await self._meta_repo.delete_table_infos(table_changes.deleted)
 
-            for table_id in table_changes.created_ids + table_changes.updated_ids:
-                await self._meta_repo.upsert_table_info(imported_tables[table_id])
-            for column_id in column_changes.created_ids + column_changes.updated_ids:
-                await self._meta_repo.upsert_column_info(imported_columns[column_id])
-            for metric_id in metric_changes.created_ids + metric_changes.updated_ids:
-                await self._meta_repo.upsert_metric_info(imported_metrics[metric_id])
+            for t_name in table_changes.created + table_changes.updated:
+                await self._meta_repo.upsert_table_info(
+                    imported_tables[t_name],
+                    force_version_increment=t_name in table_changes.updated,
+                )
+            changed_columns = [
+                imported_columns[column_key]
+                for column_key in column_changes.created + column_changes.updated
+            ]
+            await self._meta_repo.upsert_column_infos(
+                changed_columns,
+                force_version_increment_keys=set(column_changes.updated),
+            )
+            for metric_name in metric_changes.created + metric_changes.updated:
+                await self._meta_repo.upsert_metric_info(
+                    imported_metrics[metric_name],
+                    force_version_increment=metric_name in metric_changes.updated,
+                )
 
             return result
 
@@ -149,10 +166,8 @@ class MetaImportService:
 
         source_columns: set[tuple[str, str]] = set()
         for table_config in meta_config.tables:
-            table_id = table_config.id or table_config.name
             table_infos.append(
                 TableInfo(
-                    id=table_id,
                     name=table_config.name,
                     role=table_config.role,
                     primary_key_columns=table_config.primary_key_columns,
@@ -186,24 +201,31 @@ class MetaImportService:
                 )
                 column_infos.append(
                     ColumnInfo(
-                        id=column_config.id or f"{table_id}.{column_config.name}",
+                        t_name=table_config.name,
                         name=column_config.name,
                         type=column_types[column_config.name],
                         examples=self._serialize_examples(column_values),
                         description=column_config.description,
                         alias=list(dict.fromkeys(column_config.alias)),
                         index_values=column_config.index_values,
-                        reference_column_id=column_config.reference_column_id,
-                        table_id=table_id,
+                        reference_t_name=column_config.reference_t_name,
+                        reference_c_name=column_config.reference_c_name,
                     )
                 )
 
         metric_infos = [
             MetricInfo(
-                id=metric_config.id or metric_config.name,
                 name=metric_config.name,
                 description=metric_config.description,
-                relevant_columns=list(dict.fromkeys(metric_config.relevant_columns)),
+                relevant_columns=[
+                    ColumnReference(t_name=t_name, c_name=c_name)
+                    for t_name, c_name in sorted(
+                        dict.fromkeys(
+                            (reference.t_name, reference.c_name)
+                            for reference in metric_config.relevant_columns
+                        )
+                    )
+                ],
                 alias=list(dict.fromkeys(metric_config.alias)),
             )
             for metric_config in meta_config.metrics
@@ -211,78 +233,113 @@ class MetaImportService:
         return table_infos, column_infos, metric_infos
 
     @staticmethod
-    def _index_by_id[T: TableInfo | ColumnInfo | MetricInfo](
-        items: list[T], resource: str
-    ) -> dict[str, T]:
-        """按编号索引实体并校验重复编号"""
-        indexed: dict[str, T] = {}
+    def _index_tables(items: list[TableInfo]) -> dict[str, TableInfo]:
+        """按表名索引实体并校验重名"""
+        indexed: dict[str, TableInfo] = {}
         for item in items:
-            item_id = item.id
-            if item_id in indexed:
+            if item.name in indexed:
                 raise meta_error.InvalidMetadataError(
-                    detail=f"Duplicate {resource} id in metadata import: {item_id}"
+                    detail=f"Duplicate table name in metadata import: {item.name}"
                 )
-            indexed[item_id] = item
+            indexed[item.name] = item
+        return indexed
+
+    @staticmethod
+    def _index_columns(items: list[ColumnInfo]) -> dict[ColumnKey, ColumnInfo]:
+        """按表名和字段名索引实体并校验重名"""
+        indexed: dict[ColumnKey, ColumnInfo] = {}
+        for item in items:
+            key = (item.t_name, item.name)
+            if key in indexed:
+                raise meta_error.InvalidMetadataError(
+                    detail=(
+                        "Duplicate column name in metadata import: "
+                        f"{item.t_name}.{item.name}"
+                    )
+                )
+            indexed[key] = item
+        return indexed
+
+    @staticmethod
+    def _index_metrics(items: list[MetricInfo]) -> dict[str, MetricInfo]:
+        """按指标名索引实体并校验重名"""
+        indexed: dict[str, MetricInfo] = {}
+        for item in items:
+            if item.name in indexed:
+                raise meta_error.InvalidMetadataError(
+                    detail=f"Duplicate metric name in metadata import: {item.name}"
+                )
+            indexed[item.name] = item
         return indexed
 
     @staticmethod
     def _validate_metric_columns(
         metric_infos: list[MetricInfo],
-        available_column_ids: set[str],
+        available_columns: set[ColumnKey],
     ) -> None:
-        """校验指标关联的字段编号"""
+        """校验指标关联的字段"""
         for metric_info in metric_infos:
-            missing_column_ids = sorted(
-                set(metric_info.relevant_columns) - available_column_ids
-            )
-            if missing_column_ids:
+            relevant_columns = {
+                (reference["t_name"], reference["c_name"])
+                for reference in metric_info.relevant_columns
+            }
+            missing_columns = sorted(relevant_columns - available_columns)
+            if missing_columns:
                 raise meta_error.InvalidMetadataError(
                     detail=(
-                        f"Metric {metric_info.id} references missing columns: "
-                        f"{', '.join(missing_column_ids)}"
+                        f"Metric {metric_info.name} references missing columns: "
+                        f"{', '.join(f'{table}.{column}' for table, column in missing_columns)}"
                     )
                 )
 
     @staticmethod
     def _validate_column_references(
         column_infos: list[ColumnInfo],
-        available_column_ids: set[str],
+        available_columns: set[ColumnKey],
     ) -> None:
         """校验外键字段引用的目标字段"""
         for column_info in column_infos:
-            reference_column_id = column_info.reference_column_id
-            if not reference_column_id:
+            if not column_info.reference_t_name:
                 continue
-            if reference_column_id == column_info.id:
-                raise meta_error.InvalidMetadataError(
-                    detail=f"Column cannot reference itself: {column_info.id}"
-                )
-            if reference_column_id not in available_column_ids:
+            column_key = (column_info.t_name, column_info.name)
+            reference_key = (
+                column_info.reference_t_name,
+                column_info.reference_c_name,
+            )
+            if reference_key == column_key:
                 raise meta_error.InvalidMetadataError(
                     detail=(
-                        f"Column {column_info.id} references missing column: "
-                        f"{reference_column_id}"
+                        "Column cannot reference itself: "
+                        f"{column_info.t_name}.{column_info.name}"
+                    )
+                )
+            if reference_key not in available_columns:
+                raise meta_error.InvalidMetadataError(
+                    detail=(
+                        f"Column {column_info.t_name}.{column_info.name} "
+                        "references missing column: "
+                        f"{reference_key[0]}.{reference_key[1]}"
                     )
                 )
 
     @staticmethod
-    def _get_changes(
-        existing: dict[str, tuple[Any, ...]],
-        imported: dict[str, tuple[Any, ...]],
+    def _get_changes[T: (str, tuple[str, str])](
+        existing: dict[T, tuple[Any, ...]],
+        imported: dict[T, tuple[Any, ...]],
         mode: ImportMode,
-    ) -> ResourceChanges:
-        """计算单类元数据的新增、更新和删除编号"""
-        existing_ids = set(existing)
-        imported_ids = set(imported)
+    ) -> ResourceChanges[T]:
+        """计算单类元数据的新增、更新和删除主键"""
+        existing_keys = set(existing)
+        imported_keys = set(imported)
         return ResourceChanges(
-            created_ids=sorted(imported_ids - existing_ids),
-            updated_ids=sorted(
-                item_id
-                for item_id in existing_ids & imported_ids
-                if existing[item_id] != imported[item_id]
+            created=sorted(imported_keys - existing_keys),
+            updated=sorted(
+                item_key
+                for item_key in existing_keys & imported_keys
+                if existing[item_key] != imported[item_key]
             ),
-            deleted_ids=(
-                sorted(existing_ids - imported_ids)
+            deleted=(
+                sorted(existing_keys - imported_keys)
                 if mode is ImportMode.REPLACE
                 else []
             ),
@@ -294,32 +351,30 @@ class MetaImportService:
     ) -> dict[str, tuple[Any, ...]]:
         """生成表元数据比较快照"""
         return {
-            item_id: (
-                item.name,
+            t_name: (
                 item.role,
                 item.primary_key_columns,
                 item.description,
             )
-            for item_id, item in table_infos.items()
+            for t_name, item in table_infos.items()
         }
 
     @staticmethod
     def _column_snapshots(
-        column_infos: dict[str, ColumnInfo],
-    ) -> dict[str, tuple[Any, ...]]:
+        column_infos: dict[ColumnKey, ColumnInfo],
+    ) -> dict[ColumnKey, tuple[Any, ...]]:
         """生成字段元数据比较快照"""
         return {
-            item_id: (
-                item.name,
+            column_key: (
                 item.type,
                 item.description,
                 item.examples,
                 item.alias,
                 item.index_values,
-                item.reference_column_id,
-                item.table_id,
+                item.reference_t_name,
+                item.reference_c_name,
             )
-            for item_id, item in column_infos.items()
+            for column_key, item in column_infos.items()
         }
 
     @staticmethod
@@ -328,13 +383,17 @@ class MetaImportService:
     ) -> dict[str, tuple[Any, ...]]:
         """生成指标元数据比较快照"""
         return {
-            item_id: (
-                item.name,
+            metric_name: (
                 item.description,
-                item.relevant_columns,
+                tuple(
+                    sorted(
+                        (reference["t_name"], reference["c_name"])
+                        for reference in item.relevant_columns
+                    )
+                ),
                 item.alias,
             )
-            for item_id, item in metric_infos.items()
+            for metric_name, item in metric_infos.items()
         }
 
     @staticmethod

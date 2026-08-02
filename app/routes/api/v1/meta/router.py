@@ -24,7 +24,13 @@ from app.clients.mysql_client_manager import (
 )
 from app.clients.qdrant_client_manager import qdrant_client_manager
 from app.conf.meta_config import MetaConfig
-from app.entities.meta import ColumnInfo, MetricInfo, TableInfo
+from app.entities.meta import (
+    ColumnInfo,
+    ColumnKey,
+    ColumnReference,
+    MetricInfo,
+    TableInfo,
+)
 from app.errors import meta_error
 from app.repositories.column_qdrant_repo import ColumnQdrantRepo
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
@@ -85,15 +91,22 @@ MetaImportServiceDep = Annotated[
 ]
 
 
-def _to_import_changes(changes: ResourceChanges) -> schemas.ResourceImportChanges:
+def _format_resource_key(key: str | ColumnKey) -> str:
+    """将资源主键转换为响应文本"""
+    return ".".join(key) if isinstance(key, tuple) else key
+
+
+def _to_import_changes[T: (str, tuple[str, str])](
+    changes: ResourceChanges[T],
+) -> schemas.ResourceImportChanges:
     """转换元数据导入变更响应"""
     return schemas.ResourceImportChanges(
-        created_count=len(changes.created_ids),
-        updated_count=len(changes.updated_ids),
-        deleted_count=len(changes.deleted_ids),
-        created_ids=changes.created_ids,
-        updated_ids=changes.updated_ids,
-        deleted_ids=changes.deleted_ids,
+        created_count=len(changes.created),
+        updated_count=len(changes.updated),
+        deleted_count=len(changes.deleted),
+        created_keys=[_format_resource_key(key) for key in changes.created],
+        updated_keys=[_format_resource_key(key) for key in changes.updated],
+        deleted_keys=[_format_resource_key(key) for key in changes.deleted],
     )
 
 
@@ -168,17 +181,16 @@ async def export_metadata(service: MetaServiceDep) -> Response:
     )
 
 
-@router.put("/tables/{table_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put("/tables/{t_name}", status_code=status.HTTP_204_NO_CONTENT)
 async def upsert_table_info(
-    table_id: str,
+    t_name: str,
     body: schemas.TableInfoRequest,
     service: MetaServiceDep,
 ) -> None:
     """新增或更新表元数据"""
     await service.upsert_table_info(
         TableInfo(
-            id=table_id,
-            name=body.name,
+            name=t_name,
             role=body.role,
             primary_key_columns=body.primary_key_columns,
             description=body.description,
@@ -186,41 +198,50 @@ async def upsert_table_info(
     )
 
 
-@router.put("/columns/{column_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put(
+    "/tables/{t_name}/columns/{c_name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def upsert_column_info(
-    column_id: str,
+    t_name: str,
+    c_name: str,
     body: schemas.ColumnInfoRequest,
     service: MetaServiceDep,
 ) -> None:
     """新增或更新字段元数据"""
     await service.upsert_column_info(
         ColumnInfo(
-            id=column_id,
-            name=body.name,
+            t_name=t_name,
+            name=c_name,
             type=body.type,
             examples=body.examples,
             description=body.description,
             alias=body.alias,
             index_values=body.index_values,
-            reference_column_id=body.reference_column_id,
-            table_id=body.table_id,
+            reference_t_name=body.reference_t_name,
+            reference_c_name=body.reference_c_name,
         )
     )
 
 
-@router.put("/metrics/{metric_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put("/metrics/{metric_name}", status_code=status.HTTP_204_NO_CONTENT)
 async def upsert_metric_info(
-    metric_id: str,
+    metric_name: str,
     body: schemas.MetricInfoRequest,
     service: MetaServiceDep,
 ) -> None:
     """新增或更新指标元数据"""
     await service.upsert_metric_info(
         MetricInfo(
-            id=metric_id,
-            name=body.name,
+            name=metric_name,
             description=body.description,
-            relevant_columns=body.relevant_columns,
+            relevant_columns=[
+                ColumnReference(
+                    t_name=reference.t_name,
+                    c_name=reference.c_name,
+                )
+                for reference in body.relevant_columns
+            ],
             alias=body.alias,
         )
     )
@@ -232,52 +253,60 @@ async def sync_column_indexes(
     service: IndexServiceDep,
 ) -> schemas.BatchIndexSyncResponse:
     """同步多个字段的向量索引"""
-    results = await service.sync_column_indexes(body.column_ids)
+    results = await service.sync_column_indexes(
+        [(column.t_name, column.c_name) for column in body.columns]
+    )
     return schemas.BatchIndexSyncResponse(
         results=[
-            schemas.IndexSyncResponse(
-                resource_id=column_id,
+            schemas.ColumnIndexSyncResponse(
+                t_name=t_name,
+                c_name=c_name,
                 indexed_count=indexed_count,
             )
-            for column_id, indexed_count in results.items()
+            for (t_name, c_name), indexed_count in results.items()
         ]
     )
 
 
 @router.post(
-    "/columns/{column_id}/sync-values",
-    response_model=schemas.IndexSyncResponse,
+    "/tables/{t_name}/columns/{c_name}/sync-values",
+    response_model=schemas.ColumnIndexSyncResponse,
 )
 async def sync_column_values(
-    column_id: str,
+    t_name: str,
+    c_name: str,
     service: IndexServiceDep,
-) -> schemas.IndexSyncResponse:
+) -> schemas.ColumnIndexSyncResponse:
     """同步单个字段的全部取值索引"""
-    indexed_count = await service.sync_column_values(column_id)
-    return schemas.IndexSyncResponse(
-        resource_id=column_id,
+    indexed_count = await service.sync_column_values(t_name, c_name)
+    return schemas.ColumnIndexSyncResponse(
+        t_name=t_name,
+        c_name=c_name,
         indexed_count=indexed_count,
     )
 
 
-@router.post("/metrics/{metric_id}/sync", response_model=schemas.IndexSyncResponse)
+@router.post(
+    "/metrics/{metric_name}/sync",
+    response_model=schemas.MetricIndexSyncResponse,
+)
 async def sync_metric_index(
-    metric_id: str,
+    metric_name: str,
     service: IndexServiceDep,
-) -> schemas.IndexSyncResponse:
+) -> schemas.MetricIndexSyncResponse:
     """同步单个指标的向量索引"""
-    indexed_count = await service.sync_metric_index(metric_id)
-    return schemas.IndexSyncResponse(
-        resource_id=metric_id,
+    indexed_count = await service.sync_metric_index(metric_name)
+    return schemas.MetricIndexSyncResponse(
+        metric_name=metric_name,
         indexed_count=indexed_count,
     )
 
 
-@router.post("/tables/{table_id}/sync", response_model=schemas.TableSyncResponse)
+@router.post("/tables/{t_name}/sync", response_model=schemas.TableSyncResponse)
 async def sync_table(
-    table_id: str,
+    t_name: str,
     service: IndexServiceDep,
 ) -> schemas.TableSyncResponse:
     """同步表下全部字段向量和字段值索引"""
-    result = await service.sync_table(table_id)
-    return schemas.TableSyncResponse(table_id=table_id, **result)
+    result = await service.sync_table(t_name)
+    return schemas.TableSyncResponse(t_name=t_name, **result)

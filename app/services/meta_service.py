@@ -4,12 +4,13 @@ from typing import cast
 
 from app.conf.meta_config import (
     ColumnConfig,
+    ColumnReferenceConfig,
     MetaConfig,
     MetricConfig,
     TableConfig,
     TableRole,
 )
-from app.entities.meta import ColumnInfo, MetricInfo, TableInfo
+from app.entities.meta import ColumnInfo, ColumnReference, MetricInfo, TableInfo
 from app.errors import meta_error
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
 
@@ -29,23 +30,62 @@ class MetaService:
     async def upsert_column_info(self, column_info: ColumnInfo) -> None:
         """新增或更新字段元数据"""
         async with self._meta_repo.transaction():
-            reference_column_id = column_info.reference_column_id
-            if reference_column_id:
-                if reference_column_id == column_info.id:
+            reference_t_name = column_info.reference_t_name
+            reference_c_name = column_info.reference_c_name
+            if (reference_t_name is None) != (reference_c_name is None):
+                raise meta_error.InvalidMetadataError(
+                    detail=(
+                        "Reference table name and column name must be provided together"
+                    )
+                )
+            if reference_t_name and reference_c_name:
+                if (reference_t_name, reference_c_name) == (
+                    column_info.t_name,
+                    column_info.name,
+                ):
                     raise meta_error.InvalidMetadataError(
-                        detail=f"Column cannot reference itself: {column_info.id}"
+                        detail=(
+                            "Column cannot reference itself: "
+                            f"{column_info.t_name}.{column_info.name}"
+                        )
                     )
                 try:
-                    await self._meta_repo.get_column_info_by_id(reference_column_id)
+                    await self._meta_repo.get_column_info(
+                        reference_t_name,
+                        reference_c_name,
+                    )
                 except meta_error.MetadataNotFoundError as exc:
                     raise meta_error.InvalidMetadataError(
-                        detail=f"Reference column not found: {reference_column_id}"
+                        detail=(
+                            "Reference column not found: "
+                            f"{reference_t_name}.{reference_c_name}"
+                        )
                     ) from exc
             await self._meta_repo.upsert_column_info(column_info)
 
     async def upsert_metric_info(self, metric_info: MetricInfo) -> None:
         """新增或更新指标元数据"""
         async with self._meta_repo.transaction():
+            relevant_column_keys = sorted(
+                dict.fromkeys(
+                    (
+                        reference["t_name"],
+                        reference["c_name"],
+                    )
+                    for reference in metric_info.relevant_columns
+                )
+            )
+            for t_name, c_name in relevant_column_keys:
+                try:
+                    await self._meta_repo.get_column_info(t_name, c_name)
+                except meta_error.MetadataNotFoundError as exc:
+                    raise meta_error.InvalidMetadataError(
+                        detail=f"Relevant column not found: {t_name}.{c_name}"
+                    ) from exc
+            metric_info.relevant_columns = [
+                ColumnReference(t_name=t_name, c_name=c_name)
+                for t_name, c_name in relevant_column_keys
+            ]
             await self._meta_repo.upsert_metric_info(metric_info)
 
     async def export_metadata(self) -> MetaConfig:
@@ -55,19 +95,19 @@ class MetaService:
         metric_infos = await self._meta_repo.list_metric_infos()
 
         columns_by_table: dict[str, list[ColumnInfo]] = {
-            table_info.id: [] for table_info in table_infos
+            table_info.name: [] for table_info in table_infos
         }
-        orphan_column_ids: list[str] = []
+        orphan_columns: list[str] = []
         for column_info in column_infos:
-            if column_info.table_id not in columns_by_table:
-                orphan_column_ids.append(column_info.id)
+            if column_info.t_name not in columns_by_table:
+                orphan_columns.append(f"{column_info.t_name}.{column_info.name}")
                 continue
-            columns_by_table[column_info.table_id].append(column_info)
-        if orphan_column_ids:
+            columns_by_table[column_info.t_name].append(column_info)
+        if orphan_columns:
             raise meta_error.MetadataConflictError(
                 detail=(
                     "Columns reference missing tables: "
-                    f"{', '.join(sorted(orphan_column_ids))}"
+                    f"{', '.join(sorted(orphan_columns))}"
                 )
             )
 
@@ -75,23 +115,22 @@ class MetaService:
             version=1,
             tables=[
                 TableConfig(
-                    id=table_info.id,
                     name=table_info.name,
                     role=cast(TableRole, table_info.role),
                     primary_key_columns=table_info.primary_key_columns,
                     description=table_info.description,
                     columns=[
                         ColumnConfig(
-                            id=column_info.id,
                             name=column_info.name,
                             description=column_info.description,
                             alias=column_info.alias,
                             index_values=column_info.index_values,
-                            reference_column_id=column_info.reference_column_id,
+                            reference_t_name=column_info.reference_t_name,
+                            reference_c_name=column_info.reference_c_name,
                         )
                         for column_info in sorted(
-                            columns_by_table[table_info.id],
-                            key=lambda item: item.id,
+                            columns_by_table[table_info.name],
+                            key=lambda item: item.name,
                         )
                     ],
                 )
@@ -99,10 +138,12 @@ class MetaService:
             ],
             metrics=[
                 MetricConfig(
-                    id=metric_info.id,
                     name=metric_info.name,
                     description=metric_info.description,
-                    relevant_columns=metric_info.relevant_columns,
+                    relevant_columns=[
+                        ColumnReferenceConfig(**reference)
+                        for reference in metric_info.relevant_columns
+                    ],
                     alias=metric_info.alias,
                 )
                 for metric_info in metric_infos

@@ -29,15 +29,17 @@ class ColumnQdrantRepo:
     def _to_payload(column_info: ColumnInfo) -> dict[str, Any]:
         """将字段 ORM 转换为向量载荷"""
         return {
-            "id": column_info.id,
+            "t_name": column_info.t_name,
             "name": column_info.name,
             "type": column_info.type,
             "examples": column_info.examples,
             "description": column_info.description,
             "alias": column_info.alias,
             "index_values": column_info.index_values,
-            "reference_column_id": column_info.reference_column_id,
-            "table_id": column_info.table_id,
+            "reference_t_name": column_info.reference_t_name,
+            "reference_c_name": column_info.reference_c_name,
+            "meta_version": column_info.meta_version,
+            "index_version": column_info.meta_version,
         }
 
     async def ensure_collection(self) -> None:
@@ -73,13 +75,14 @@ class ColumnQdrantRepo:
                 collection_name=self._collection_name, points=batch_points
             )
 
-    async def delete_by_id(self, column_id: str) -> None:
+    async def delete(self, t_name: str, c_name: str) -> None:
         """删除字段对应的全部向量"""
         await self._client.delete(
             collection_name=self._collection_name,
             points_selector=Filter(
                 must=[
-                    FieldCondition(key="id", match=MatchValue(value=column_id)),
+                    FieldCondition(key="t_name", match=MatchValue(value=t_name)),
+                    FieldCondition(key="name", match=MatchValue(value=c_name)),
                 ]
             ),
         )

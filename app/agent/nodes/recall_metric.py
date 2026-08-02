@@ -43,9 +43,8 @@ async def recall_metric(state: DataAgentState, runtime: Runtime[DataAgentContext
                 embedding
             )
             for payload in payloads:
-                metric_id = payload.id
-                if metric_id not in retrieved_metrics_map:
-                    retrieved_metrics_map[metric_id] = payload
+                if payload.name not in retrieved_metrics_map:
+                    retrieved_metrics_map[payload.name] = payload
 
         retrieved_metrics = list(retrieved_metrics_map.values())
 
@@ -54,5 +53,5 @@ async def recall_metric(state: DataAgentState, runtime: Runtime[DataAgentContext
         return {"retrieved_metrics": retrieved_metrics}
     except Exception as e:
         writer({"type": "progress", "step": "召回指标", "status": "error"})
-        logger.error(f"召回指标信息失败: {str(e)}")
+        logger.error(f"召回指标信息失败: {e!s}")
         raise

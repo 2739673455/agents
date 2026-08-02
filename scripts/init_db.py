@@ -12,9 +12,9 @@ from sqlalchemy import MetaData, create_engine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-ROOT_DIR = Path(__file__).parents[2]
+ROOT_DIR = Path(__file__).parents[1]
 ENV_FILE = ROOT_DIR / "conf" / ".env"
-MYSQL_SQL_DIR = ROOT_DIR / "app" / "scripts" / "sql" / "mysql"
+MYSQL_SQL_DIR = ROOT_DIR / "scripts" / "sql" / "mysql"
 ENTITIES_DIR = ROOT_DIR / "app" / "entities"
 
 

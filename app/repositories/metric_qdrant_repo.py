@@ -29,11 +29,12 @@ class MetricQdrantRepo:
     def _to_payload(metric_info: MetricInfo) -> dict[str, Any]:
         """将指标 ORM 转换为向量载荷"""
         return {
-            "id": metric_info.id,
             "name": metric_info.name,
             "description": metric_info.description,
             "relevant_columns": metric_info.relevant_columns,
             "alias": metric_info.alias,
+            "meta_version": metric_info.meta_version,
+            "index_version": metric_info.meta_version,
         }
 
     async def ensure_collection(self) -> None:
@@ -69,13 +70,13 @@ class MetricQdrantRepo:
                 collection_name=self._collection_name, points=batch_points
             )
 
-    async def delete_by_id(self, metric_id: str) -> None:
+    async def delete_by_name(self, metric_name: str) -> None:
         """删除指标对应的全部向量"""
         await self._client.delete(
             collection_name=self._collection_name,
             points_selector=Filter(
                 must=[
-                    FieldCondition(key="id", match=MatchValue(value=metric_id)),
+                    FieldCondition(key="name", match=MatchValue(value=metric_name)),
                 ]
             ),
         )

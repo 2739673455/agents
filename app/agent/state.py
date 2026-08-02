@@ -1,6 +1,6 @@
 from typing import TypedDict
 
-from app.entities.meta import ColumnInfo, MetricInfo, ValueInfo
+from app.entities.meta import ColumnInfo, ColumnReference, MetricInfo, ValueInfo
 
 
 class ColumnInfoState(TypedDict):
@@ -9,7 +9,8 @@ class ColumnInfoState(TypedDict):
     examples: list
     description: str
     alias: list[str]
-    reference_column_id: str | None
+    reference_t_name: str | None
+    reference_c_name: str | None
 
 
 class TableInfoState(TypedDict):
@@ -23,7 +24,7 @@ class TableInfoState(TypedDict):
 class MetricInfoState(TypedDict):
     name: str
     description: str
-    relevant_columns: list[str]
+    relevant_columns: list[ColumnReference]
     alias: list[str]
 
 

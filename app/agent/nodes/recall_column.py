@@ -33,7 +33,7 @@ async def recall_column(state: DataAgentState, runtime: Runtime[DataAgentContext
         result = await chain.ainvoke({"query": query})
 
         # 使用扩展后的关键词召回字段信息
-        retrieved_columns_map: dict[str, ColumnInfo] = {}
+        retrieved_columns_map: dict[tuple[str, str], ColumnInfo] = {}
 
         keywords = list(set(keywords + result))
         logger.info(f"召回字段信息扩展关键词：{keywords}")
@@ -43,9 +43,9 @@ async def recall_column(state: DataAgentState, runtime: Runtime[DataAgentContext
                 embedding
             )
             for payload in payloads:
-                column_id = payload.id
-                if column_id not in retrieved_columns_map:
-                    retrieved_columns_map[column_id] = payload
+                column_key = (payload.t_name, payload.name)
+                if column_key not in retrieved_columns_map:
+                    retrieved_columns_map[column_key] = payload
 
         retrieved_columns = list(retrieved_columns_map.values())
 
@@ -54,5 +54,5 @@ async def recall_column(state: DataAgentState, runtime: Runtime[DataAgentContext
         return {"retrieved_columns": retrieved_columns}
     except Exception as e:
         writer({"type": "progress", "step": "召回字段", "status": "error"})
-        logger.error(f"召回字段信息失败: {str(e)}")
+        logger.error(f"召回字段信息失败: {e!s}")
         raise

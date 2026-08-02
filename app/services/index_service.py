@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Any
 
 from app.clients.embedding_client_manager import EmbeddingClient
-from app.entities.meta import ColumnInfo, MetricInfo, ValueInfo
+from app.entities.meta import ColumnInfo, ColumnKey, MetricInfo, ValueInfo
 from app.repositories.column_qdrant_repo import ColumnQdrantRepo
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
 from app.repositories.metric_qdrant_repo import MetricQdrantRepo
@@ -35,50 +35,58 @@ class IndexService:
         self._value_repo = value_repo
         self._metric_repo = metric_repo
 
-    async def sync_column_indexes(self, column_ids: list[str]) -> dict[str, int]:
+    async def sync_column_indexes(
+        self, column_keys: list[ColumnKey]
+    ) -> dict[ColumnKey, int]:
         """同步多个字段的向量索引"""
-        unique_column_ids = list(dict.fromkeys(column_ids))
-        column_infos = [
-            await self._meta_repo.get_column_info_by_id(column_id)
-            for column_id in unique_column_ids
-        ]
-        return {
-            column_info.id: await self._sync_column_index(column_info)
-            for column_info in column_infos
-        }
+        async with self._meta_repo.transaction():
+            unique_column_keys = list(dict.fromkeys(column_keys))
+            column_infos = [
+                await self._meta_repo.get_column_info(*column_key)
+                for column_key in unique_column_keys
+            ]
+            return {
+                (column_info.t_name, column_info.name): await self._sync_column_index(
+                    column_info
+                )
+                for column_info in column_infos
+            }
 
-    async def sync_column_values(self, column_id: str) -> int:
+    async def sync_column_values(self, t_name: str, c_name: str) -> int:
         """同步单个字段的取值索引"""
-        column_info = await self._meta_repo.get_column_info_by_id(column_id)
+        column_info = await self._meta_repo.get_column_info(t_name, c_name)
         if not column_info.index_values:
-            await self._clear_column_values(column_id)
+            await self._clear_column_values(t_name, c_name)
             return 0
-        table_info = await self._meta_repo.get_table_info_by_id(column_info.table_id)
-        return await self._sync_column_values(column_info, table_info.name)
+        return await self._sync_column_values(column_info)
 
-    async def sync_metric_index(self, metric_id: str) -> int:
+    async def sync_metric_index(self, metric_name: str) -> int:
         """同步单个指标的向量索引"""
-        metric_info = await self._meta_repo.get_metric_info_by_id(metric_id)
-        return await self._sync_metric_index(metric_info)
+        async with self._meta_repo.transaction():
+            metric_info = await self._meta_repo.get_metric_info(metric_name)
+            return await self._sync_metric_index(metric_info)
 
-    async def sync_table(self, table_id: str) -> dict[str, int]:
+    async def sync_table(self, t_name: str) -> dict[str, int]:
         """同步表下全部字段向量及字段值索引"""
-        table_info = await self._meta_repo.get_table_info_by_id(table_id)
-        column_infos = await self._meta_repo.get_columns_by_table_id(table_id)
+        async with self._meta_repo.transaction():
+            table_info = await self._meta_repo.get_table_info(t_name)
+            column_infos = await self._meta_repo.get_columns_by_table_name(t_name)
+            column_vector_count = 0
+            for column_info in column_infos:
+                column_vector_count += await self._sync_column_index(column_info)
+            self._meta_repo.mark_table_indexed(table_info)
 
-        column_vector_count = 0
         value_column_count = 0
         value_count = 0
         for column_info in column_infos:
-            column_vector_count += await self._sync_column_index(column_info)
             if column_info.index_values:
                 value_column_count += 1
-                value_count += await self._sync_column_values(
-                    column_info,
-                    table_info.name,
-                )
+                value_count += await self._sync_column_values(column_info)
             else:
-                await self._clear_column_values(column_info.id)
+                await self._clear_column_values(
+                    column_info.t_name,
+                    column_info.name,
+                )
 
         return {
             "column_count": len(column_infos),
@@ -96,14 +104,16 @@ class IndexService:
             column_info.alias,
         )
         embeddings = await self._embed_texts(texts)
-        point_ids = self._get_point_ids("column", column_info.id, texts)
+        resource_key = f"{column_info.t_name}.{column_info.name}"
+        point_ids = self._get_point_ids("column", resource_key, texts)
 
-        await self._column_repo.delete_by_id(column_info.id)
+        await self._column_repo.delete(column_info.t_name, column_info.name)
         await self._column_repo.upsert(
             point_ids,
             embeddings,
             [column_info] * len(point_ids),
         )
+        self._meta_repo.mark_column_indexed(column_info)
         return len(point_ids)
 
     async def _sync_metric_index(self, metric_info: MetricInfo) -> int:
@@ -115,51 +125,49 @@ class IndexService:
             metric_info.alias,
         )
         embeddings = await self._embed_texts(texts)
-        point_ids = self._get_point_ids("metric", metric_info.id, texts)
+        point_ids = self._get_point_ids("metric", metric_info.name, texts)
 
-        await self._metric_repo.delete_by_id(metric_info.id)
+        await self._metric_repo.delete_by_name(metric_info.name)
         await self._metric_repo.upsert(
             point_ids,
             embeddings,
             [metric_info] * len(point_ids),
         )
+        self._meta_repo.mark_metric_indexed(metric_info)
         return len(point_ids)
 
     async def _sync_column_values(
         self,
         column_info: ColumnInfo,
-        table_name: str,
     ) -> int:
         """替换字段的全部取值索引"""
         await self._value_repo.ensure_index()
         values = await self._source_repo.get_column_values(
-            table_name,
+            column_info.t_name,
             column_info.name,
         )
         value_infos = [
             ValueInfo(
-                id=str(
-                    uuid.uuid5(
-                        uuid.NAMESPACE_URL,
-                        f"value:{column_info.id}:{self._serialize_value(value)}",
-                    )
-                ),
                 value=self._serialize_value(value),
-                column_id=column_info.id,
+                t_name=column_info.t_name,
+                c_name=column_info.name,
             )
             for value in values
             if value is not None
         ]
 
-        await self._value_repo.delete_by_column_id(column_info.id)
+        await self._value_repo.delete_by_column(
+            column_info.t_name,
+            column_info.name,
+        )
         if value_infos:
             await self._value_repo.index(value_infos)
         return len(value_infos)
 
-    async def _clear_column_values(self, column_id: str) -> None:
+    async def _clear_column_values(self, t_name: str, c_name: str) -> None:
         """清理未启用字段的取值索引"""
         await self._value_repo.ensure_index()
-        await self._value_repo.delete_by_column_id(column_id)
+        await self._value_repo.delete_by_column(t_name, c_name)
 
     async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
         """分批生成文本向量"""
@@ -177,13 +185,13 @@ class IndexService:
         )
 
     @staticmethod
-    def _get_point_ids(resource: str, resource_id: str, texts: list[str]) -> list[str]:
+    def _get_point_ids(resource: str, resource_key: str, texts: list[str]) -> list[str]:
         """生成稳定的向量点编号"""
         return [
             str(
                 uuid.uuid5(
                     uuid.NAMESPACE_URL,
-                    f"{resource}:{resource_id}:{index}:{text}",
+                    f"{resource}:{resource_key}:{index}:{text}",
                 )
             )
             for index, text in enumerate(texts)

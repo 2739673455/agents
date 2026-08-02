@@ -32,15 +32,15 @@ async def recall_value(state: DataAgentState, runtime: Runtime[DataAgentContext]
         result = await chain.ainvoke({"query": query})
 
         # 使用扩展后的关键词召回字段取值
-        values_map: dict[str, ValueInfo] = {}
+        values_map: dict[tuple[str, str, str], ValueInfo] = {}
         keywords = list(set(keywords + result))
         logger.info(f"召回字段取值扩展关键词：{keywords}")
         for keyword in keywords:
             values: list[ValueInfo] = await value_es_repository.search(keyword)
             for value in values:
-                value_id = value.id
-                if value_id not in values_map:
-                    values_map[value_id] = value
+                value_key = (value.t_name, value.c_name, value.value)
+                if value_key not in values_map:
+                    values_map[value_key] = value
 
         retrieved_values = list(values_map.values())
 

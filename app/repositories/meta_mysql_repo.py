@@ -1,9 +1,17 @@
 """元数据访问"""
 
-from sqlalchemy import delete, or_, select
+from typing import Any
+
+from sqlalchemy import delete, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
-from app.entities.meta import ColumnInfo, ColumnMetric, MetricInfo, TableInfo
+from app.entities.meta import (
+    ColumnInfo,
+    ColumnMetric,
+    ColumnReference,
+    MetricInfo,
+    TableInfo,
+)
 from app.errors import meta_error
 
 
@@ -18,116 +26,309 @@ class MetaMySQLRepo:
         """创建事务上下文"""
         return self._session.begin()
 
-    async def upsert_table_info(self, table_info: TableInfo) -> None:
+    async def upsert_table_info(
+        self,
+        table_info: TableInfo,
+        *,
+        force_version_increment: bool = False,
+    ) -> None:
         """新增或更新表信息"""
+        existing = await self._session.get(TableInfo, table_info.name)
+        self._set_versions(
+            table_info,
+            existing,
+            force_version_increment
+            or (
+                self._table_metadata(table_info) != self._table_metadata(existing)
+                if existing
+                else True
+            ),
+        )
         await self._session.merge(table_info)
 
-    async def upsert_column_info(self, column_info: ColumnInfo) -> None:
+    async def upsert_column_info(
+        self,
+        column_info: ColumnInfo,
+        *,
+        force_version_increment: bool = False,
+    ) -> None:
         """新增或更新字段信息"""
+        await self._prepare_column_versions(column_info, force_version_increment)
         await self._session.merge(column_info)
 
-    async def upsert_metric_info(self, metric_info: MetricInfo) -> None:
+    async def upsert_column_infos(
+        self,
+        column_infos: list[ColumnInfo],
+        force_version_increment_keys: set[tuple[str, str]] | None = None,
+    ) -> None:
+        """批量写入字段信息并在目标字段创建后设置引用"""
+        if not column_infos:
+            return
+        force_version_increment_keys = force_version_increment_keys or set()
+        for column_info in column_infos:
+            await self._prepare_column_versions(
+                column_info,
+                (column_info.t_name, column_info.name) in force_version_increment_keys,
+            )
+        references = [
+            (
+                column_info,
+                column_info.reference_t_name,
+                column_info.reference_c_name,
+            )
+            for column_info in column_infos
+        ]
+        with self._session.no_autoflush:
+            for column_info, _, _ in references:
+                column_info.reference_t_name = None
+                column_info.reference_c_name = None
+                await self._session.merge(column_info)
+        await self._session.flush()
+        with self._session.no_autoflush:
+            for column_info, reference_t_name, reference_c_name in references:
+                column_info.reference_t_name = reference_t_name
+                column_info.reference_c_name = reference_c_name
+                await self._session.merge(column_info)
+
+    async def upsert_metric_info(
+        self,
+        metric_info: MetricInfo,
+        *,
+        force_version_increment: bool = False,
+    ) -> None:
         """新增或更新指标信息及字段关联"""
+        existing = await self._session.get(MetricInfo, metric_info.name)
+        if existing:
+            await self._load_metric_references([existing])
+        self._set_versions(
+            metric_info,
+            existing,
+            force_version_increment
+            or (
+                self._metric_metadata(metric_info) != self._metric_metadata(existing)
+                if existing
+                else True
+            ),
+        )
         await self._session.merge(metric_info)
         await self._session.execute(
-            delete(ColumnMetric).where(ColumnMetric.metric_id == metric_info.id)
+            delete(ColumnMetric).where(ColumnMetric.metric_name == metric_info.name)
         )
         self._session.add_all(
             [
-                ColumnMetric(column_id=column_id, metric_id=metric_info.id)
-                for column_id in dict.fromkeys(metric_info.relevant_columns)
+                ColumnMetric(
+                    t_name=reference["t_name"],
+                    c_name=reference["c_name"],
+                    metric_name=metric_info.name,
+                )
+                for reference in metric_info.relevant_columns
             ]
         )
 
+    @staticmethod
+    def mark_table_indexed(table_info: TableInfo) -> None:
+        """记录整表字段向量同步版本"""
+        table_info.index_version = table_info.meta_version
+
+    @staticmethod
+    def mark_column_indexed(column_info: ColumnInfo) -> None:
+        """记录字段向量同步版本"""
+        column_info.index_version = column_info.meta_version
+
+    @staticmethod
+    def mark_metric_indexed(metric_info: MetricInfo) -> None:
+        """记录指标向量同步版本"""
+        metric_info.index_version = metric_info.meta_version
+
     async def list_table_infos(self) -> list[TableInfo]:
         """获取全部表信息"""
-        result = await self._session.scalars(select(TableInfo).order_by(TableInfo.id))
+        result = await self._session.scalars(select(TableInfo).order_by(TableInfo.name))
         return list(result.all())
 
     async def list_column_infos(self) -> list[ColumnInfo]:
         """获取全部字段信息"""
-        result = await self._session.scalars(select(ColumnInfo).order_by(ColumnInfo.id))
+        result = await self._session.scalars(
+            select(ColumnInfo).order_by(ColumnInfo.t_name, ColumnInfo.name)
+        )
         return list(result.all())
 
     async def list_metric_infos(self) -> list[MetricInfo]:
         """获取全部指标信息"""
-        result = await self._session.scalars(select(MetricInfo).order_by(MetricInfo.id))
-        return list(result.all())
+        result = await self._session.scalars(
+            select(MetricInfo).order_by(MetricInfo.name)
+        )
+        metric_infos = list(result.all())
+        await self._load_metric_references(metric_infos)
+        return metric_infos
 
-    async def delete_metric_infos(self, metric_ids: list[str]) -> None:
+    async def _load_metric_references(self, metric_infos: list[MetricInfo]) -> None:
+        """加载指标关联字段"""
+        references_by_metric: dict[str, list[ColumnReference]] = {
+            metric_info.name: [] for metric_info in metric_infos
+        }
+        if not references_by_metric:
+            return
+        result = await self._session.scalars(
+            select(ColumnMetric)
+            .where(ColumnMetric.metric_name.in_(references_by_metric))
+            .order_by(
+                ColumnMetric.metric_name,
+                ColumnMetric.t_name,
+                ColumnMetric.c_name,
+            )
+        )
+        for relation in result:
+            references_by_metric[relation.metric_name].append(
+                ColumnReference(
+                    t_name=relation.t_name,
+                    c_name=relation.c_name,
+                )
+            )
+        for metric_info in metric_infos:
+            metric_info.relevant_columns = references_by_metric[metric_info.name]
+
+    async def delete_metric_infos(self, metric_names: list[str]) -> None:
         """删除指标信息及字段关联"""
-        if not metric_ids:
+        if not metric_names:
             return
         await self._session.execute(
-            delete(ColumnMetric).where(ColumnMetric.metric_id.in_(metric_ids))
+            delete(ColumnMetric).where(ColumnMetric.metric_name.in_(metric_names))
         )
         await self._session.execute(
-            delete(MetricInfo).where(MetricInfo.id.in_(metric_ids))
+            delete(MetricInfo).where(MetricInfo.name.in_(metric_names))
         )
 
-    async def delete_column_infos(self, column_ids: list[str]) -> None:
+    async def delete_column_infos(self, column_keys: list[tuple[str, str]]) -> None:
         """删除字段信息及指标关联"""
-        if not column_ids:
+        if not column_keys:
             return
+        key_columns = tuple_(ColumnMetric.t_name, ColumnMetric.c_name)
         await self._session.execute(
-            delete(ColumnMetric).where(ColumnMetric.column_id.in_(column_ids))
+            delete(ColumnMetric).where(key_columns.in_(column_keys))
         )
+        info_key_columns = tuple_(ColumnInfo.t_name, ColumnInfo.name)
         await self._session.execute(
-            delete(ColumnInfo).where(ColumnInfo.id.in_(column_ids))
+            delete(ColumnInfo).where(info_key_columns.in_(column_keys))
         )
 
-    async def delete_table_infos(self, table_ids: list[str]) -> None:
+    async def delete_table_infos(self, table_names: list[str]) -> None:
         """删除表信息"""
-        if not table_ids:
+        if not table_names:
             return
         await self._session.execute(
-            delete(TableInfo).where(TableInfo.id.in_(table_ids))
+            delete(TableInfo).where(TableInfo.name.in_(table_names))
         )
 
-    async def get_column_info_by_id(self, column_id: str) -> ColumnInfo:
-        """根据编号获取字段信息"""
-        result = await self._session.get(ColumnInfo, column_id)
+    async def get_column_info(self, t_name: str, c_name: str) -> ColumnInfo:
+        """根据表名和字段名获取字段信息"""
+        result = await self._session.get(ColumnInfo, (t_name, c_name))
         if result:
             return result
         raise meta_error.MetadataNotFoundError(
-            detail=f"Column info not found: {column_id}"
+            detail=f"Column info not found: {t_name}.{c_name}"
         )
 
-    async def get_table_info_by_id(self, table_id: str) -> TableInfo:
-        """根据编号获取表信息"""
-        result = await self._session.get(TableInfo, table_id)
+    async def get_table_info(self, t_name: str) -> TableInfo:
+        """根据表名获取表信息"""
+        result = await self._session.get(TableInfo, t_name)
         if result:
             return result
-        raise meta_error.MetadataNotFoundError(
-            detail=f"Table info not found: {table_id}"
-        )
+        raise meta_error.MetadataNotFoundError(detail=f"Table info not found: {t_name}")
 
-    async def get_metric_info_by_id(self, metric_id: str) -> MetricInfo:
-        """根据编号获取指标信息"""
-        result = await self._session.get(MetricInfo, metric_id)
+    async def get_metric_info(self, metric_name: str) -> MetricInfo:
+        """根据指标名获取指标信息"""
+        result = await self._session.get(MetricInfo, metric_name)
         if result:
+            await self._load_metric_references([result])
             return result
         raise meta_error.MetadataNotFoundError(
-            detail=f"Metric info not found: {metric_id}"
+            detail=f"Metric info not found: {metric_name}"
         )
 
-    async def get_columns_by_table_id(self, table_id: str) -> list[ColumnInfo]:
+    async def get_columns_by_table_name(self, t_name: str) -> list[ColumnInfo]:
         """获取表的全部字段信息"""
         result = await self._session.scalars(
-            select(ColumnInfo).where(ColumnInfo.table_id == table_id)
+            select(ColumnInfo).where(ColumnInfo.t_name == t_name)
         )
         return list(result.all())
 
-    async def get_key_columns_by_table_id(self, table_id: str) -> list[ColumnInfo]:
+    async def get_key_columns_by_table_name(self, t_name: str) -> list[ColumnInfo]:
         """获取表的主键和外键字段"""
-        table_info = await self.get_table_info_by_id(table_id)
+        table_info = await self.get_table_info(t_name)
         result = await self._session.scalars(
             select(ColumnInfo).where(
-                ColumnInfo.table_id == table_id,
+                ColumnInfo.t_name == t_name,
                 or_(
                     ColumnInfo.name.in_(table_info.primary_key_columns),
-                    ColumnInfo.reference_column_id.is_not(None),
+                    ColumnInfo.reference_t_name.is_not(None),
                 ),
             )
         )
         return list(result.all())
+
+    async def _prepare_column_versions(
+        self,
+        column_info: ColumnInfo,
+        force_version_increment: bool,
+    ) -> None:
+        """根据字段元数据变化设置版本"""
+        existing = await self._session.get(
+            ColumnInfo,
+            (column_info.t_name, column_info.name),
+        )
+        self._set_versions(
+            column_info,
+            existing,
+            force_version_increment
+            or (
+                self._column_metadata(column_info) != self._column_metadata(existing)
+                if existing
+                else True
+            ),
+        )
+
+    @staticmethod
+    def _set_versions(
+        item: TableInfo | ColumnInfo | MetricInfo,
+        existing: TableInfo | ColumnInfo | MetricInfo | None,
+        changed: bool,
+    ) -> None:
+        """设置元数据版本并保留已有索引版本"""
+        if existing is None:
+            item.meta_version = 1
+            item.index_version = 0
+            return
+        item.meta_version = existing.meta_version + int(changed)
+        item.index_version = existing.index_version
+
+    @staticmethod
+    def _table_metadata(item: TableInfo) -> tuple[Any, ...]:
+        """生成表元数据内容快照"""
+        return item.role, item.primary_key_columns, item.description
+
+    @staticmethod
+    def _column_metadata(item: ColumnInfo) -> tuple[Any, ...]:
+        """生成字段元数据内容快照"""
+        return (
+            item.type,
+            item.description,
+            item.examples,
+            item.alias,
+            item.index_values,
+            item.reference_t_name,
+            item.reference_c_name,
+        )
+
+    @staticmethod
+    def _metric_metadata(item: MetricInfo) -> tuple[Any, ...]:
+        """生成指标元数据内容快照"""
+        return (
+            item.description,
+            tuple(
+                sorted(
+                    (reference["t_name"], reference["c_name"])
+                    for reference in item.relevant_columns
+                )
+            ),
+            item.alias,
+        )

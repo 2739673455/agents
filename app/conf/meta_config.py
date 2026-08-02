@@ -16,18 +16,26 @@ class MetaConfigModel(BaseModel):
 class ColumnConfig(MetaConfigModel):
     """字段元数据配置"""
 
-    id: str | None = None
     name: str
     description: str
     alias: list[str] = Field(default_factory=list)
     index_values: bool
-    reference_column_id: str | None = None
+    reference_t_name: str | None = None
+    reference_c_name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_reference(self) -> "ColumnConfig":
+        """校验字段引用必须同时包含表名和字段名"""
+        if (self.reference_t_name is None) != (self.reference_c_name is None):
+            raise ValueError(
+                "Reference table name and column name must be provided together"
+            )
+        return self
 
 
 class TableConfig(MetaConfigModel):
     """表元数据配置"""
 
-    id: str | None = None
     name: str
     role: TableRole
     primary_key_columns: list[str] = Field(default_factory=list)
@@ -49,13 +57,19 @@ class TableConfig(MetaConfigModel):
         return self
 
 
+class ColumnReferenceConfig(MetaConfigModel):
+    """字段联合主键引用"""
+
+    t_name: str
+    c_name: str
+
+
 class MetricConfig(MetaConfigModel):
     """指标元数据配置"""
 
-    id: str | None = None
     name: str
     description: str
-    relevant_columns: list[str] = Field(default_factory=list)
+    relevant_columns: list[ColumnReferenceConfig] = Field(default_factory=list)
     alias: list[str] = Field(default_factory=list)
 
 

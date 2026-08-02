@@ -51,33 +51,3 @@ class ProblemError(Exception):
         if instance:
             payload["instance"] = instance
         return payload
-
-
-class InternalServerError(ProblemError):
-    type = "internal-server-error"
-    title = "服务器内部错误"
-    status = HTTPStatus.INTERNAL_SERVER_ERROR
-
-
-class ValidationError(ProblemError):
-    type = "validation-error"
-    title = "参数校验失败"
-    status = HTTPStatus.UNPROCESSABLE_ENTITY
-
-
-class PermissionDeniedError(ProblemError):
-    type = "permission-denied"
-    title = "权限不足"
-    status = HTTPStatus.FORBIDDEN
-
-
-class NotFoundError(ProblemError):
-    type = "not-found"
-    title = "资源不存在"
-    status = HTTPStatus.NOT_FOUND
-
-
-class ConflictError(ProblemError):
-    type = "conflict"
-    title = "资源冲突"
-    status = HTTPStatus.CONFLICT

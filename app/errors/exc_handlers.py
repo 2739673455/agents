@@ -11,7 +11,7 @@ from loguru import logger
 from starlette.exceptions import HTTPException
 from starlette.types import ExceptionHandler
 
-from app.errors.base import InternalServerError, ProblemError, ValidationError
+from app.errors.base import ProblemError
 
 
 def _build_response(
@@ -61,8 +61,11 @@ def validation_error_handler(
         }
         for error in exc.errors()
     ]
-    problem = ValidationError(
+    problem = ProblemError(
+        title="参数校验失败",
         detail="请求参数不符合接口要求",
+        type="validation-error",
+        status=HTTPStatus.UNPROCESSABLE_ENTITY,
         extensions={"errors": errors},
     )
     _log_problem(problem, exc)
@@ -94,7 +97,7 @@ def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse
 
 def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """处理所有未捕获异常且不向客户端泄露内部信息"""
-    problem = InternalServerError()
+    problem = ProblemError()
     _log_problem(problem, exc)
     return _build_response(request, problem)
 

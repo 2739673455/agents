@@ -1,5 +1,6 @@
 """字段值索引访问"""
 
+import uuid
 from dataclasses import asdict
 from typing import Any, ClassVar
 
@@ -15,13 +16,13 @@ class ValueESRepo:
     _index_mappings: ClassVar[dict[str, Any]] = {
         "dynamic": False,
         "properties": {
-            "id": {"type": "keyword"},
             "value": {
                 "type": "text",
                 "analyzer": "ik_max_word",
                 "search_analyzer": "ik_max_word",
             },
-            "column_id": {"type": "keyword"},
+            "t_name": {"type": "keyword"},
+            "c_name": {"type": "keyword"},
         },
     }
 
@@ -43,16 +44,36 @@ class ValueESRepo:
             operations = []
             for value_info in batch:
                 operations.append(
-                    {"index": {"_index": self._index_name, "_id": value_info.id}}
+                    {
+                        "index": {
+                            "_index": self._index_name,
+                            "_id": str(
+                                uuid.uuid5(
+                                    uuid.NAMESPACE_URL,
+                                    "value:"
+                                    f"{value_info.t_name}:"
+                                    f"{value_info.c_name}:"
+                                    f"{value_info.value}",
+                                )
+                            ),
+                        }
+                    }
                 )
                 operations.append(asdict(value_info))
             await self._client.bulk(operations=operations, refresh="wait_for")
 
-    async def delete_by_column_id(self, column_id: str) -> None:
+    async def delete_by_column(self, t_name: str, c_name: str) -> None:
         """删除字段对应的全部取值"""
         await self._client.delete_by_query(
             index=self._index_name,
-            query={"term": {"column_id": column_id}},
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"t_name": t_name}},
+                        {"term": {"c_name": c_name}},
+                    ]
+                }
+            },
             conflicts="proceed",
             refresh=True,
         )
