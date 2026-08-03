@@ -57,6 +57,10 @@ class TableInfo(Base):
     meta_version: Mapped[int] = _version_column(1, "元数据版本")
     index_version: Mapped[int] = _version_column(0, "向量索引版本")
 
+    def metadata_snapshot(self) -> tuple[Any, ...]:
+        """生成元数据内容快照"""
+        return self.role, self.primary_key_columns, self.description
+
 
 class ColumnInfo(Base):
     """字段信息"""
@@ -100,6 +104,18 @@ class ColumnInfo(Base):
     meta_version: Mapped[int] = _version_column(1, "元数据版本")
     index_version: Mapped[int] = _version_column(0, "向量索引版本")
 
+    def metadata_snapshot(self) -> tuple[Any, ...]:
+        """生成元数据内容快照"""
+        return (
+            self.type,
+            self.description,
+            self.examples,
+            self.alias,
+            self.index_values,
+            self.reference_t_name,
+            self.reference_c_name,
+        )
+
 
 @dataclass
 class ValueInfo:
@@ -139,6 +155,19 @@ class MetricInfo(Base):
         self.relevant_columns = relevant_columns or []
         self.meta_version = meta_version
         self.index_version = index_version
+
+    def metadata_snapshot(self) -> tuple[Any, ...]:
+        """生成元数据内容快照"""
+        return (
+            self.description,
+            tuple(
+                sorted(
+                    (reference["t_name"], reference["c_name"])
+                    for reference in self.relevant_columns
+                )
+            ),
+            self.alias,
+        )
 
 
 class ColumnMetric(Base):

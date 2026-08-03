@@ -38,23 +38,8 @@ class TableConfig(MetaConfigModel):
 
     name: str
     role: TableRole
-    primary_key_columns: list[str] = Field(default_factory=list)
     description: str
     columns: list[ColumnConfig] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_primary_key_columns(self) -> "TableConfig":
-        """校验表的主键字段"""
-        if len(self.primary_key_columns) != len(set(self.primary_key_columns)):
-            raise ValueError("Primary key columns cannot contain duplicates")
-        column_names = {column.name for column in self.columns}
-        missing_columns = set(self.primary_key_columns) - column_names
-        if missing_columns:
-            raise ValueError(
-                "Primary key columns are missing from table columns: "
-                f"{', '.join(sorted(missing_columns))}"
-            )
-        return self
 
 
 class ColumnReferenceConfig(MetaConfigModel):

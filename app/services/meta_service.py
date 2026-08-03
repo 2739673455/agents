@@ -30,6 +30,16 @@ class MetaService:
     async def upsert_column_info(self, column_info: ColumnInfo) -> None:
         """新增或更新字段元数据"""
         async with self._meta_repo.transaction():
+            try:
+                await self._meta_repo.get_table_info(column_info.t_name)
+            except meta_error.MetadataNotFoundError as exc:
+                raise meta_error.InvalidMetadataError(
+                    detail=(
+                        "Table info not found for column: "
+                        f"{column_info.t_name}.{column_info.name}"
+                    )
+                ) from exc
+
             reference_t_name = column_info.reference_t_name
             reference_c_name = column_info.reference_c_name
             if (reference_t_name is None) != (reference_c_name is None):
@@ -97,19 +107,8 @@ class MetaService:
         columns_by_table: dict[str, list[ColumnInfo]] = {
             table_info.name: [] for table_info in table_infos
         }
-        orphan_columns: list[str] = []
         for column_info in column_infos:
-            if column_info.t_name not in columns_by_table:
-                orphan_columns.append(f"{column_info.t_name}.{column_info.name}")
-                continue
             columns_by_table[column_info.t_name].append(column_info)
-        if orphan_columns:
-            raise meta_error.MetadataConflictError(
-                detail=(
-                    "Columns reference missing tables: "
-                    f"{', '.join(sorted(orphan_columns))}"
-                )
-            )
 
         return MetaConfig(
             version=1,
@@ -117,7 +116,6 @@ class MetaService:
                 TableConfig(
                     name=table_info.name,
                     role=cast(TableRole, table_info.role),
-                    primary_key_columns=table_info.primary_key_columns,
                     description=table_info.description,
                     columns=[
                         ColumnConfig(

@@ -57,6 +57,12 @@ class ColumnIndexSyncRequest(BaseModel):
     columns: list[ColumnReference] = Field(min_length=1)
 
 
+class MetricIndexSyncRequest(BaseModel):
+    """批量指标索引同步请求"""
+
+    metrics: list[str] = Field(min_length=1)
+
+
 class ColumnIndexSyncResponse(BaseModel):
     """字段索引同步响应"""
 
@@ -76,6 +82,12 @@ class BatchIndexSyncResponse(BaseModel):
     """批量索引同步响应"""
 
     results: list[ColumnIndexSyncResponse]
+
+
+class BatchMetricIndexSyncResponse(BaseModel):
+    """批量指标索引同步响应"""
+
+    results: list[MetricIndexSyncResponse]
 
 
 class TableSyncResponse(BaseModel):
@@ -107,4 +119,3 @@ class MetaImportResponse(BaseModel):
     tables: ResourceImportChanges
     columns: ResourceImportChanges
     metrics: ResourceImportChanges
-    index_sync_required: bool

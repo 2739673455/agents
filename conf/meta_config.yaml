@@ -2,8 +2,6 @@ version: 1
 tables:
   - name: dwd_dim_user_info_df
     role: dim
-    primary_key_columns:
-      - id
     description: 用户维度拉链表，记录用户的基本属性信息，支持拉链式历史版本管理
     columns:
       - name: id
@@ -144,8 +142,6 @@ tables:
         index_values: false
   - name: dwd_dim_shop_info_df
     role: dim
-    primary_key_columns:
-      - id
     description: 店铺维度拉链表，记录店铺的基本属性和评分信息
     columns:
       - name: id
@@ -261,8 +257,6 @@ tables:
         index_values: true
   - name: dwd_dim_category_info_df
     role: dim
-    primary_key_columns:
-      - id
     description: 类目维度拉链表，记录商品类目的层级结构和属性
     columns:
       - name: id
@@ -348,8 +342,6 @@ tables:
         index_values: true
   - name: dwd_dim_brand_info_df
     role: dim
-    primary_key_columns:
-      - id
     description: 品牌维度拉链表，记录品牌的基本信息和归属国家
     columns:
       - name: id
@@ -422,8 +414,6 @@ tables:
         index_values: true
   - name: dwd_dim_payment_type_df
     role: dim
-    primary_key_columns:
-      - id
     description: 支付方式维度拉链表，记录支付方式和支付渠道信息
     columns:
       - name: id
@@ -489,8 +479,6 @@ tables:
         index_values: true
   - name: dwd_dim_logistics_company_df
     role: dim
-    primary_key_columns:
-      - id
     description: 物流公司维度拉链表，记录物流公司的基本信息
     columns:
       - name: id
@@ -551,8 +539,6 @@ tables:
         index_values: true
   - name: dwd_dim_geo_region_df
     role: dim
-    primary_key_columns:
-      - id
     description: 行政区域维度拉链表，记录省市区等地理区域信息
     columns:
       - name: id
@@ -642,8 +628,6 @@ tables:
         index_values: true
   - name: dwd_dim_spu_info_df
     role: dim
-    primary_key_columns:
-      - id
     description: SPU维度拉链表，记录标准产品单元的基本信息
     columns:
       - name: id
@@ -745,8 +729,6 @@ tables:
         index_values: false
   - name: dwd_dim_sku_info_df
     role: dim
-    primary_key_columns:
-      - id
     description: SKU维度拉链表，记录库存量单位的基本信息和价格
     columns:
       - name: id
@@ -861,8 +843,6 @@ tables:
         index_values: true
   - name: dwd_dim_promotion_info_df
     role: dim
-    primary_key_columns:
-      - id
     description: 促销活动维度明细快照，记录各类营销活动的信息和规则
     columns:
       - name: id
@@ -952,8 +932,6 @@ tables:
         index_values: true
   - name: dwd_dim_coupon_info_df
     role: dim
-    primary_key_columns:
-      - id
     description: 优惠券维度明细快照，记录各类优惠券的信息和使用规则
     columns:
       - name: id
@@ -1037,9 +1015,6 @@ tables:
         index_values: false
   - name: dwd_fact_trade_order_detail_di
     role: fact
-    primary_key_columns:
-      - id
-      - order_detail_id
     description: 交易域-下单事实明细，记录订单级别的交易数据，包括商品、金额、时间等信息
     columns:
       - name: id
@@ -1291,9 +1266,6 @@ tables:
         index_values: true
   - name: dwd_fact_trade_order_detail_activity_di
     role: fact
-    primary_key_columns:
-      - id
-      - order_detail_activity_id
     description: 交易域-订单明细活动分摊事实，记录订单中各商品分摊的活动优惠明细
     columns:
       - name: id
@@ -1358,9 +1330,6 @@ tables:
         index_values: false
   - name: dwd_fact_trade_order_detail_coupon_di
     role: fact
-    primary_key_columns:
-      - id
-      - order_detail_coupon_id
     description: 交易域-订单明细优惠券分摊事实，记录订单中各商品分摊的优惠券优惠明细
     columns:
       - name: id
@@ -1438,9 +1407,6 @@ tables:
         index_values: false
   - name: dwd_fact_trade_pay_detail_di
     role: fact
-    primary_key_columns:
-      - id
-      - pay_detail_id
     description: 交易域-支付事实明细，记录订单支付的详细信息和支付方式
     columns:
       - name: id
@@ -1564,9 +1530,6 @@ tables:
         index_values: true
   - name: dwd_fact_trade_delivery_detail_di
     role: fact
-    primary_key_columns:
-      - id
-      - delivery_detail_id
     description: 交易域-履约发货事实明细，记录订单发货和物流的详细信息
     columns:
       - name: id
@@ -1695,9 +1658,6 @@ tables:
         index_values: false
   - name: dwd_fact_trade_refund_detail_di
     role: fact
-    primary_key_columns:
-      - id
-      - refund_detail_id
     description: 交易域-退款事实明细，记录订单退款的详细信息和原因
     columns:
       - name: id
@@ -1824,9 +1784,6 @@ tables:
         index_values: false
   - name: dwd_fact_trade_refund_pay_detail_di
     role: fact
-    primary_key_columns:
-      - id
-      - refund_pay_detail_id
     description: 交易域-退款打款事实明细，记录退款资金的实际打款信息
     columns:
       - name: id
@@ -1915,9 +1872,6 @@ tables:
         index_values: true
   - name: dwd_fact_interaction_cart_add_di
     role: fact
-    primary_key_columns:
-      - id
-      - cart_add_id
     description: 互动域-加购事实明细，记录用户加购行为的事件数据
     columns:
       - name: id
@@ -2011,9 +1965,6 @@ tables:
         index_values: true
   - name: dwd_fact_interaction_favor_add_di
     role: fact
-    primary_key_columns:
-      - id
-      - favor_add_id
     description: 互动域-收藏事实明细，记录用户收藏商品或店铺的行为数据
     columns:
       - name: id
@@ -2079,9 +2030,6 @@ tables:
         index_values: true
   - name: dwd_fact_traffic_page_view_di
     role: fact
-    primary_key_columns:
-      - id
-      - page_view_id
     description: 流量域-页面访问事实明细，记录用户的页面浏览行为数据
     columns:
       - name: id
@@ -2195,9 +2143,6 @@ tables:
         index_values: true
   - name: dwd_fact_traffic_search_di
     role: fact
-    primary_key_columns:
-      - id
-      - search_detail_id
     description: 流量域-搜索事实明细，记录用户的搜索行为及结果点击数据
     columns:
       - name: id
@@ -2293,9 +2238,6 @@ tables:
         index_values: true
   - name: dwd_fact_service_comment_detail_di
     role: fact
-    primary_key_columns:
-      - id
-      - comment_detail_id
     description: 服务域-评价事实明细，记录用户对订单的评价信息和评分
     columns:
       - name: id
@@ -2422,9 +2364,6 @@ tables:
         index_values: true
   - name: dwd_fact_inventory_change_di
     role: fact
-    primary_key_columns:
-      - id
-      - inventory_change_id
     description: 库存域-库存变更事实明细，记录商品库存的增减变动情况
     columns:
       - name: id

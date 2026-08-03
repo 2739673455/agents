@@ -16,7 +16,7 @@ from app.repositories.value_es_repo import ValueESRepo
 class IndexService:
     """同步字段、字段值和指标检索索引"""
 
-    _embedding_batch_size = 10
+    _embedding_batch_size = 64
 
     def __init__(
         self,
@@ -52,19 +52,37 @@ class IndexService:
                 for column_info in column_infos
             }
 
-    async def sync_column_values(self, t_name: str, c_name: str) -> int:
-        """同步单个字段的取值索引"""
-        column_info = await self._meta_repo.get_column_info(t_name, c_name)
-        if not column_info.index_values:
-            await self._clear_column_values(t_name, c_name)
-            return 0
-        return await self._sync_column_values(column_info)
+    async def sync_column_values(
+        self, column_keys: list[ColumnKey]
+    ) -> dict[ColumnKey, int]:
+        """同步多个字段的取值索引"""
+        unique_column_keys = list(dict.fromkeys(column_keys))
+        column_infos = [
+            await self._meta_repo.get_column_info(*column_key)
+            for column_key in unique_column_keys
+        ]
+        results: dict[ColumnKey, int] = {}
+        for column_info in column_infos:
+            column_key = (column_info.t_name, column_info.name)
+            if column_info.index_values:
+                results[column_key] = await self._sync_column_values(column_info)
+            else:
+                await self._clear_column_values(*column_key)
+                results[column_key] = 0
+        return results
 
-    async def sync_metric_index(self, metric_name: str) -> int:
-        """同步单个指标的向量索引"""
+    async def sync_metric_indexes(self, metric_names: list[str]) -> dict[str, int]:
+        """同步多个指标的向量索引"""
         async with self._meta_repo.transaction():
-            metric_info = await self._meta_repo.get_metric_info(metric_name)
-            return await self._sync_metric_index(metric_info)
+            unique_metric_names = list(dict.fromkeys(metric_names))
+            metric_infos = [
+                await self._meta_repo.get_metric_info(metric_name)
+                for metric_name in unique_metric_names
+            ]
+            return {
+                metric_info.name: await self._sync_metric_index(metric_info)
+                for metric_info in metric_infos
+            }
 
     async def sync_table(self, t_name: str) -> dict[str, int]:
         """同步表下全部字段向量及字段值索引"""

@@ -161,7 +161,6 @@ async def import_metadata(
         tables=_to_import_changes(result.tables),
         columns=_to_import_changes(result.columns),
         metrics=_to_import_changes(result.metrics),
-        index_sync_required=result.index_sync_required,
     )
 
 
@@ -268,37 +267,42 @@ async def sync_column_indexes(
     )
 
 
-@router.post(
-    "/tables/{t_name}/columns/{c_name}/sync-values",
-    response_model=schemas.ColumnIndexSyncResponse,
-)
+@router.post("/columns/sync-values", response_model=schemas.BatchIndexSyncResponse)
 async def sync_column_values(
-    t_name: str,
-    c_name: str,
+    body: schemas.ColumnIndexSyncRequest,
     service: IndexServiceDep,
-) -> schemas.ColumnIndexSyncResponse:
-    """同步单个字段的全部取值索引"""
-    indexed_count = await service.sync_column_values(t_name, c_name)
-    return schemas.ColumnIndexSyncResponse(
-        t_name=t_name,
-        c_name=c_name,
-        indexed_count=indexed_count,
+) -> schemas.BatchIndexSyncResponse:
+    """同步多个字段的全部取值索引"""
+    results = await service.sync_column_values(
+        [(column.t_name, column.c_name) for column in body.columns]
+    )
+    return schemas.BatchIndexSyncResponse(
+        results=[
+            schemas.ColumnIndexSyncResponse(
+                t_name=t_name,
+                c_name=c_name,
+                indexed_count=indexed_count,
+            )
+            for (t_name, c_name), indexed_count in results.items()
+        ]
     )
 
 
-@router.post(
-    "/metrics/{metric_name}/sync",
-    response_model=schemas.MetricIndexSyncResponse,
-)
-async def sync_metric_index(
-    metric_name: str,
+@router.post("/metrics/sync", response_model=schemas.BatchMetricIndexSyncResponse)
+async def sync_metric_indexes(
+    body: schemas.MetricIndexSyncRequest,
     service: IndexServiceDep,
-) -> schemas.MetricIndexSyncResponse:
-    """同步单个指标的向量索引"""
-    indexed_count = await service.sync_metric_index(metric_name)
-    return schemas.MetricIndexSyncResponse(
-        metric_name=metric_name,
-        indexed_count=indexed_count,
+) -> schemas.BatchMetricIndexSyncResponse:
+    """同步多个指标的向量索引"""
+    results = await service.sync_metric_indexes(body.metrics)
+    return schemas.BatchMetricIndexSyncResponse(
+        results=[
+            schemas.MetricIndexSyncResponse(
+                metric_name=metric_name,
+                indexed_count=indexed_count,
+            )
+            for metric_name, indexed_count in results.items()
+        ]
     )
 
 

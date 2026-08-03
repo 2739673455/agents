@@ -45,14 +45,6 @@ class MetaImportResult:
     columns: ResourceChanges[ColumnKey]
     metrics: ResourceChanges[str]
 
-    @property
-    def index_sync_required(self) -> bool:
-        """判断导入后是否需要处理检索索引"""
-        changes = (self.tables, self.columns, self.metrics)
-        return any(
-            change.created or change.updated or change.deleted for change in changes
-        )
-
 
 class MetaImportService:
     """从配置批量导入元数据"""
@@ -164,29 +156,26 @@ class MetaImportService:
         table_infos: list[TableInfo] = []
         column_infos: list[ColumnInfo] = []
 
-        source_columns: set[tuple[str, str]] = set()
         for table_config in meta_config.tables:
+            if not await self._source_repo.table_exists(table_config.name):
+                raise meta_error.InvalidMetadataError(
+                    detail=f"Source table not found: {table_config.name}"
+                )
+
+            primary_key_columns = await self._source_repo.get_primary_key_columns(
+                table_config.name
+            )
             table_infos.append(
                 TableInfo(
                     name=table_config.name,
                     role=table_config.role,
-                    primary_key_columns=table_config.primary_key_columns,
+                    primary_key_columns=primary_key_columns,
                     description=table_config.description,
                 )
             )
 
             column_types = await self._source_repo.get_column_types(table_config.name)
             for column_config in table_config.columns:
-                source_column = (table_config.name, column_config.name)
-                if source_column in source_columns:
-                    raise meta_error.InvalidMetadataError(
-                        detail=(
-                            "Duplicate source column in metadata import: "
-                            f"{table_config.name}.{column_config.name}"
-                        )
-                    )
-                source_columns.add(source_column)
-
                 if column_config.name not in column_types:
                     raise meta_error.InvalidMetadataError(
                         detail=(
@@ -273,26 +262,6 @@ class MetaImportService:
         return indexed
 
     @staticmethod
-    def _validate_metric_columns(
-        metric_infos: list[MetricInfo],
-        available_columns: set[ColumnKey],
-    ) -> None:
-        """校验指标关联的字段"""
-        for metric_info in metric_infos:
-            relevant_columns = {
-                (reference["t_name"], reference["c_name"])
-                for reference in metric_info.relevant_columns
-            }
-            missing_columns = sorted(relevant_columns - available_columns)
-            if missing_columns:
-                raise meta_error.InvalidMetadataError(
-                    detail=(
-                        f"Metric {metric_info.name} references missing columns: "
-                        f"{', '.join(f'{table}.{column}' for table, column in missing_columns)}"
-                    )
-                )
-
-    @staticmethod
     def _validate_column_references(
         column_infos: list[ColumnInfo],
         available_columns: set[ColumnKey],
@@ -319,6 +288,26 @@ class MetaImportService:
                         f"Column {column_info.t_name}.{column_info.name} "
                         "references missing column: "
                         f"{reference_key[0]}.{reference_key[1]}"
+                    )
+                )
+
+    @staticmethod
+    def _validate_metric_columns(
+        metric_infos: list[MetricInfo],
+        available_columns: set[ColumnKey],
+    ) -> None:
+        """校验指标关联的字段"""
+        for metric_info in metric_infos:
+            relevant_columns = {
+                (reference["t_name"], reference["c_name"])
+                for reference in metric_info.relevant_columns
+            }
+            missing_columns = sorted(relevant_columns - available_columns)
+            if missing_columns:
+                raise meta_error.InvalidMetadataError(
+                    detail=(
+                        f"Metric {metric_info.name} references missing columns: "
+                        f"{', '.join(f'{table}.{column}' for table, column in missing_columns)}"
                     )
                 )
 
@@ -351,11 +340,7 @@ class MetaImportService:
     ) -> dict[str, tuple[Any, ...]]:
         """生成表元数据比较快照"""
         return {
-            t_name: (
-                item.role,
-                item.primary_key_columns,
-                item.description,
-            )
+            t_name: item.metadata_snapshot()
             for t_name, item in table_infos.items()
         }
 
@@ -365,15 +350,7 @@ class MetaImportService:
     ) -> dict[ColumnKey, tuple[Any, ...]]:
         """生成字段元数据比较快照"""
         return {
-            column_key: (
-                item.type,
-                item.description,
-                item.examples,
-                item.alias,
-                item.index_values,
-                item.reference_t_name,
-                item.reference_c_name,
-            )
+            column_key: item.metadata_snapshot()
             for column_key, item in column_infos.items()
         }
 
@@ -383,16 +360,7 @@ class MetaImportService:
     ) -> dict[str, tuple[Any, ...]]:
         """生成指标元数据比较快照"""
         return {
-            metric_name: (
-                item.description,
-                tuple(
-                    sorted(
-                        (reference["t_name"], reference["c_name"])
-                        for reference in item.relevant_columns
-                    )
-                ),
-                item.alias,
-            )
+            metric_name: item.metadata_snapshot()
             for metric_name, item in metric_infos.items()
         }
 

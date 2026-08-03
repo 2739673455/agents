@@ -1,7 +1,5 @@
 """元数据访问"""
 
-from typing import Any
-
 from sqlalchemy import delete, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
@@ -39,7 +37,7 @@ class MetaMySQLRepo:
             existing,
             force_version_increment
             or (
-                self._table_metadata(table_info) != self._table_metadata(existing)
+                table_info.metadata_snapshot() != existing.metadata_snapshot()
                 if existing
                 else True
             ),
@@ -105,7 +103,7 @@ class MetaMySQLRepo:
             existing,
             force_version_increment
             or (
-                self._metric_metadata(metric_info) != self._metric_metadata(existing)
+                metric_info.metadata_snapshot() != existing.metadata_snapshot()
                 if existing
                 else True
             ),
@@ -281,7 +279,7 @@ class MetaMySQLRepo:
             existing,
             force_version_increment
             or (
-                self._column_metadata(column_info) != self._column_metadata(existing)
+                column_info.metadata_snapshot() != existing.metadata_snapshot()
                 if existing
                 else True
             ),
@@ -300,35 +298,3 @@ class MetaMySQLRepo:
             return
         item.meta_version = existing.meta_version + int(changed)
         item.index_version = existing.index_version
-
-    @staticmethod
-    def _table_metadata(item: TableInfo) -> tuple[Any, ...]:
-        """生成表元数据内容快照"""
-        return item.role, item.primary_key_columns, item.description
-
-    @staticmethod
-    def _column_metadata(item: ColumnInfo) -> tuple[Any, ...]:
-        """生成字段元数据内容快照"""
-        return (
-            item.type,
-            item.description,
-            item.examples,
-            item.alias,
-            item.index_values,
-            item.reference_t_name,
-            item.reference_c_name,
-        )
-
-    @staticmethod
-    def _metric_metadata(item: MetricInfo) -> tuple[Any, ...]:
-        """生成指标元数据内容快照"""
-        return (
-            item.description,
-            tuple(
-                sorted(
-                    (reference["t_name"], reference["c_name"])
-                    for reference in item.relevant_columns
-                )
-            ),
-            item.alias,
-        )

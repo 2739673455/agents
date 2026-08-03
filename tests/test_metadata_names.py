@@ -13,12 +13,13 @@ from sqlalchemy.orm import Session
 
 from app.conf.meta_config import MetaConfig
 from app.entities.meta import Base, ColumnInfo, ColumnMetric, MetricInfo, TableInfo
-from app.errors.meta_error import InvalidMetadataError
+from app.errors.meta_error import InvalidMetadataError, MetadataNotFoundError
 from app.repositories.column_qdrant_repo import ColumnQdrantRepo
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
 from app.repositories.metric_qdrant_repo import MetricQdrantRepo
 from app.repositories.source_mysql_repo import SourceMySQLRepo
 from app.services.meta_import_service import ImportMode, MetaImportService
+from app.services.meta_service import MetaService
 from dbmock.core.entities.warehouse import Base as WarehouseBase
 
 
@@ -42,6 +43,14 @@ class _MetaRepo:
 
     async def list_metric_infos(self) -> list[MetricInfo]:
         return list(self.metrics.values())
+
+    async def get_table_info(self, t_name: str) -> TableInfo:
+        try:
+            return self.tables[t_name]
+        except KeyError as exc:
+            raise MetadataNotFoundError(
+                detail=f"Table info not found: {t_name}"
+            ) from exc
 
     async def delete_metric_infos(self, metric_names: list[str]) -> None:
         for metric_name in metric_names:
@@ -71,6 +80,9 @@ class _MetaRepo:
         for column_info in column_infos:
             self.columns[(column_info.t_name, column_info.name)] = column_info
 
+    async def upsert_column_info(self, column_info: ColumnInfo) -> None:
+        self.columns[(column_info.t_name, column_info.name)] = column_info
+
     async def upsert_metric_info(
         self,
         metric_info: MetricInfo,
@@ -87,6 +99,12 @@ class _SourceRepo:
         "users": {"id": "int"},
         "orders": {"id": "int", "user_id": "int"},
     }
+
+    async def table_exists(self, t_name: str) -> bool:
+        return t_name in self._columns
+
+    async def get_primary_key_columns(self, t_name: str) -> list[str]:
+        return ["id"]
 
     async def get_column_types(self, t_name: str) -> dict[str, str]:
         return self._columns[t_name]
@@ -110,7 +128,6 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
                     {
                         "name": "users",
                         "role": "dim",
-                        "primary_key_columns": ["id"],
                         "description": "用户",
                         "columns": [
                             {
@@ -123,7 +140,6 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
                     {
                         "name": "orders",
                         "role": "fact",
-                        "primary_key_columns": ["id"],
                         "description": "订单",
                         "columns": [
                             {
@@ -168,6 +184,8 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
             meta_repo.columns[("orders", "user_id")].reference_t_name,
             "users",
         )
+        self.assertEqual(meta_repo.tables["users"].primary_key_columns, ["id"])
+        self.assertEqual(meta_repo.tables["orders"].primary_key_columns, ["id"])
         self.assertFalse(hasattr(meta_repo.tables["orders"], "id"))
         self.assertFalse(hasattr(meta_repo.columns[("orders", "id")], "id"))
         self.assertFalse(hasattr(meta_repo.metrics["订单数"], "id"))
@@ -180,13 +198,25 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
                         "name": "users",
                         "role": "dim",
                         "description": "用户一",
-                        "columns": [],
+                        "columns": [
+                            {
+                                "name": "id",
+                                "description": "用户主键",
+                                "index_values": False,
+                            }
+                        ],
                     },
                     {
                         "name": "users",
                         "role": "dim",
                         "description": "用户二",
-                        "columns": [],
+                        "columns": [
+                            {
+                                "name": "id",
+                                "description": "用户主键",
+                                "index_values": False,
+                            }
+                        ],
                     },
                 ]
             }
@@ -198,6 +228,53 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(InvalidMetadataError, "Duplicate table name"):
             await service.import_metadata(config, ImportMode.MERGE, True)
+
+    async def test_missing_source_table_is_rejected(self) -> None:
+        config = MetaConfig.model_validate(
+            {
+                "tables": [
+                    {
+                        "name": "missing_table",
+                        "role": "dim",
+                        "description": "不存在的表",
+                    }
+                ]
+            }
+        )
+        service = MetaImportService(
+            cast(MetaMySQLRepo, _MetaRepo()),
+            cast(SourceMySQLRepo, _SourceRepo()),
+        )
+
+        with self.assertRaisesRegex(
+            InvalidMetadataError,
+            "Source table not found: missing_table",
+        ):
+            await service.import_metadata(config, ImportMode.MERGE, True)
+
+    async def test_primary_key_column_can_be_omitted_from_yaml(self) -> None:
+        config = MetaConfig.model_validate(
+            {
+                "tables": [
+                    {
+                        "name": "users",
+                        "role": "dim",
+                        "description": "用户",
+                        "columns": [],
+                    }
+                ]
+            }
+        )
+        meta_repo = _MetaRepo()
+        service = MetaImportService(
+            cast(MetaMySQLRepo, meta_repo),
+            cast(SourceMySQLRepo, _SourceRepo()),
+        )
+
+        await service.import_metadata(config, ImportMode.MERGE, False)
+
+        self.assertEqual(meta_repo.tables["users"].primary_key_columns, ["id"])
+        self.assertEqual(meta_repo.columns, {})
 
     async def test_metadata_versions_increment_only_when_content_changes(self) -> None:
         existing = ColumnInfo(
@@ -280,6 +357,78 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metric_payload["index_version"], 5)
         self.assertEqual(column_info.index_version, column_info.meta_version)
         self.assertEqual(metric_info.index_version, metric_info.meta_version)
+
+
+class SourceMySQLRepoTest(unittest.IsolatedAsyncioTestCase):
+    """验证源数据库表结构查询"""
+
+    async def test_table_exists_and_primary_key_order(self) -> None:
+        exists_result = MagicMock()
+        exists_result.scalar.return_value = 1
+        primary_key_result = MagicMock()
+        primary_key_result.scalars.return_value.fetchall.return_value = [
+            "tenant_id",
+            "id",
+        ]
+        session = MagicMock(spec=AsyncSession)
+        session.execute = AsyncMock(side_effect=[exists_result, primary_key_result])
+        repository = SourceMySQLRepo(cast(AsyncSession, session))
+
+        self.assertTrue(await repository.table_exists("orders"))
+        self.assertEqual(
+            await repository.get_primary_key_columns("orders"),
+            ["tenant_id", "id"],
+        )
+        for call in session.execute.await_args_list:
+            self.assertEqual(call.args[1], {"table_name": "orders"})
+
+
+class MetaServiceIntegrityTest(unittest.IsolatedAsyncioTestCase):
+    """验证元数据写入完整性"""
+
+    async def test_column_requires_existing_table(self) -> None:
+        meta_repo = _MetaRepo()
+        service = MetaService(cast(MetaMySQLRepo, meta_repo))
+        column_info = ColumnInfo(
+            t_name="users",
+            name="id",
+            type="int",
+            description="用户主键",
+            examples=[],
+            alias=[],
+            index_values=False,
+        )
+
+        with self.assertRaisesRegex(
+            InvalidMetadataError,
+            "Table info not found for column: users.id",
+        ):
+            await service.upsert_column_info(column_info)
+
+        self.assertEqual(meta_repo.columns, {})
+
+    async def test_column_is_written_when_table_exists(self) -> None:
+        meta_repo = _MetaRepo()
+        meta_repo.tables["users"] = TableInfo(
+            name="users",
+            role="dim",
+            primary_key_columns=["id"],
+            description="用户",
+        )
+        service = MetaService(cast(MetaMySQLRepo, meta_repo))
+        column_info = ColumnInfo(
+            t_name="users",
+            name="id",
+            type="int",
+            description="用户主键",
+            examples=[],
+            alias=[],
+            index_values=False,
+        )
+
+        await service.upsert_column_info(column_info)
+
+        self.assertIs(meta_repo.columns[("users", "id")], column_info)
 
 
 class MetadataSchemaTest(unittest.TestCase):
@@ -373,6 +522,9 @@ class MetadataSchemaTest(unittest.TestCase):
         self.assertTrue(config.tables)
         self.assertTrue(config.metrics)
         self.assertNotIn("id", raw_config["tables"][0])
+        self.assertTrue(
+            all("primary_key_columns" not in table for table in raw_config["tables"])
+        )
         source_tables = WarehouseBase.metadata.tables
         self.assertTrue(
             all(
