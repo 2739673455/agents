@@ -1,10 +1,22 @@
 """元数据导入导出配置模型"""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 TableRole = Literal["fact", "dim"]
+MetadataName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=256),
+]
+MetadataDescription = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1),
+]
+MetadataAlias = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=256),
+]
 
 
 class MetaConfigModel(BaseModel):
@@ -16,12 +28,12 @@ class MetaConfigModel(BaseModel):
 class ColumnConfig(MetaConfigModel):
     """字段元数据配置"""
 
-    name: str
-    description: str
-    alias: list[str] = Field(default_factory=list)
+    name: MetadataName
+    description: MetadataDescription
+    alias: list[MetadataAlias] = Field(default_factory=list, max_length=100)
     index_values: bool
-    reference_t_name: str | None = None
-    reference_c_name: str | None = None
+    reference_t_name: MetadataName | None = None
+    reference_c_name: MetadataName | None = None
 
     @model_validator(mode="after")
     def validate_reference(self) -> "ColumnConfig":
@@ -36,31 +48,33 @@ class ColumnConfig(MetaConfigModel):
 class TableConfig(MetaConfigModel):
     """表元数据配置"""
 
-    name: str
+    name: MetadataName
     role: TableRole
-    description: str
+    description: MetadataDescription
     columns: list[ColumnConfig] = Field(default_factory=list)
 
 
 class ColumnReferenceConfig(MetaConfigModel):
     """字段联合主键引用"""
 
-    t_name: str
-    c_name: str
+    t_name: MetadataName
+    c_name: MetadataName
 
 
 class MetricConfig(MetaConfigModel):
     """指标元数据配置"""
 
-    name: str
-    description: str
-    relevant_columns: list[ColumnReferenceConfig] = Field(default_factory=list)
-    alias: list[str] = Field(default_factory=list)
+    name: MetadataName
+    description: MetadataDescription
+    relevant_columns: list[ColumnReferenceConfig] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+    alias: list[MetadataAlias] = Field(default_factory=list, max_length=100)
 
 
 class MetaConfig(MetaConfigModel):
     """元数据导入导出配置"""
 
-    version: Literal[1] = 1
     tables: list[TableConfig] = Field(default_factory=list)
     metrics: list[MetricConfig] = Field(default_factory=list)

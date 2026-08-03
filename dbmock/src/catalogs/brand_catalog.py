@@ -1,4 +1,4 @@
-"""品牌商品词库。"""
+"""品牌商品词库"""
 
 BRAND_PRODUCT_CATALOG = {
     "Apple": {

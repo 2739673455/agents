@@ -6,10 +6,10 @@ help:
 	@echo "make clean        - 清理临时文件"
 
 init_db:
-	uv run core/init_db.py
+	uv run scripts/init_db.py
 
 generate:
-	uv run -m core.generators.main
+	uv run main.py
 
 clean:
 	rm -rf .venv .pytest_cache .mypy_cache .ruff_cache

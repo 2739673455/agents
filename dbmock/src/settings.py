@@ -1,4 +1,4 @@
-"""数据生成全局配置。"""
+"""数据生成全局配置"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ DB_HOST = "127.0.0.1"
 DB_PORT = 3306
 DB_USER = "root"
 DB_PASSWORD = "123321"
-DB_NAME = "warehouse"
+DB_NAME = "ecommerce"
 BATCH_SIZE = 5000
 SEED = 42
 

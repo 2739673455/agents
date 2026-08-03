@@ -77,6 +77,8 @@ class ColumnQdrantRepo:
 
     async def delete(self, t_name: str, c_name: str) -> None:
         """删除字段对应的全部向量"""
+        if not await self._client.collection_exists(self._collection_name):
+            return
         await self._client.delete(
             collection_name=self._collection_name,
             points_selector=Filter(

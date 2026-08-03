@@ -1,11 +1,14 @@
 """元数据实体"""
 
 from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, TypedDict
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Integer,
@@ -28,6 +31,21 @@ class ColumnReference(TypedDict):
 
 
 type ColumnKey = tuple[str, str]
+
+COLUMN_EXAMPLE_LIMIT = 10
+
+
+def serialize_column_examples(examples: list[Any]) -> list[Any]:
+    """将字段示例转换为可序列化值"""
+    serialized: list[Any] = []
+    for value in examples:
+        if isinstance(value, (datetime, date)):
+            serialized.append(value.isoformat())
+        elif isinstance(value, Decimal):
+            serialized.append(float(value))
+        else:
+            serialized.append(value)
+    return sorted(serialized, key=lambda value: str(value))
 
 
 def _version_column(default: int, comment: str) -> Mapped[int]:
@@ -55,7 +73,6 @@ class TableInfo(Base):
     )
     description: Mapped[str] = mapped_column(Text, nullable=False, comment="表描述")
     meta_version: Mapped[int] = _version_column(1, "元数据版本")
-    index_version: Mapped[int] = _version_column(0, "向量索引版本")
 
     def metadata_snapshot(self) -> tuple[Any, ...]:
         """生成元数据内容快照"""
@@ -103,6 +120,14 @@ class ColumnInfo(Base):
     )
     meta_version: Mapped[int] = _version_column(1, "元数据版本")
     index_version: Mapped[int] = _version_column(0, "向量索引版本")
+    value_index_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        comment="字段值索引最近同步成功时间",
+    )
+    value_index_sync_status: Mapped[str | None] = mapped_column(
+        String(16),
+        comment="字段值索引最近同步状态",
+    )
 
     def metadata_snapshot(self) -> tuple[Any, ...]:
         """生成元数据内容快照"""

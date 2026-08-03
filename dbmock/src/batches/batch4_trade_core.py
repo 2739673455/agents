@@ -1,11 +1,11 @@
-"""批次4：生成订单核心事实及支付、发货、退款等关联事实。"""
+"""批次4：生成订单核心事实及支付、发货、退款等关联事实"""
 
+import logging
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from loguru import logger
 from sqlalchemy import MetaData, select
 
 from ..catalogs import (
@@ -39,6 +39,8 @@ from ..catalogs import (
 from ..settings import RunContext
 from ..utils.loaders import bulk_insert
 
+logger = logging.getLogger(__name__)
+
 MONEY_ZERO = Decimal("0.00")
 MONEY_QUANT = Decimal("0.01")
 DEFAULT_FREE_SHIPPING_THRESHOLD = Decimal("159")
@@ -59,7 +61,7 @@ FREE_SHIPPING_THRESHOLD_BY_ROOT = {
 
 
 def _masked_receiver_name(user_row: dict[str, Any]) -> str:
-    """基于用户维度生成脱敏收件人姓名。"""
+    """基于用户维度生成脱敏收件人姓名"""
     raw_name = (
         user_row.get("nick_name")
         or user_row.get("user_name")
@@ -71,7 +73,7 @@ def _masked_receiver_name(user_row: dict[str, Any]) -> str:
 
 
 def _masked_receiver_phone(user_row: dict[str, Any]) -> str:
-    """基于用户维度生成脱敏收件手机号。"""
+    """基于用户维度生成脱敏收件手机号"""
     phone = user_row.get("phone")
     if phone:
         return str(phone)
@@ -81,7 +83,7 @@ def _masked_receiver_phone(user_row: dict[str, Any]) -> str:
 
 
 def _masked_receiver_address(detail_row: dict[str, Any]) -> str:
-    """基于用户维度生成脱敏收货地址。"""
+    """基于用户维度生成脱敏收货地址"""
     province = detail_row.get("province_code") or "000000"
     city = detail_row.get("city_code") or "000000"
     district = detail_row.get("district_code") or "000000"
@@ -89,7 +91,7 @@ def _masked_receiver_address(detail_row: dict[str, Any]) -> str:
 
 
 def _pick_comment_bundle(ctx: RunContext, comment_level: int) -> tuple[str, str | None]:
-    """按评分选择评价内容和敏感标签。"""
+    """按评分选择评价内容和敏感标签"""
     if comment_level >= 4:
         return (
             POSITIVE_COMMENTS[ctx.rng.randrange(len(POSITIVE_COMMENTS))],
@@ -107,7 +109,7 @@ def _pick_comment_bundle(ctx: RunContext, comment_level: int) -> tuple[str, str 
 
 
 def _sentiment_by_level(comment_level: int) -> str:
-    """按评分映射情感标签。"""
+    """按评分映射情感标签"""
     if comment_level >= 4:
         return "正向"
     if comment_level == 3:
@@ -120,7 +122,7 @@ def _ensure_inventory_state(
     lock_state: dict[int, int],
     sku_id: int,
 ) -> None:
-    """初始化某个 SKU 的库存状态。"""
+    """初始化某个 SKU 的库存状态"""
     if sku_id not in stock_state:
         stock_state[sku_id] = INITIAL_STOCK_BASE + (sku_id % 3000)
         lock_state[sku_id] = 0
@@ -141,7 +143,7 @@ def _append_inventory_change(
     warehouse_id: int | None,
     remark: str,
 ) -> int:
-    """追加一条库存变更，并更新当前库存状态。"""
+    """追加一条库存变更，并更新当前库存状态"""
     sku_id = detail_row["sku_id"]
     _ensure_inventory_state(stock_state, lock_state, sku_id)
     before_stock_qty = stock_state[sku_id]
@@ -198,7 +200,7 @@ def append_fulfillment_rows(
     refund_buffer: list[dict[str, Any]],
     refund_pay_buffer: list[dict[str, Any]],
 ) -> None:
-    """基于单笔订单明细派生支付、发货、退款和退款打款记录。"""
+    """基于单笔订单明细派生支付、发货、退款和退款打款记录"""
     first_detail = detail_rows[0]
     order_status = first_detail["order_status"]
     user_id = first_detail["user_id"]
@@ -411,7 +413,7 @@ def append_fulfillment_rows(
 
 
 class ActiveVersionPool:
-    """按日期维护可用版本集合，并支持随机抽样。"""
+    """按日期维护可用版本集合，并支持随机抽样"""
 
     def __init__(self, rows: list[dict[str, Any]], key_field: str) -> None:
         self._key_field = key_field
@@ -425,7 +427,7 @@ class ActiveVersionPool:
         self._end_idx = 0
 
     def advance(self, current_date: date) -> None:
-        """推进到指定日期，更新可用版本集合。"""
+        """推进到指定日期，更新可用版本集合"""
         while self._start_idx < len(self._start_rows):
             row = self._start_rows[self._start_idx]
             if row["start_date"] > current_date:
@@ -446,7 +448,7 @@ class ActiveVersionPool:
     def random_row(
         self, rng, predicate=None, max_attempts: int = 64
     ) -> dict[str, Any] | None:
-        """从当前有效版本中随机选择一条记录。"""
+        """从当前有效版本中随机选择一条记录"""
         if not self._active_keys:
             return None
         for _ in range(max_attempts):
@@ -468,7 +470,7 @@ class ActiveVersionPool:
 
 
 def _money(value: Decimal | int | float) -> Decimal:
-    """统一金额字段精度。"""
+    """统一金额字段精度"""
     if not isinstance(value, Decimal):
         value = Decimal(str(value))
     return value.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
@@ -477,7 +479,7 @@ def _money(value: Decimal | int | float) -> Decimal:
 def _resolve_freight_total(
     ctx: RunContext, detail_rows: list[dict[str, Any]]
 ) -> Decimal:
-    """按类目、店铺和订单金额生成更真实的订单级运费。"""
+    """按类目、店铺和订单金额生成更真实的订单级运费"""
     order_amount = _money(sum(row["_detail_amount"] for row in detail_rows))
     root_name = (
         detail_rows[0]["_shop_row"].get("industry_type")
@@ -510,19 +512,19 @@ def _resolve_freight_total(
 
 
 def _load_all_rows(conn, table) -> list[dict[str, Any]]:
-    """加载整张表数据。"""
+    """加载整张表数据"""
     return [dict(row) for row in conn.execute(select(table)).mappings()]
 
 
 def _has_rows(conn, table) -> bool:
-    """判断目标表是否已有数据。"""
+    """判断目标表是否已有数据"""
     return conn.execute(select(table.c.id).limit(1)).first() is not None
 
 
 def _build_weighted_dates(
     start_date: date, end_date: date
 ) -> tuple[list[date], list[float]]:
-    """生成按促销季节加权的日期权重。"""
+    """生成按促销季节加权的日期权重"""
     dates: list[date] = []
     weights: list[float] = []
     current = start_date
@@ -549,7 +551,7 @@ def _allocate_daily_detail_counts(
     end_date: date,
     total_target: int,
 ) -> list[tuple[date, int]]:
-    """按权重把订单明细量分配到每天。"""
+    """按权重把订单明细量分配到每天"""
     dates, weights = _build_weighted_dates(start_date, end_date)
     total_weight = sum(weights)
     raw_counts = [total_target * weight / total_weight for weight in weights]
@@ -565,7 +567,7 @@ def _allocate_daily_detail_counts(
 
 
 def _pick_order_time(rng, current_date: date) -> datetime:
-    """生成订单创建时间。"""
+    """生成订单创建时间"""
     hour = DAY_HOUR_OPTIONS[rng.randrange(len(DAY_HOUR_OPTIONS))]
     minute = rng.randrange(60)
     second = rng.randrange(60)
@@ -575,7 +577,7 @@ def _pick_order_time(rng, current_date: date) -> datetime:
 def _build_version_index(
     rows: list[dict[str, Any]], key_field: str
 ) -> dict[Any, list[dict[str, Any]]]:
-    """按业务主键聚合拉链版本记录。"""
+    """按业务主键聚合拉链版本记录"""
     index: dict[Any, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         index[row[key_field]].append(row)
@@ -587,7 +589,7 @@ def _build_version_index(
 def _find_version(
     version_rows: list[dict[str, Any]], current_date: date
 ) -> dict[str, Any] | None:
-    """从版本列表中查找指定日期生效的记录。"""
+    """从版本列表中查找指定日期生效的记录"""
     for row in version_rows:
         if row["start_date"] <= current_date <= row["end_date"]:
             return row
@@ -597,7 +599,7 @@ def _find_version(
 def _build_snapshot_index(
     rows: list[dict[str, Any]],
 ) -> dict[date, list[dict[str, Any]]]:
-    """按 etl_date 聚合每日快照。"""
+    """按 etl_date 聚合每日快照"""
     index: dict[date, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         index[row["etl_date"]].append(row)
@@ -607,7 +609,7 @@ def _build_snapshot_index(
 def _latest_snapshot_rows(
     rows: list[dict[str, Any]], key_field: str
 ) -> dict[Any, dict[str, Any]]:
-    """从快照表中提取每个业务键的最新版本。"""
+    """从快照表中提取每个业务键的最新版本"""
     latest: dict[Any, dict[str, Any]] = {}
     for row in rows:
         current = latest.get(row[key_field])
@@ -623,7 +625,7 @@ def _flush_buffer(
     batch_size: int,
     inserted_total: int,
 ) -> tuple[int, int]:
-    """按批次写入并返回本次与累计写入量。"""
+    """按批次写入并返回本次与累计写入量"""
     inserted = bulk_insert(conn, table, buffer, batch_size=batch_size)
     if inserted <= 0:
         return 0, inserted_total
@@ -638,7 +640,7 @@ def _sample_same_shop_sku(
     shop_id: int,
     used_sku_ids: set[int],
 ) -> dict[str, Any] | None:
-    """尽量从同店铺中选择未重复的 SKU。"""
+    """尽量从同店铺中选择未重复的 SKU"""
     return pool.random_row(
         rng,
         predicate=lambda row: (
@@ -649,7 +651,7 @@ def _sample_same_shop_sku(
 
 
 def _pick_order_outcome(rng) -> str:
-    """按设定比例选择订单结果。"""
+    """按设定比例选择订单结果"""
     value = rng.random()
     if value < UNPAID_RATE:
         return "未支付关闭"
@@ -667,7 +669,7 @@ def _pick_order_outcome(rng) -> str:
 def _promotion_discount_total(
     promotion: dict[str, Any], order_amount: Decimal
 ) -> Decimal:
-    """计算订单级活动优惠总额。"""
+    """计算订单级活动优惠总额"""
     promotion_type = promotion["promotion_type"]
     threshold = _money(promotion.get("threshold_amount") or 0)
     discount_amount = _money(promotion.get("discount_amount") or 0)
@@ -697,7 +699,7 @@ def _coupon_discount_total(
     order_amount: Decimal,
     freight_amount: Decimal,
 ) -> Decimal:
-    """计算订单级优惠券总额。"""
+    """计算订单级优惠券总额"""
     coupon_type = coupon["coupon_type"]
     threshold = _money(coupon.get("threshold_amount") or 0)
     discount_amount = _money(coupon.get("discount_amount") or 0)
@@ -723,7 +725,7 @@ def _coupon_discount_total(
 
 
 def _allocate_amount(total_amount: Decimal, weights: list[Decimal]) -> list[Decimal]:
-    """按权重分摊金额，并处理最后一项补差。"""
+    """按权重分摊金额，并处理最后一项补差"""
     if total_amount <= MONEY_ZERO:
         return [MONEY_ZERO for _ in weights]
     weight_sum = sum(weights)
@@ -746,7 +748,7 @@ def _allocate_amount_to_indexes(
     detail_rows: list[dict[str, Any]],
     eligible_indexes: list[int],
 ) -> list[Decimal]:
-    """只在命中的明细行上做金额分摊。"""
+    """只在命中的明细行上做金额分摊"""
     allocations = [MONEY_ZERO for _ in detail_rows]
     if not eligible_indexes or total_amount <= MONEY_ZERO:
         return allocations
@@ -761,7 +763,7 @@ def _eligible_promotion_indexes(
     promotion: dict[str, Any],
     detail_rows: list[dict[str, Any]],
 ) -> list[int]:
-    """返回活动命中的明细下标。"""
+    """返回活动命中的明细下标"""
     scene = promotion["promotion_scene"]
     if scene == "平台":
         return list(range(len(detail_rows)))
@@ -786,7 +788,7 @@ def _eligible_coupon_indexes(
     coupon: dict[str, Any],
     detail_rows: list[dict[str, Any]],
 ) -> list[int]:
-    """返回优惠券命中的明细下标。"""
+    """返回优惠券命中的明细下标"""
     scope_type = coupon["coupon_scope_type"]
     if scope_type == "全平台":
         return list(range(len(detail_rows)))
@@ -812,7 +814,7 @@ def _choose_promotion(
     promotions: list[dict[str, Any]],
     detail_rows: list[dict[str, Any]],
 ) -> tuple[dict[str, Any] | None, Decimal, list[int]]:
-    """选择订单可命中的活动，并返回命中明细。"""
+    """选择订单可命中的活动，并返回命中明细"""
     if not promotions or rng.random() >= ORDER_ACTIVITY_RATE:
         return None, MONEY_ZERO, []
     candidates = []
@@ -837,7 +839,7 @@ def _choose_coupon(
     detail_rows: list[dict[str, Any]],
     freight_amount: Decimal,
 ) -> tuple[dict[str, Any] | None, Decimal, list[int]]:
-    """选择订单可命中的优惠券，并返回命中明细。"""
+    """选择订单可命中的优惠券，并返回命中明细"""
     if not coupons or rng.random() >= ORDER_COUPON_RATE:
         return None, MONEY_ZERO, []
     candidates = []
@@ -857,7 +859,7 @@ def _choose_coupon(
 
 
 def run(ctx: RunContext) -> None:
-    """生成并写入订单明细及其支付、发货、退款关联事实数据。"""
+    """生成并写入订单明细及其支付、发货、退款关联事实数据"""
     logger.info("Run batch4_trade_core")
     metadata = MetaData()
     metadata.reflect(
@@ -1533,7 +1535,7 @@ def run(ctx: RunContext) -> None:
                         flush_counts["inventory_change"] = flushed
                 if flush_counts:
                     logger.info(
-                        "batch4 flush etl_date={} order_detail={} activity={} coupon={} pay={} delivery={} refund={} refund_pay={} comment={} inventory={} totals=({},{},{},{},{},{},{},{},{})",
+                        "batch4 flush etl_date=%s order_detail=%s activity=%s coupon=%s pay=%s delivery=%s refund=%s refund_pay=%s comment=%s inventory=%s totals=(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         current_date.isoformat(),
                         flush_counts.get("order_detail", 0),
                         flush_counts.get("order_activity", 0),
@@ -1639,7 +1641,7 @@ def run(ctx: RunContext) -> None:
             final_flush_counts["inventory_change"] = flushed
         if final_flush_counts:
             logger.info(
-                "batch4 final flush order_detail={} activity={} coupon={} pay={} delivery={} refund={} refund_pay={} comment={} inventory={} totals=({},{},{},{},{},{},{},{},{})",
+                "batch4 final flush order_detail=%s activity=%s coupon=%s pay=%s delivery=%s refund=%s refund_pay=%s comment=%s inventory=%s totals=(%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 final_flush_counts.get("order_detail", 0),
                 final_flush_counts.get("order_activity", 0),
                 final_flush_counts.get("order_coupon", 0),
@@ -1661,7 +1663,7 @@ def run(ctx: RunContext) -> None:
             )
 
     logger.info(
-        "Generated batch4 trade facts: order_detail_rows={}, activity_rows={}, coupon_rows={}, pay_rows={}, delivery_rows={}, refund_rows={}, refund_pay_rows={}, comment_rows={}, inventory_rows={}",
+        "Generated batch4 trade facts: order_detail_rows=%s, activity_rows=%s, coupon_rows=%s, pay_rows=%s, delivery_rows=%s, refund_rows=%s, refund_pay_rows=%s, comment_rows=%s, inventory_rows=%s",
         detail_inserted,
         activity_inserted,
         coupon_inserted,

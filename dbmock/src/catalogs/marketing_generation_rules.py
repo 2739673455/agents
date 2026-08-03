@@ -1,4 +1,4 @@
-"""批次3营销活动和优惠券生成规则。"""
+"""批次3营销活动和优惠券生成规则"""
 
 from ..settings import COUPON_TARGET_COUNT as COUPON_TARGET_COUNT
 from ..settings import PROMOTION_TARGET_COUNT as PROMOTION_TARGET_COUNT

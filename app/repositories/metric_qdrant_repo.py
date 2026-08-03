@@ -72,6 +72,8 @@ class MetricQdrantRepo:
 
     async def delete_by_name(self, metric_name: str) -> None:
         """删除指标对应的全部向量"""
+        if not await self._client.collection_exists(self._collection_name):
+            return
         await self._client.delete(
             collection_name=self._collection_name,
             points_selector=Filter(

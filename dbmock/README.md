@@ -1,11 +1,11 @@
 # 数据生成
 ## 使用方式
-修改 [./core/init_db.py](./core/init_db.py#L195) 下方数据库连接配置  
+在项目根目录的 `.env` 中配置 `DB_SOURCE_PASSWORD`
 
 ```bash
 uv sync                         # 安装依赖
-uv run core/init_db.py          # 初始化数据库（创建表结构）
-uv run -m core.generators.main  # 生成数据
+uv run scripts/init_db.py       # 初始化数据库（创建表结构）
+uv run main.py                  # 生成数据
 ```
 
 ## 数据规模与生成顺序
@@ -39,7 +39,7 @@ uv run -m core.generators.main  # 生成数据
 | 5    | 搜索表           | 2*用户         | 搜索行为，默认按 2*用户 生成                      |
 
 ## 调整数据规模
-关键目标量集中写在 [./core/generators/settings.py](./core/generators/settings.py)：
+关键目标量集中写在 [./src/settings.py](./src/settings.py)：
 
 ```python
 USER_INITIAL_COUNT = 1_000
@@ -112,7 +112,7 @@ PAGE_VIEW_EVENTS_PER_USER = 10
 - 低频维表口径：店铺、类目、品牌、支付方式、物流公司、地理区域同样采用标准拉链存储；首版从生成开始日期生效，主数据变更时关闭旧版本并新增当前版本
 - 商品口径：SPU 和 SKU 维度采用标准拉链存储，首版从商品首次可见日期生效，后续仅在商品属性变更时关闭旧版本并新增当前版本
 - 营销口径：促销活动和优惠券维度采用每日快照存储，在活动有效期或优惠券可用周期内按天生成快照
-- 批次1静态维度：只读取 `core/generators/seeds/*.json` 冻结种子，不在运行时随机生成
+- 批次1静态维度：只读取 `src/seeds/*.json` 冻结种子，不在运行时随机生成
 - 每个订单必须有合法的用户、店铺、SKU
 - 评论必须关联已签收的订单，且评论时间在签收时间之后
 - 退款必须关联已支付的订单
@@ -144,4 +144,4 @@ PAGE_VIEW_EVENTS_PER_USER = 10
 - **店铺/类目/品牌**: 基于真实电商平台公开信息整理的冻结种子
 - **支付方式/物流公司**: 基于主流电商平台常见能力与行业公开名单整理
 - **地理区域**: 基于中国省/市/区真实行政区划名称整理
-- **种子维护**: 直接编辑 `core/generators/seeds/*.json`
+- **种子维护**: 直接编辑 `src/seeds/*.json`

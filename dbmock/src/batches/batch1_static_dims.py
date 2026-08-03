@@ -1,17 +1,19 @@
-"""从冻结种子文件加载店铺、类目、品牌、支付方式、物流公司、地理区域和用户维度数据。"""
+"""从冻结种子文件加载店铺、类目、品牌、支付方式、物流公司、地理区域和用户维度数据"""
 
 import json
+import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 from faker import Faker
-from loguru import logger
 from sqlalchemy import Date, DateTime, MetaData, Numeric, String, select
 
-from ..settings import RunContext, USER_FINAL_COUNT, USER_INITIAL_COUNT
+from ..settings import USER_FINAL_COUNT, USER_INITIAL_COUNT, RunContext
 from ..utils.loaders import bulk_insert
+
+logger = logging.getLogger(__name__)
 
 USER_TABLE_NAME = "dwd_dim_user_info_df"
 TABLE_TO_SEED_FILE = {
@@ -119,7 +121,7 @@ USER_STATUSES = ("正常", "正常", "正常", "正常", "禁用")
 
 
 def _load_seed(path: Path) -> list[dict[str, Any]]:
-    """将种子文件加载为 JSON 对象列表。"""
+    """将种子文件加载为 JSON 对象列表"""
     with path.open("r", encoding="utf-8") as f:
         payload = json.load(f)
     if not isinstance(payload, list):
@@ -130,7 +132,7 @@ def _load_seed(path: Path) -> list[dict[str, Any]]:
 
 
 def _validate_required_fields(table_name: str, rows: list[dict[str, Any]]) -> None:
-    """校验每条种子记录都包含目标表要求的必填字段。"""
+    """校验每条种子记录都包含目标表要求的必填字段"""
     required = REQUIRED_FIELDS[table_name]
     for idx, row in enumerate(rows, start=1):
         missing = [
@@ -143,7 +145,7 @@ def _validate_required_fields(table_name: str, rows: list[dict[str, Any]]) -> No
 
 
 def _validate_unique_key(table_name: str, rows: list[dict[str, Any]]) -> None:
-    """校验种子文件中的业务主键唯一。"""
+    """校验种子文件中的业务主键唯一"""
     key = UNIQUE_KEYS[table_name]
     seen: set[Any] = set()
     for row in rows:
@@ -154,7 +156,7 @@ def _validate_unique_key(table_name: str, rows: list[dict[str, Any]]) -> None:
 
 
 def _validate_lengths(table_name: str, rows: list[dict[str, Any]], table) -> None:
-    """校验字符串字段长度不超过数据库列定义。"""
+    """校验字符串字段长度不超过数据库列定义"""
     for idx, row in enumerate(rows, start=1):
         for col in table.columns:
             if col.name not in row:
@@ -172,7 +174,7 @@ def _validate_lengths(table_name: str, rows: list[dict[str, Any]], table) -> Non
 
 
 def _normalize_row(table, row: dict[str, Any]) -> dict[str, Any]:
-    """将 JSON 原始值转换为与表结构一致的 Python 类型。"""
+    """将 JSON 原始值转换为与表结构一致的 Python 类型"""
     normalized: dict[str, Any] = {}
     for col in table.columns:
         if col.name in {"id", "etl_date", "start_date", "end_date", "is_current"}:
@@ -193,7 +195,7 @@ def _normalize_row(table, row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _serialize_value(value: Any) -> Any:
-    """将类型化后的值转换为可稳定比较的值。"""
+    """将类型化后的值转换为可稳定比较的值"""
     if isinstance(value, Decimal):
         return format(value, "f")
     if isinstance(value, datetime):
@@ -204,7 +206,7 @@ def _serialize_value(value: Any) -> Any:
 
 
 def _comparable_rows(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
-    """规范化并排序记录，便于稳定比较两个版本的数据。"""
+    """规范化并排序记录，便于稳定比较两个版本的数据"""
     comparable = []
     for row in rows:
         comparable.append(
@@ -214,7 +216,7 @@ def _comparable_rows(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any
 
 
 def _load_current_dim_rows(conn, table) -> list[dict[str, Any]]:
-    """加载目标维度表中的当前版本业务字段。"""
+    """加载目标维度表中的当前版本业务字段"""
     stmt = select(table).where(table.c.is_current == 1)
     rows = []
     for row in conn.execute(stmt).mappings():
@@ -228,7 +230,7 @@ def _load_current_dim_rows(conn, table) -> list[dict[str, Any]]:
 
 
 def _existing_dim_keys(conn, table, key_field: str) -> set[tuple[Any, date]]:
-    """查询维表中已存在的业务键与开始日期组合。"""
+    """查询维表中已存在的业务键与开始日期组合"""
     stmt = select(getattr(table.c, key_field), table.c.start_date)
     return {(getattr(row, key_field), row.start_date) for row in conn.execute(stmt)}
 
@@ -240,7 +242,7 @@ def _close_current_dim_rows(
     keys: set[Any],
     new_start_date: date,
 ) -> None:
-    """关闭指定业务键的当前版本。"""
+    """关闭指定业务键的当前版本"""
     if not keys:
         return
     conn.execute(
@@ -258,7 +260,7 @@ def _build_seed_dim_rows(
     rows: list[dict[str, Any]],
     start_date: date,
 ) -> list[dict[str, Any]]:
-    """为低频维表补齐拉链字段。"""
+    """为低频维表补齐拉链字段"""
     return [
         row
         | {
@@ -271,7 +273,7 @@ def _build_seed_dim_rows(
 
 
 def _validate_categories(rows: list[dict[str, Any]]) -> set[str]:
-    """校验类目层级关系，并收集一级类目名称集合。"""
+    """校验类目层级关系，并收集一级类目名称集合"""
     category_ids = {row["category_id"] for row in rows}
     level1_names: set[str] = set()
     for row in rows:
@@ -292,7 +294,7 @@ def _validate_categories(rows: list[dict[str, Any]]) -> set[str]:
 
 
 def _validate_shops(rows: list[dict[str, Any]], level1_names: set[str]) -> None:
-    """校验店铺枚举值，并确保行业映射到一级类目。"""
+    """校验店铺枚举值，并确保行业映射到一级类目"""
     for row in rows:
         if row["shop_type"] not in SHOP_TYPES:
             raise ValueError(f"Invalid shop_type: {row['shop_type']}")
@@ -305,7 +307,7 @@ def _validate_shops(rows: list[dict[str, Any]], level1_names: set[str]) -> None:
 
 
 def _validate_payments(rows: list[dict[str, Any]]) -> None:
-    """校验支付方式种子的标记位和状态值。"""
+    """校验支付方式种子的标记位和状态值"""
     for row in rows:
         if row["is_online"] not in {0, 1}:
             raise ValueError(
@@ -320,7 +322,7 @@ def _validate_payments(rows: list[dict[str, Any]]) -> None:
 
 
 def _validate_logistics(rows: list[dict[str, Any]]) -> None:
-    """校验物流类型和轨迹支持标记。"""
+    """校验物流类型和轨迹支持标记"""
     for row in rows:
         if row["logistics_type"] not in LOGISTICS_TYPES:
             raise ValueError(
@@ -333,7 +335,7 @@ def _validate_logistics(rows: list[dict[str, Any]]) -> None:
 
 
 def _validate_regions(rows: list[dict[str, Any]]) -> None:
-    """校验行政区划层级关系和层级取值。"""
+    """校验行政区划层级关系和层级取值"""
     region_codes = {row["region_code"] for row in rows}
     for row in rows:
         if row["region_level"] not in {1, 2, 3, 4}:
@@ -346,7 +348,7 @@ def _validate_regions(rows: list[dict[str, Any]]) -> None:
 
 
 def _validate_seed_bundle(seed_rows: dict[str, list[dict[str, Any]]], tables) -> None:
-    """对店铺、类目、品牌、支付方式、物流公司和地理区域种子执行跨表与单表校验。"""
+    """对店铺、类目、品牌、支付方式、物流公司和地理区域种子执行跨表与单表校验"""
     level1_names = _validate_categories(seed_rows["dwd_dim_category_info_df"])
     _validate_shops(seed_rows["dwd_dim_shop_info_df"], level1_names)
     _validate_payments(seed_rows["dwd_dim_payment_type_df"])
@@ -360,17 +362,17 @@ def _validate_seed_bundle(seed_rows: dict[str, list[dict[str, Any]]], tables) ->
 
 
 def _mask_phone(prefix: str, suffix_seed: int) -> str:
-    """生成脱敏手机号。"""
+    """生成脱敏手机号"""
     return f"{prefix}****{suffix_seed:04d}"
 
 
 def _mask_email(user_name: str, domain: str) -> str:
-    """生成脱敏邮箱。"""
+    """生成脱敏邮箱"""
     return f"{user_name[:1]}***@{domain}"
 
 
 def _build_register_time(register_date: date, seed: int) -> datetime:
-    """根据注册日期生成稳定的注册时间。"""
+    """根据注册日期生成稳定的注册时间"""
     hour = 9 + seed % 10
     minute = (seed * 7) % 60
     second = (seed * 13) % 60
@@ -385,7 +387,7 @@ def _build_register_time(register_date: date, seed: int) -> datetime:
 
 
 def _build_user_names(total_count: int, seed: int) -> list[str]:
-    """使用 Faker 批量生成稳定的中文姓名。"""
+    """使用 Faker 批量生成稳定的中文姓名"""
     faker = Faker("zh_CN")
     faker.seed_instance(seed)
     return [faker.name() for _ in range(total_count)]
@@ -394,7 +396,7 @@ def _build_user_names(total_count: int, seed: int) -> list[str]:
 def _build_user_region_candidates(
     region_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """预先构造用户可用的行政区划候选集合。"""
+    """预先构造用户可用的行政区划候选集合"""
     level4_rows = [row for row in region_rows if row["region_level"] == 4]
     if level4_rows:
         return level4_rows
@@ -402,7 +404,7 @@ def _build_user_region_candidates(
 
 
 def _pick_region(region_candidates: list[dict[str, Any]], idx: int) -> dict[str, Any]:
-    """为用户选择一个稳定的行政区划。"""
+    """为用户选择一个稳定的行政区划"""
     return region_candidates[idx % len(region_candidates)]
 
 
@@ -413,7 +415,7 @@ def _build_user_base_row(
     idx: int,
     nick_name: str,
 ) -> dict[str, Any]:
-    """构造用户的首个版本记录。"""
+    """构造用户的首个版本记录"""
     gender = USER_GENDERS[idx % len(USER_GENDERS)]
     user_name = f"user_{user_id}"
     birthday = date(1970 + idx % 30, idx % 12 + 1, idx % 28 + 1)
@@ -456,7 +458,7 @@ def _build_user_base_row(
 
 
 def _build_user_change_row(base_row: dict[str, Any], idx: int) -> dict[str, Any]:
-    """基于首版记录构造用户变更版本。"""
+    """基于首版记录构造用户变更版本"""
     changed = dict(base_row)
     next_level_index = min(
         USER_LEVELS.index(base_row["user_level"]) + 1,
@@ -486,7 +488,7 @@ def _build_user_rows(
     region_rows: list[dict[str, Any]],
     seed: int,
 ) -> list[dict[str, Any]]:
-    """生成首日一万用户、最终三万用户且包含后续属性变更版本的用户维度数据。"""
+    """生成首日一万用户、最终三万用户且包含后续属性变更版本的用户维度数据"""
     if USER_FINAL_COUNT < USER_INITIAL_COUNT:
         raise ValueError("USER_FINAL_COUNT 不能小于 USER_INITIAL_COUNT")
 
@@ -555,19 +557,19 @@ def _build_user_rows(
 
 
 def _existing_user_keys(conn, table) -> set[tuple[int, date]]:
-    """查询用户维表中已存在的用户版本键。"""
+    """查询用户维表中已存在的用户版本键"""
     stmt = select(table.c.user_id, table.c.start_date)
     return {(row.user_id, row.start_date) for row in conn.execute(stmt)}
 
 
 def _has_user_rows(conn, table) -> bool:
-    """判断用户维表是否已经存在数据。"""
+    """判断用户维表是否已经存在数据"""
     stmt = select(table.c.id).limit(1)
     return conn.execute(stmt).first() is not None
 
 
 def run(ctx: RunContext) -> None:
-    """将用户维度和静态维度数据加载、校验后写入 MySQL。"""
+    """将用户维度和静态维度数据加载、校验后写入 MySQL"""
     logger.info("Run batch1_static_dims")
     metadata = MetaData()
     table_names = [USER_TABLE_NAME, *TABLE_TO_SEED_FILE.keys()]
@@ -585,7 +587,7 @@ def run(ctx: RunContext) -> None:
             _normalize_row(tables[table_name], row) for row in rows
         ]
         logger.info(
-            "batch1 loaded seed rows: table={} rows={} file={}",
+            "batch1 loaded seed rows: table=%s rows=%s file=%s",
             table_name,
             len(seed_rows[table_name]),
             seed_path.name,
@@ -621,7 +623,7 @@ def run(ctx: RunContext) -> None:
             batch_size=ctx.gen.batch_size,
         )
         logger.info(
-            "batch1 user rows generated={} inserted={}",
+            "batch1 user rows generated=%s inserted=%s",
             len(user_rows),
             user_inserted,
         )
@@ -661,7 +663,7 @@ def run(ctx: RunContext) -> None:
                     batch_size=ctx.gen.batch_size,
                 )
                 logger.info(
-                    "batch1 seed scd table={} seed_rows={} inserted_rows={} initial_version={}",
+                    "batch1 seed scd table=%s seed_rows=%s inserted_rows=%s initial_version=%s",
                     table_name,
                     len(seed_rows[table_name]),
                     inserted,
@@ -671,7 +673,7 @@ def run(ctx: RunContext) -> None:
 
             if not insert_keys and not close_keys:
                 logger.info(
-                    "batch1 seed scd table={} seed_rows={} unchanged_skipped=true",
+                    "batch1 seed scd table=%s seed_rows=%s unchanged_skipped=true",
                     table_name,
                     len(seed_rows[table_name]),
                 )
@@ -703,7 +705,7 @@ def run(ctx: RunContext) -> None:
                 conn, table, insert_rows, batch_size=ctx.gen.batch_size
             )
             logger.info(
-                "batch1 seed scd table={} seed_rows={} changed_rows={} removed_rows={} inserted_rows={} new_version={}",
+                "batch1 seed scd table=%s seed_rows=%s changed_rows=%s removed_rows=%s inserted_rows=%s new_version=%s",
                 table_name,
                 len(seed_rows[table_name]),
                 len(changed_keys) + len(new_keys),

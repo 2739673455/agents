@@ -1,4 +1,4 @@
-"""批次2商品生成通用规则。"""
+"""批次2商品生成通用规则"""
 
 from ..settings import SKU_PER_SPU, SPU_TARGET_COUNT
 

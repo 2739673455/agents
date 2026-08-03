@@ -1,10 +1,10 @@
-"""批次3：生成促销活动和优惠券维度数据。"""
+"""批次3：生成促销活动和优惠券维度数据"""
 
+import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from loguru import logger
 from sqlalchemy import MetaData, select
 
 from ..catalogs import (
@@ -27,21 +27,23 @@ from ..catalogs import (
 from ..settings import RunContext
 from ..utils.loaders import bulk_insert
 
+logger = logging.getLogger(__name__)
+
 
 def _has_rows(conn, table) -> bool:
-    """判断目标表是否已经存在数据。"""
+    """判断目标表是否已经存在数据"""
     stmt = select(table.c.id).limit(1)
     return conn.execute(stmt).first() is not None
 
 
 def _load_current_rows(conn, table) -> list[dict[str, Any]]:
-    """加载当前有效的维度数据。"""
+    """加载当前有效的维度数据"""
     stmt = select(table).where(table.c.is_current == 1)
     return [dict(row) for row in conn.execute(stmt).mappings()]
 
 
 def _iter_months(start_date: date, end_date: date):
-    """按月遍历日期区间。"""
+    """按月遍历日期区间"""
     current = date(start_date.year, start_date.month, 1)
     end_month = date(end_date.year, end_date.month, 1)
     while current <= end_month:
@@ -55,7 +57,7 @@ def _iter_months(start_date: date, end_date: date):
 
 
 def _iter_dates(start_date: date, end_date: date):
-    """按天遍历日期区间。"""
+    """按天遍历日期区间"""
     current = start_date
     while current <= end_date:
         yield current
@@ -63,14 +65,14 @@ def _iter_dates(start_date: date, end_date: date):
 
 
 def _month_campaign_label(month_start: date, idx: int) -> str:
-    """为月份选择营销主题名称。"""
+    """为月份选择营销主题名称"""
     return CAMPAIGN_SERIES[(month_start.month + idx) % len(CAMPAIGN_SERIES)]
 
 
 def _promotion_time_window(
     month_start: date, slot_idx: int
 ) -> tuple[datetime, datetime]:
-    """生成活动时间窗口。"""
+    """生成活动时间窗口"""
     day_options = [1, 8, 15, 22]
     duration_options = [3, 5, 7, 10]
     day = min(day_options[slot_idx % len(day_options)], 28)
@@ -83,7 +85,7 @@ def _promotion_time_window(
 def _special_campaign_windows(
     start_date: date, end_date: date
 ) -> list[tuple[str, datetime, datetime]]:
-    """生成大促档期时间窗口。"""
+    """生成大促档期时间窗口"""
     windows: list[tuple[str, datetime, datetime]] = []
     for year in range(start_date.year, end_date.year + 1):
         for name, month, start_day, end_day in [
@@ -108,7 +110,7 @@ def _build_promotion_rule(
     max_discount_amount: Decimal | None,
     idx: int,
 ) -> str:
-    """生成活动规则描述。"""
+    """生成活动规则描述"""
     template = PROMOTION_RULE_TEMPLATES[promotion_type]
     payload = {
         "threshold": int(threshold_amount or 0),
@@ -124,7 +126,7 @@ def _build_promotion_values(
     promotion_type: str,
     idx: int,
 ) -> tuple[Decimal | None, Decimal | None, Decimal | None, Decimal | None]:
-    """按活动类型生成门槛和优惠字段。"""
+    """按活动类型生成门槛和优惠字段"""
     if promotion_type == "满减":
         threshold = Decimal(
             COUPON_THRESHOLD_OPTIONS[idx % len(COUPON_THRESHOLD_OPTIONS)]
@@ -153,7 +155,7 @@ def _pick_sponsor(
     brands: list[dict[str, Any]],
     idx: int,
 ) -> tuple[int, int | None, str]:
-    """按活动场景选择发起方。"""
+    """按活动场景选择发起方"""
     if scene == "平台":
         return 1, None, "平台"
     if scene == "店铺":
@@ -169,7 +171,7 @@ def _build_promotion_rows(
     shops: list[dict[str, Any]],
     brands: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """生成促销活动维度数据。"""
+    """生成促销活动维度数据"""
     rows: list[dict[str, Any]] = []
     month_starts = list(_iter_months(start_date, end_date))
     slots_per_month = max(
@@ -267,7 +269,7 @@ def _pick_coupon_scope(
     categories: list[dict[str, Any]],
     idx: int,
 ) -> tuple[int | None, str]:
-    """按适用范围选择优惠券作用对象。"""
+    """按适用范围选择优惠券作用对象"""
     if scope_type == "全平台":
         return None, "平台"
     if scope_type == "店铺":
@@ -280,7 +282,7 @@ def _pick_coupon_scope(
 def _coupon_time_window(
     month_start: date, idx: int
 ) -> tuple[datetime, datetime, datetime, datetime]:
-    """生成发券和用券时间窗口。"""
+    """生成发券和用券时间窗口"""
     issue_day = min(2 + (idx % 4) * 7, 25)
     issue_start = datetime(month_start.year, month_start.month, issue_day, 9, 0, 0)
     issue_end = issue_start + timedelta(days=5 + idx % 5, hours=14)
@@ -293,7 +295,7 @@ def _build_coupon_values(
     coupon_type: str,
     idx: int,
 ) -> tuple[Decimal | None, Decimal | None, Decimal | None, Decimal | None]:
-    """按优惠券类型生成优惠字段。"""
+    """按优惠券类型生成优惠字段"""
     if coupon_type == "满减券":
         threshold = Decimal(
             COUPON_THRESHOLD_OPTIONS[idx % len(COUPON_THRESHOLD_OPTIONS)]
@@ -329,7 +331,7 @@ def _build_coupon_name(
     discount_amount: Decimal | None,
     discount_rate: Decimal | None,
 ) -> str:
-    """生成优惠券名称。"""
+    """生成优惠券名称"""
     template = COUPON_NAME_TEMPLATES[coupon_type]
     return template.format(
         campaign=campaign,
@@ -346,7 +348,7 @@ def _build_coupon_rows(
     shops: list[dict[str, Any]],
     categories: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """生成优惠券维度数据。"""
+    """生成优惠券维度数据"""
     rows: list[dict[str, Any]] = []
     month_starts = list(_iter_months(start_date, end_date))
     slots_per_month = max(
@@ -419,7 +421,7 @@ def _build_promotion_snapshot_rows(
     base_rows: list[dict[str, Any]],
     end_date: date,
 ) -> list[dict[str, Any]]:
-    """将活动基础数据展开为有效期内的每日快照。"""
+    """将活动基础数据展开为有效期内的每日快照"""
     snapshot_rows: list[dict[str, Any]] = []
     for row in base_rows:
         start_day = row["start_time"].date()
@@ -433,7 +435,7 @@ def _build_coupon_snapshot_rows(
     base_rows: list[dict[str, Any]],
     end_date: date,
 ) -> list[dict[str, Any]]:
-    """将优惠券基础数据展开为发券到用券结束期间的每日快照。"""
+    """将优惠券基础数据展开为发券到用券结束期间的每日快照"""
     snapshot_rows: list[dict[str, Any]] = []
     for row in base_rows:
         start_day = row["issue_start_time"].date()
@@ -444,7 +446,7 @@ def _build_coupon_snapshot_rows(
 
 
 def run(ctx: RunContext) -> None:
-    """生成并写入促销活动和优惠券维度数据。"""
+    """生成并写入促销活动和优惠券维度数据"""
     logger.info("Run batch3_marketing")
     metadata = MetaData()
     metadata.reflect(
@@ -478,7 +480,7 @@ def run(ctx: RunContext) -> None:
             row for row in category_rows if row["category_level"] == "三级"
         ]
         logger.info(
-            "batch3 loaded source rows: shop_rows={} brand_rows={} category_rows={} leaf_categories={}",
+            "batch3 loaded source rows: shop_rows=%s brand_rows=%s category_rows=%s leaf_categories=%s",
             len(shop_rows),
             len(brand_rows),
             len(category_rows),
@@ -518,7 +520,7 @@ def run(ctx: RunContext) -> None:
         )
 
     logger.info(
-        "Generated batch3 marketing dimensions: promotion_base_rows={}, coupon_base_rows={}, promotion_snapshot_rows={}, coupon_snapshot_rows={}",
+        "Generated batch3 marketing dimensions: promotion_base_rows=%s, coupon_base_rows=%s, promotion_snapshot_rows=%s, coupon_snapshot_rows=%s",
         len(promotion_base_rows),
         len(coupon_base_rows),
         inserted_promotion_rows,

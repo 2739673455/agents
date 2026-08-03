@@ -1,5 +1,7 @@
 """元数据访问"""
 
+from datetime import UTC, datetime
+
 from sqlalchemy import delete, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
@@ -124,14 +126,25 @@ class MetaMySQLRepo:
         )
 
     @staticmethod
-    def mark_table_indexed(table_info: TableInfo) -> None:
-        """记录整表字段向量同步版本"""
-        table_info.index_version = table_info.meta_version
-
-    @staticmethod
     def mark_column_indexed(column_info: ColumnInfo) -> None:
         """记录字段向量同步版本"""
         column_info.index_version = column_info.meta_version
+
+    @staticmethod
+    def mark_column_values_syncing(column_info: ColumnInfo) -> None:
+        """记录字段值索引正在同步"""
+        column_info.value_index_sync_status = "syncing"
+
+    @staticmethod
+    def mark_column_values_succeeded(column_info: ColumnInfo) -> None:
+        """记录字段值索引同步成功"""
+        column_info.value_index_synced_at = datetime.now(UTC)
+        column_info.value_index_sync_status = "succeeded"
+
+    @staticmethod
+    def mark_column_values_failed(column_info: ColumnInfo) -> None:
+        """记录字段值索引同步失败"""
+        column_info.value_index_sync_status = "failed"
 
     @staticmethod
     def mark_metric_indexed(metric_info: MetricInfo) -> None:
@@ -243,13 +256,6 @@ class MetaMySQLRepo:
             detail=f"Metric info not found: {metric_name}"
         )
 
-    async def get_columns_by_table_name(self, t_name: str) -> list[ColumnInfo]:
-        """获取表的全部字段信息"""
-        result = await self._session.scalars(
-            select(ColumnInfo).where(ColumnInfo.t_name == t_name)
-        )
-        return list(result.all())
-
     async def get_key_columns_by_table_name(self, t_name: str) -> list[ColumnInfo]:
         """获取表的主键和外键字段"""
         table_info = await self.get_table_info(t_name)
@@ -292,9 +298,20 @@ class MetaMySQLRepo:
         changed: bool,
     ) -> None:
         """设置元数据版本并保留已有索引版本"""
-        if existing is None:
-            item.meta_version = 1
-            item.index_version = 0
+        item.meta_version = (
+            1 if existing is None else existing.meta_version + int(changed)
+        )
+        if isinstance(item, TableInfo):
             return
-        item.meta_version = existing.meta_version + int(changed)
-        item.index_version = existing.index_version
+        if existing is None:
+            item.index_version = 0
+            if isinstance(item, ColumnInfo):
+                item.value_index_synced_at = None
+                item.value_index_sync_status = None
+        elif isinstance(existing, (ColumnInfo, MetricInfo)):
+            item.index_version = existing.index_version
+            if isinstance(item, ColumnInfo) and isinstance(existing, ColumnInfo):
+                item.value_index_synced_at = existing.value_index_synced_at
+                item.value_index_sync_status = existing.value_index_sync_status
+        else:
+            raise TypeError("Metadata entity type mismatch")

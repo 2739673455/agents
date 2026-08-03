@@ -1,4 +1,4 @@
-"""数据库写入工具。"""
+"""数据库写入工具"""
 
 from collections.abc import Sequence
 from typing import Any
@@ -13,7 +13,7 @@ def bulk_insert(
     rows: Sequence[dict[str, Any]],
     batch_size: int,
 ) -> int:
-    """按批次写入数据，避免一次性提交过大批量。"""
+    """按批次写入数据，避免一次性提交过大批量"""
     if not rows:
         return 0
     if batch_size <= 0:

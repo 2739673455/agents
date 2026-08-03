@@ -1,20 +1,20 @@
-"""批次5：生成互动、流量事实数据。"""
+"""批次5：生成互动、流量事实数据"""
 
+import logging
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 
-from loguru import logger
 from sqlalchemy import MetaData, select
 
 from ..catalogs import (
-    APP_VERSIONS,
     APP_CLIENT_TYPES,
+    APP_VERSIONS,
     CART_EVENTS_PER_USER,
     CART_SOURCES,
-    CHANNEL_CODES,
     CHANNEL_CLIENT_OPTIONS,
+    CHANNEL_CODES,
     CLIENT_OS_OPTIONS,
     FAVOR_EVENTS_PER_USER,
     PAGE_DEFINITIONS,
@@ -26,16 +26,18 @@ from ..catalogs import (
 from ..settings import RunContext
 from ..utils.loaders import bulk_insert
 
+logger = logging.getLogger(__name__)
+
 MONEY_ZERO = Decimal("0.00")
 
 
 def _has_rows(conn, table) -> bool:
-    """判断目标表是否已有数据。"""
+    """判断目标表是否已有数据"""
     return conn.execute(select(table.c.id).limit(1)).first() is not None
 
 
 def _load_current_rows(conn, table) -> list[dict[str, Any]]:
-    """加载拉链表中的当前有效版本。"""
+    """加载拉链表中的当前有效版本"""
     return [
         dict(row)
         for row in conn.execute(select(table).where(table.c.is_current == 1)).mappings()
@@ -43,32 +45,32 @@ def _load_current_rows(conn, table) -> list[dict[str, Any]]:
 
 
 def _load_all_rows(conn, table) -> list[dict[str, Any]]:
-    """加载整张表数据。"""
+    """加载整张表数据"""
     return [dict(row) for row in conn.execute(select(table)).mappings()]
 
 
 def _clamp_text(text: str, limit: int) -> str:
-    """截断文本，避免超过字段长度。"""
+    """截断文本，避免超过字段长度"""
     return text[:limit]
 
 
 def _device_id(user_id: int, seq: int) -> str:
-    """生成稳定设备标识。"""
+    """生成稳定设备标识"""
     return f"DV{user_id}{seq:06d}"
 
 
 def _session_id(user_id: int, seq: int) -> str:
-    """生成稳定会话标识。"""
+    """生成稳定会话标识"""
     return f"SS{user_id}{seq:06d}"
 
 
 def _masked_ip(user_id: int) -> str:
-    """生成脱敏访问IP。"""
+    """生成脱敏访问IP"""
     return f"10.{user_id % 255}.{(user_id // 3) % 255}.***"
 
 
 def _pick_client(ctx: RunContext, user_id: int, seq: int) -> tuple[str, str]:
-    """选择客户端和渠道。"""
+    """选择客户端和渠道"""
     channel_code = CHANNEL_CODES[(user_id * 3 + seq) % len(CHANNEL_CODES)]
     client_candidates = CHANNEL_CLIENT_OPTIONS[channel_code]
     client_type = client_candidates[(user_id + seq) % len(client_candidates)]
@@ -76,13 +78,13 @@ def _pick_client(ctx: RunContext, user_id: int, seq: int) -> tuple[str, str]:
 
 
 def _pick_os_type(client_type: str, seq: int) -> str:
-    """根据客户端类型选择兼容的操作系统。"""
+    """根据客户端类型选择兼容的操作系统"""
     os_candidates = CLIENT_OS_OPTIONS[client_type]
     return os_candidates[seq % len(os_candidates)]
 
 
 def _pick_app_version(client_type: str, seq: int) -> str | None:
-    """仅为 APP 客户端填充版本号。"""
+    """仅为 APP 客户端填充版本号"""
     if client_type not in APP_CLIENT_TYPES:
         return None
     return APP_VERSIONS[seq % len(APP_VERSIONS)]
@@ -93,7 +95,7 @@ def _random_event_time_for_date(
     event_date: date,
     seq: int,
 ) -> datetime:
-    """为指定日期生成随机事件时间。"""
+    """为指定日期生成随机事件时间"""
     event_hour = (seq * 7 + rng.randrange(24)) % 24
     return datetime.combine(
         event_date,
@@ -107,7 +109,7 @@ def _allocate_daily_counts(
     end_date: date,
     rng,
 ) -> list[tuple[date, int]]:
-    """将事件量随机分配到日期区间内的每天。"""
+    """将事件量随机分配到日期区间内的每天"""
     total_days = (end_date - start_date).days
     counts: dict[date, int] = defaultdict(int)
     for _ in range(total_events):
@@ -123,7 +125,7 @@ def _allocate_daily_counts(
 
 
 class ActiveVersionPool:
-    """按日期维护可用版本集合，并支持随机抽样。"""
+    """按日期维护可用版本集合，并支持随机抽样"""
 
     def __init__(self, rows: list[dict[str, Any]], key_field: str) -> None:
         self._key_field = key_field
@@ -137,7 +139,7 @@ class ActiveVersionPool:
         self._end_idx = 0
 
     def advance(self, current_date: date) -> None:
-        """推进到指定日期，更新可用版本集合。"""
+        """推进到指定日期，更新可用版本集合"""
         while self._start_idx < len(self._start_rows):
             row = self._start_rows[self._start_idx]
             if row["start_date"] > current_date:
@@ -156,7 +158,7 @@ class ActiveVersionPool:
             self._end_idx += 1
 
     def random_row(self, rng):
-        """从当前有效版本中随机选择一条记录。"""
+        """从当前有效版本中随机选择一条记录"""
         if not self._active_keys:
             return None
         for _ in range(24):
@@ -178,7 +180,7 @@ def _flush_buffer(
     batch_size: int,
     inserted_total: int,
 ) -> tuple[int, int]:
-    """按批次写入并返回本次与累计写入量。"""
+    """按批次写入并返回本次与累计写入量"""
     inserted = bulk_insert(conn, table, buffer, batch_size)
     if inserted <= 0:
         return 0, inserted_total
@@ -188,7 +190,7 @@ def _flush_buffer(
 
 
 def run(ctx: RunContext) -> None:
-    """生成批次5的互动、流量事实。"""
+    """生成批次5的互动、流量事实"""
     logger.info("Run batch5_behavior")
     metadata = MetaData()
     metadata.reflect(
@@ -233,7 +235,7 @@ def run(ctx: RunContext) -> None:
         if not user_rows or not sku_rows:
             raise ValueError("批次5缺少用户或 SKU 维度数据")
         logger.info(
-            "batch5 loaded source rows: user_rows={}, sku_rows={}, category_rows={}",
+            "batch5 loaded source rows: user_rows=%s, sku_rows=%s, category_rows=%s",
             len(user_rows),
             len(sku_rows),
             len(category_rows),
@@ -251,7 +253,7 @@ def run(ctx: RunContext) -> None:
         page_target = int(current_user_count * PAGE_VIEW_EVENTS_PER_USER)
         search_target = int(current_user_count * SEARCH_EVENTS_PER_USER)
         logger.info(
-            "batch5 targets: users={} skus={} cart_target={} favor_target={} page_target={} search_target={}",
+            "batch5 targets: users=%s skus=%s cart_target=%s favor_target=%s page_target=%s search_target=%s",
             current_user_count,
             current_sku_count,
             cart_target,
@@ -322,7 +324,7 @@ def run(ctx: RunContext) -> None:
                 }
                 flush_counts[metric_key] = flushed
                 logger.info(
-                    "batch5 flush reason={} cart={} favor={} page={} search={} totals=({},{},{},{})",
+                    "batch5 flush reason=%s cart=%s favor=%s page=%s search=%s totals=(%s,%s,%s,%s)",
                     reason,
                     flush_counts["cart"],
                     flush_counts["favor"],
@@ -366,7 +368,7 @@ def run(ctx: RunContext) -> None:
 
             if flush_counts:
                 logger.info(
-                    "batch5 final flush cart={} favor={} page={} search={} totals=({},{},{},{})",
+                    "batch5 final flush cart=%s favor=%s page=%s search=%s totals=(%s,%s,%s,%s)",
                     flush_counts.get("cart", 0),
                     flush_counts.get("favor", 0),
                     flush_counts.get("page", 0),
@@ -584,7 +586,7 @@ def run(ctx: RunContext) -> None:
         flush_behavior_buffers("final")
 
     logger.info(
-        "Generated batch5 behavior facts: cart_rows={}, favor_rows={}, page_rows={}, search_rows={}",
+        "Generated batch5 behavior facts: cart_rows=%s, favor_rows=%s, page_rows=%s, search_rows=%s",
         cart_inserted,
         favor_inserted,
         page_inserted,

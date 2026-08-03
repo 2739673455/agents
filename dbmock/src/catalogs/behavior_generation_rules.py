@@ -1,4 +1,4 @@
-"""批次5行为、流量、评价与库存生成规则。"""
+"""批次5行为、流量、评价与库存生成规则"""
 
 from ..settings import (
     CART_EVENTS_PER_USER as CART_EVENTS_PER_USER,

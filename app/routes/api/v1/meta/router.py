@@ -8,6 +8,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Path,
     Query,
     Response,
     UploadFile,
@@ -23,13 +24,11 @@ from app.clients.mysql_client_manager import (
     source_mysql_client_manager,
 )
 from app.clients.qdrant_client_manager import qdrant_client_manager
-from app.conf.meta_config import MetaConfig
+from app.conf.meta_config import MetaConfig, MetadataName
 from app.entities.meta import (
-    ColumnInfo,
     ColumnKey,
     ColumnReference,
     MetricInfo,
-    TableInfo,
 )
 from app.errors import meta_error
 from app.repositories.column_qdrant_repo import ColumnQdrantRepo
@@ -47,12 +46,37 @@ from app.services.meta_import_service import (
 from app.services.meta_service import MetaService
 
 router = APIRouter(tags=["meta"])
+MetadataPath = Annotated[MetadataName, Path()]
+
+
+def _build_index_service(
+    meta_repo: MetaMySQLRepo,
+    source_repo: SourceMySQLRepo,
+) -> IndexService:
+    """创建索引同步服务"""
+    return IndexService(
+        meta_repo=meta_repo,
+        source_repo=source_repo,
+        column_repo=ColumnQdrantRepo(qdrant_client_manager.get_client()),
+        embedding_client=embedding_client_manager.get_client(),
+        value_repo=ValueESRepo(es_client_manager.get_client()),
+        metric_repo=MetricQdrantRepo(qdrant_client_manager.get_client()),
+    )
 
 
 async def get_meta_service() -> AsyncGenerator[MetaService]:
     """创建请求级元数据管理服务"""
-    async with meta_mysql_client_manager.session() as meta_session:
-        yield MetaService(meta_repo=MetaMySQLRepo(meta_session))
+    async with (
+        meta_mysql_client_manager.session() as meta_session,
+        source_mysql_client_manager.session() as source_session,
+    ):
+        meta_repo = MetaMySQLRepo(meta_session)
+        source_repo = SourceMySQLRepo(source_session)
+        yield MetaService(
+            meta_repo=meta_repo,
+            source_repo=source_repo,
+            index_service=_build_index_service(meta_repo, source_repo),
+        )
 
 
 async def get_index_service() -> AsyncGenerator[IndexService]:
@@ -61,13 +85,9 @@ async def get_index_service() -> AsyncGenerator[IndexService]:
         meta_mysql_client_manager.session() as meta_session,
         source_mysql_client_manager.session() as source_session,
     ):
-        yield IndexService(
-            meta_repo=MetaMySQLRepo(meta_session),
-            source_repo=SourceMySQLRepo(source_session),
-            column_repo=ColumnQdrantRepo(qdrant_client_manager.get_client()),
-            embedding_client=embedding_client_manager.get_client(),
-            value_repo=ValueESRepo(es_client_manager.get_client()),
-            metric_repo=MetricQdrantRepo(qdrant_client_manager.get_client()),
+        yield _build_index_service(
+            MetaMySQLRepo(meta_session),
+            SourceMySQLRepo(source_session),
         )
 
 
@@ -77,9 +97,12 @@ async def get_meta_import_service() -> AsyncGenerator[MetaImportService]:
         meta_mysql_client_manager.session() as meta_session,
         source_mysql_client_manager.session() as source_session,
     ):
+        meta_repo = MetaMySQLRepo(meta_session)
+        source_repo = SourceMySQLRepo(source_session)
         yield MetaImportService(
-            meta_repo=MetaMySQLRepo(meta_session),
-            source_repo=SourceMySQLRepo(source_session),
+            meta_repo=meta_repo,
+            source_repo=source_repo,
+            index_service=_build_index_service(meta_repo, source_repo),
         )
 
 
@@ -180,20 +203,54 @@ async def export_metadata(service: MetaServiceDep) -> Response:
     )
 
 
+@router.get("/tables", response_model=list[schemas.TableInfoResponse])
+async def list_table_infos(
+    service: MetaServiceDep,
+) -> list[schemas.TableInfoResponse]:
+    """查询全部表元数据"""
+    return [
+        schemas.TableInfoResponse.model_validate(table_info)
+        for table_info in await service.list_table_infos()
+    ]
+
+
+@router.get(
+    "/tables/{t_name}/columns",
+    response_model=list[schemas.ColumnInfoResponse],
+)
+async def list_column_infos(
+    t_name: MetadataPath,
+    service: MetaServiceDep,
+) -> list[schemas.ColumnInfoResponse]:
+    """查询表下全部字段元数据"""
+    return [
+        schemas.ColumnInfoResponse.model_validate(column_info)
+        for column_info in await service.list_column_infos(t_name)
+    ]
+
+
+@router.get("/metrics", response_model=list[schemas.MetricInfoResponse])
+async def list_metric_infos(
+    service: MetaServiceDep,
+) -> list[schemas.MetricInfoResponse]:
+    """查询全部指标元数据"""
+    return [
+        schemas.MetricInfoResponse.model_validate(metric_info)
+        for metric_info in await service.list_metric_infos()
+    ]
+
+
 @router.put("/tables/{t_name}", status_code=status.HTTP_204_NO_CONTENT)
 async def upsert_table_info(
-    t_name: str,
+    t_name: MetadataPath,
     body: schemas.TableInfoRequest,
     service: MetaServiceDep,
 ) -> None:
     """新增或更新表元数据"""
     await service.upsert_table_info(
-        TableInfo(
-            name=t_name,
-            role=body.role,
-            primary_key_columns=body.primary_key_columns,
-            description=body.description,
-        )
+        t_name,
+        body.role,
+        body.description,
     )
 
 
@@ -202,30 +259,26 @@ async def upsert_table_info(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def upsert_column_info(
-    t_name: str,
-    c_name: str,
+    t_name: MetadataPath,
+    c_name: MetadataPath,
     body: schemas.ColumnInfoRequest,
     service: MetaServiceDep,
 ) -> None:
     """新增或更新字段元数据"""
     await service.upsert_column_info(
-        ColumnInfo(
-            t_name=t_name,
-            name=c_name,
-            type=body.type,
-            examples=body.examples,
-            description=body.description,
-            alias=body.alias,
-            index_values=body.index_values,
-            reference_t_name=body.reference_t_name,
-            reference_c_name=body.reference_c_name,
-        )
+        t_name=t_name,
+        c_name=c_name,
+        description=body.description,
+        alias=body.alias,
+        index_values=body.index_values,
+        reference_t_name=body.reference_t_name,
+        reference_c_name=body.reference_c_name,
     )
 
 
 @router.put("/metrics/{metric_name}", status_code=status.HTTP_204_NO_CONTENT)
 async def upsert_metric_info(
-    metric_name: str,
+    metric_name: MetadataPath,
     body: schemas.MetricInfoRequest,
     service: MetaServiceDep,
 ) -> None:
@@ -244,6 +297,34 @@ async def upsert_metric_info(
             alias=body.alias,
         )
     )
+
+
+@router.delete("/tables/{t_name}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_table_info(t_name: MetadataPath, service: MetaServiceDep) -> None:
+    """删除表及其字段元数据和索引"""
+    await service.delete_table_info(t_name)
+
+
+@router.delete(
+    "/tables/{t_name}/columns/{c_name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_column_info(
+    t_name: MetadataPath,
+    c_name: MetadataPath,
+    service: MetaServiceDep,
+) -> None:
+    """删除字段元数据和索引"""
+    await service.delete_column_info(t_name, c_name)
+
+
+@router.delete("/metrics/{metric_name}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_metric_info(
+    metric_name: MetadataPath,
+    service: MetaServiceDep,
+) -> None:
+    """删除指标元数据和索引"""
+    await service.delete_metric_info(metric_name)
 
 
 @router.post("/columns/sync", response_model=schemas.BatchIndexSyncResponse)
@@ -304,13 +385,3 @@ async def sync_metric_indexes(
             for metric_name, indexed_count in results.items()
         ]
     )
-
-
-@router.post("/tables/{t_name}/sync", response_model=schemas.TableSyncResponse)
-async def sync_table(
-    t_name: str,
-    service: IndexServiceDep,
-) -> schemas.TableSyncResponse:
-    """同步表下全部字段向量和字段值索引"""
-    result = await service.sync_table(t_name)
-    return schemas.TableSyncResponse(t_name=t_name, **result)

@@ -1,4 +1,4 @@
-"""批次4订单生成规则。"""
+"""批次4订单生成规则"""
 
 from ..settings import ORDER_DETAIL_TARGET_COUNT as ORDER_DETAIL_TARGET_COUNT
 

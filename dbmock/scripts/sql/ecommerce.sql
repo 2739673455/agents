@@ -1,12 +1,12 @@
 -- 电商数仓（明细层）建表脚本
 -- 说明：
--- 1) 仅包含明细层相关维度表和事实表，表名采用 dwd_dim_* / dwd_fact_* 规范。
--- 2) 所有金额单位为元，时间为 DATETIME。
--- 3) 主键采用自增 surrogate key，业务主键通过唯一索引约束。
+-- 1) 仅包含明细层相关维度表和事实表，表名采用 dwd_dim_* / dwd_fact_* 规范
+-- 2) 所有金额单位为元，时间为 DATETIME
+-- 3) 主键采用自增 surrogate key，业务主键通过唯一索引约束
 SET GLOBAL time_zone = '+08:00';
 SET SESSION time_zone = '+08:00';
-CREATE DATABASE IF NOT EXISTS `warehouse` DEFAULT CHARACTER SET utf8mb4;
-USE `warehouse`;
+CREATE DATABASE IF NOT EXISTS `ecommerce` DEFAULT CHARACTER SET utf8mb4;
+USE `ecommerce`;
 
 SET NAMES utf8mb4;
 

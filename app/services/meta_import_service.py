@@ -1,22 +1,23 @@
 """元数据批量导入服务"""
 
 from dataclasses import dataclass
-from datetime import date, datetime
-from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
 from app.conf.meta_config import MetaConfig
 from app.entities.meta import (
+    COLUMN_EXAMPLE_LIMIT,
     ColumnInfo,
     ColumnKey,
     ColumnReference,
     MetricInfo,
     TableInfo,
+    serialize_column_examples,
 )
 from app.errors import meta_error
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
 from app.repositories.source_mysql_repo import SourceMySQLRepo
+from app.services.index_service import IndexService
 
 
 class ImportMode(StrEnum):
@@ -49,10 +50,16 @@ class MetaImportResult:
 class MetaImportService:
     """从配置批量导入元数据"""
 
-    def __init__(self, meta_repo: MetaMySQLRepo, source_repo: SourceMySQLRepo) -> None:
+    def __init__(
+        self,
+        meta_repo: MetaMySQLRepo,
+        source_repo: SourceMySQLRepo,
+        index_service: IndexService,
+    ) -> None:
         """初始化元数据批量导入服务"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
+        self._index_service = index_service
 
     async def import_metadata(
         self,
@@ -80,48 +87,53 @@ class MetaImportService:
                 for metric_info in await self._meta_repo.list_metric_infos()
             }
 
-            try:
-                table_infos, column_infos, metric_infos = await self._build_metadata(
-                    meta_config
-                )
-            except ValueError as exc:
-                raise meta_error.InvalidMetadataError(detail=str(exc)) from exc
-            imported_tables = self._index_tables(table_infos)
-            imported_columns = self._index_columns(column_infos)
-            imported_metrics = self._index_metrics(metric_infos)
-
-            available_columns = set(imported_columns)
-            if mode is ImportMode.MERGE:
-                available_columns.update(existing_columns)
-            self._validate_column_references(column_infos, available_columns)
-            self._validate_metric_columns(metric_infos, available_columns)
-
-            table_changes = self._get_changes(
-                self._table_snapshots(existing_tables),
-                self._table_snapshots(imported_tables),
-                mode,
+        try:
+            table_infos, column_infos, metric_infos = await self._build_metadata(
+                meta_config
             )
-            column_changes = self._get_changes(
-                self._column_snapshots(existing_columns),
-                self._column_snapshots(imported_columns),
-                mode,
-            )
-            metric_changes = self._get_changes(
-                self._metric_snapshots(existing_metrics),
-                self._metric_snapshots(imported_metrics),
-                mode,
-            )
+        except ValueError as exc:
+            raise meta_error.InvalidMetadataError(detail=str(exc)) from exc
+        imported_tables = self._index_tables(table_infos)
+        imported_columns = self._index_columns(column_infos)
+        imported_metrics = self._index_metrics(metric_infos)
 
-            result = MetaImportResult(
-                mode=mode,
-                dry_run=dry_run,
-                tables=table_changes,
-                columns=column_changes,
-                metrics=metric_changes,
-            )
-            if dry_run:
-                return result
+        available_columns = set(imported_columns)
+        if mode is ImportMode.MERGE:
+            available_columns.update(existing_columns)
+        self._validate_column_references(column_infos, available_columns)
+        self._validate_metric_columns(metric_infos, available_columns)
 
+        table_changes = self._get_changes(
+            self._table_snapshots(existing_tables),
+            self._table_snapshots(imported_tables),
+            mode,
+        )
+        column_changes = self._get_changes(
+            self._column_snapshots(existing_columns),
+            self._column_snapshots(imported_columns),
+            mode,
+        )
+        metric_changes = self._get_changes(
+            self._metric_snapshots(existing_metrics),
+            self._metric_snapshots(imported_metrics),
+            mode,
+        )
+
+        result = MetaImportResult(
+            mode=mode,
+            dry_run=dry_run,
+            tables=table_changes,
+            columns=column_changes,
+            metrics=metric_changes,
+        )
+        if dry_run:
+            return result
+
+        if mode is ImportMode.REPLACE:
+            await self._index_service.delete_metric_indexes(metric_changes.deleted)
+            await self._index_service.delete_column_indexes(column_changes.deleted)
+
+        async with self._meta_repo.transaction():
             if mode is ImportMode.REPLACE:
                 await self._meta_repo.delete_metric_infos(metric_changes.deleted)
                 await self._meta_repo.delete_column_infos(column_changes.deleted)
@@ -146,7 +158,7 @@ class MetaImportService:
                     force_version_increment=metric_name in metric_changes.updated,
                 )
 
-            return result
+        return result
 
     async def _build_metadata(
         self,
@@ -186,14 +198,14 @@ class MetaImportService:
                 column_values = await self._source_repo.get_column_values(
                     table_config.name,
                     column_config.name,
-                    10,
+                    COLUMN_EXAMPLE_LIMIT,
                 )
                 column_infos.append(
                     ColumnInfo(
                         t_name=table_config.name,
                         name=column_config.name,
                         type=column_types[column_config.name],
-                        examples=self._serialize_examples(column_values),
+                        examples=serialize_column_examples(column_values),
                         description=column_config.description,
                         alias=list(dict.fromkeys(column_config.alias)),
                         index_values=column_config.index_values,
@@ -340,8 +352,7 @@ class MetaImportService:
     ) -> dict[str, tuple[Any, ...]]:
         """生成表元数据比较快照"""
         return {
-            t_name: item.metadata_snapshot()
-            for t_name, item in table_infos.items()
+            t_name: item.metadata_snapshot() for t_name, item in table_infos.items()
         }
 
     @staticmethod
@@ -363,16 +374,3 @@ class MetaImportService:
             metric_name: item.metadata_snapshot()
             for metric_name, item in metric_infos.items()
         }
-
-    @staticmethod
-    def _serialize_examples(examples: list[Any]) -> list[Any]:
-        """将字段示例转换为可序列化值"""
-        serialized: list[Any] = []
-        for value in examples:
-            if isinstance(value, (datetime, date)):
-                serialized.append(value.isoformat())
-            elif isinstance(value, Decimal):
-                serialized.append(float(value))
-            else:
-                serialized.append(value)
-        return sorted(serialized, key=lambda value: str(value))

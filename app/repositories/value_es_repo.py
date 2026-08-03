@@ -37,7 +37,7 @@ class ValueESRepo:
                 index=self._index_name, mappings=self._index_mappings
             )
 
-    async def index(self, value_infos: list[ValueInfo], batch_size: int = 20) -> None:
+    async def index(self, value_infos: list[ValueInfo], batch_size: int = 500) -> None:
         """批量写入字段取值索引"""
         for i in range(0, len(value_infos), batch_size):
             batch = value_infos[i : i + batch_size]
@@ -60,10 +60,18 @@ class ValueESRepo:
                     }
                 )
                 operations.append(asdict(value_info))
-            await self._client.bulk(operations=operations, refresh="wait_for")
+            result = await self._client.bulk(operations=operations, refresh=False)
+            if result.get("errors"):
+                raise RuntimeError("Elasticsearch bulk indexing contains failed items")
+
+    async def refresh(self) -> None:
+        """刷新字段取值索引"""
+        await self._client.indices.refresh(index=self._index_name)
 
     async def delete_by_column(self, t_name: str, c_name: str) -> None:
         """删除字段对应的全部取值"""
+        if not await self._client.indices.exists(index=self._index_name):
+            return
         await self._client.delete_by_query(
             index=self._index_name,
             query={

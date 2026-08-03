@@ -1,30 +1,39 @@
 """元数据管理接口模型"""
 
-from typing import Any
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.conf.meta_config import (
+    MetadataAlias,
+    MetadataDescription,
+    MetadataName,
+    TableRole,
+)
 
-class TableInfoRequest(BaseModel):
-    """表元数据写入请求"""
 
-    role: str
-    primary_key_columns: list[str] = Field(default_factory=list)
-    description: str
-
-
-class ColumnInfoRequest(BaseModel):
-    """字段元数据写入请求"""
+class MetaRequestModel(BaseModel):
+    """元数据请求模型基类"""
 
     model_config = ConfigDict(extra="forbid")
 
-    type: str
-    examples: list[Any] = Field(default_factory=list)
-    description: str
-    alias: list[str] = Field(default_factory=list)
+
+class TableInfoRequest(MetaRequestModel):
+    """表元数据写入请求"""
+
+    role: TableRole
+    description: MetadataDescription
+
+
+class ColumnInfoRequest(MetaRequestModel):
+    """字段元数据写入请求"""
+
+    description: MetadataDescription
+    alias: list[MetadataAlias] = Field(default_factory=list, max_length=100)
     index_values: bool
-    reference_t_name: str | None = None
-    reference_c_name: str | None = None
+    reference_t_name: MetadataName | None = None
+    reference_c_name: MetadataName | None = None
 
     @model_validator(mode="after")
     def validate_reference(self) -> "ColumnInfoRequest":
@@ -36,31 +45,79 @@ class ColumnInfoRequest(BaseModel):
         return self
 
 
-class ColumnReference(BaseModel):
+class ColumnReference(MetaRequestModel):
     """字段联合主键引用"""
 
-    t_name: str
-    c_name: str
+    t_name: MetadataName
+    c_name: MetadataName
 
 
-class MetricInfoRequest(BaseModel):
+class MetricInfoRequest(MetaRequestModel):
     """指标元数据写入请求"""
 
+    description: MetadataDescription
+    relevant_columns: list[ColumnReference] = Field(
+        default_factory=list,
+        max_length=100,
+    )
+    alias: list[MetadataAlias] = Field(default_factory=list, max_length=100)
+
+
+class TableInfoResponse(BaseModel):
+    """表元数据响应"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    role: str
+    primary_key_columns: list[str]
     description: str
-    relevant_columns: list[ColumnReference] = Field(default_factory=list)
-    alias: list[str] = Field(default_factory=list)
+    meta_version: int
 
 
-class ColumnIndexSyncRequest(BaseModel):
+class ColumnInfoResponse(BaseModel):
+    """字段元数据响应"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    t_name: str
+    name: str
+    type: str
+    examples: list[Any]
+    description: str
+    alias: list[str]
+    index_values: bool
+    reference_t_name: str | None
+    reference_c_name: str | None
+    meta_version: int
+    index_version: int
+    value_index_synced_at: datetime | None
+    value_index_sync_status: Literal["syncing", "succeeded", "failed"] | None
+
+
+class MetricInfoResponse(BaseModel):
+    """指标元数据响应"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    description: str
+    relevant_columns: list[ColumnReference]
+    alias: list[str]
+    meta_version: int
+    index_version: int
+
+
+class ColumnIndexSyncRequest(MetaRequestModel):
     """批量字段索引同步请求"""
 
-    columns: list[ColumnReference] = Field(min_length=1)
+    columns: list[ColumnReference] = Field(min_length=1, max_length=100)
 
 
-class MetricIndexSyncRequest(BaseModel):
+class MetricIndexSyncRequest(MetaRequestModel):
     """批量指标索引同步请求"""
 
-    metrics: list[str] = Field(min_length=1)
+    metrics: list[MetadataName] = Field(min_length=1, max_length=100)
 
 
 class ColumnIndexSyncResponse(BaseModel):
@@ -88,16 +145,6 @@ class BatchMetricIndexSyncResponse(BaseModel):
     """批量指标索引同步响应"""
 
     results: list[MetricIndexSyncResponse]
-
-
-class TableSyncResponse(BaseModel):
-    """整表索引同步响应"""
-
-    t_name: str
-    column_count: int
-    column_vector_count: int
-    value_column_count: int
-    value_count: int
 
 
 class ResourceImportChanges(BaseModel):

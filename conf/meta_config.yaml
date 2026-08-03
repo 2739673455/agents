@@ -1,4 +1,3 @@
-version: 1
 tables:
   - name: dwd_dim_user_info_df
     role: dim

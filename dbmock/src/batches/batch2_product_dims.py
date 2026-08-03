@@ -1,10 +1,10 @@
-"""批次2：生成 SPU 和 SKU 维度拉链数据。"""
+"""批次2：生成 SPU 和 SKU 维度拉链数据"""
 
+import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from loguru import logger
 from sqlalchemy import MetaData, select
 
 from ..catalogs import (
@@ -21,11 +21,13 @@ from ..catalogs import (
 from ..settings import RunContext
 from ..utils.loaders import bulk_insert
 
+logger = logging.getLogger(__name__)
+
 FAR_FUTURE_DATE = date(9999, 12, 31)
 
 
 def _validate_catalogs(level1_categories: set[str], brand_names: set[str]) -> None:
-    """校验品牌词库和类目命名规则是否覆盖当前维表。"""
+    """校验品牌词库和类目命名规则是否覆盖当前维表"""
     missing_category_rules = level1_categories - set(CATEGORY_NAMING_RULES.keys())
     if missing_category_rules:
         raise ValueError(f"缺少一级类目命名规则: {sorted(missing_category_rules)}")
@@ -43,19 +45,19 @@ def _validate_catalogs(level1_categories: set[str], brand_names: set[str]) -> No
 
 
 def _has_rows(conn, table) -> bool:
-    """判断目标表是否已经存在数据。"""
+    """判断目标表是否已经存在数据"""
     stmt = select(table.c.id).limit(1)
     return conn.execute(stmt).first() is not None
 
 
 def _load_current_rows(conn, table) -> list[dict[str, Any]]:
-    """加载当前有效的维度数据。"""
+    """加载当前有效的维度数据"""
     stmt = select(table).where(table.c.is_current == 1)
     return [dict(row) for row in conn.execute(stmt).mappings()]
 
 
 def _build_model_token(root_name: str, idx: int) -> str:
-    """按一级类目生成更像商品型号的后缀。"""
+    """按一级类目生成更像商品型号的后缀"""
     model_tokens = MODEL_TOKENS_BY_ROOT.get(root_name)
     if not model_tokens:
         return ""
@@ -69,7 +71,7 @@ def _build_spu_name(
     root_name: str,
     idx: int,
 ) -> str:
-    """生成 SPU 名称。"""
+    """生成 SPU 名称"""
     model_token = _build_model_token(root_name, idx)
     if root_name in TECH_CATEGORY_ROOTS and model_token:
         return f"{brand_name} {series_word} {model_token} {product_word}"
@@ -77,13 +79,13 @@ def _build_spu_name(
 
 
 def _build_spu_subtitle(rule: dict[str, Any], shop_name: str, idx: int) -> str:
-    """生成 SPU 副标题。"""
+    """生成 SPU 副标题"""
     subtitle_word = rule["subtitle_words"][idx % len(rule["subtitle_words"])]
     return f"{subtitle_word}，{shop_name}精选好货"
 
 
 def _is_sellable_category(category_name: str) -> bool:
-    """过滤不适合直接作为 SPU 母体的三级类目。"""
+    """过滤不适合直接作为 SPU 母体的三级类目"""
     return not any(keyword in category_name for keyword in BLOCKED_CATEGORY_KEYWORDS)
 
 
@@ -92,7 +94,7 @@ def _pick_category_for_product(
     product_word: str,
     idx: int,
 ) -> dict[str, Any]:
-    """优先选择与商品词更匹配的三级类目。"""
+    """优先选择与商品词更匹配的三级类目"""
     matched = [
         row
         for row in categories
@@ -107,7 +109,7 @@ def _pick_shop_for_brand(
     brand_name: str,
     idx: int,
 ) -> dict[str, Any]:
-    """优先选择品牌官方店，其次选择平台自营店。"""
+    """优先选择品牌官方店，其次选择平台自营店"""
     brand_shops = [
         row
         for row in shops
@@ -124,7 +126,7 @@ def _pick_shop_for_brand(
 
 
 def _build_weight_and_volume(root_name: str, idx: int) -> tuple[Decimal, Decimal]:
-    """生成商品重量和体积。"""
+    """生成商品重量和体积"""
     weight_base = {
         "手机通讯": Decimal("0.200"),
         "数码电子": Decimal("0.800"),
@@ -159,7 +161,7 @@ def _build_weight_and_volume(root_name: str, idx: int) -> tuple[Decimal, Decimal
 
 
 def _build_on_shelf_time(start_date: date, end_date: date, idx: int) -> datetime:
-    """生成商品上架时间。"""
+    """生成商品上架时间"""
     total_days = max((end_date - start_date).days, 1)
     day_offset = idx * total_days // SPU_TARGET_COUNT
     shelf_date = start_date + timedelta(days=day_offset)
@@ -177,7 +179,7 @@ def _build_first_visible_date(
     on_shelf_time: datetime,
     presale_start_time: datetime | None,
 ) -> date:
-    """计算商品首次可见日期。"""
+    """计算商品首次可见日期"""
     if presale_start_time is not None:
         return min(on_shelf_time.date(), presale_start_time.date())
     return on_shelf_time.date()
@@ -190,7 +192,7 @@ def _build_spu_rows(
     categories_by_root: dict[str, list[dict[str, Any]]],
     shops_by_root: dict[str, list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    """生成 SPU 基础信息。"""
+    """生成 SPU 基础信息"""
     spu_rows: list[dict[str, Any]] = []
 
     for idx in range(SPU_TARGET_COUNT):
@@ -262,7 +264,7 @@ def _build_spu_rows(
 
 
 def _build_attribute_combinations(rule: dict[str, Any]) -> list[dict[str, str]]:
-    """生成 SKU 属性组合候选。"""
+    """生成 SKU 属性组合候选"""
     attr_keys = rule["attribute_keys"]
     attr_values = [rule["attribute_values"][key] for key in attr_keys]
     combinations: list[dict[str, str]] = []
@@ -280,7 +282,7 @@ def _build_attribute_combinations(rule: dict[str, Any]) -> list[dict[str, str]]:
 def _build_price_values(
     price_range: list[int], idx: int
 ) -> tuple[Decimal, Decimal, Decimal]:
-    """生成价格相关字段。"""
+    """生成价格相关字段"""
     min_price, max_price = price_range
     span = max_price - min_price
     sale_price = Decimal(min_price + (idx * 137) % max(span, 1))
@@ -291,7 +293,7 @@ def _build_price_values(
 
 
 def _build_bar_code(spu_id: int, sku_idx: int) -> str:
-    """生成 13 位商品条码。"""
+    """生成 13 位商品条码"""
     return f"{spu_id:09d}{sku_idx:04d}"[-13:]
 
 
@@ -299,7 +301,7 @@ def _close_current_version(
     versions: list[dict[str, Any]],
     change_date: date,
 ) -> dict[str, Any] | None:
-    """关闭当前版本并返回新版本的基础拷贝。"""
+    """关闭当前版本并返回新版本的基础拷贝"""
     current = versions[-1]
     if change_date <= current["start_date"]:
         return None
@@ -315,7 +317,7 @@ def _close_current_version(
 def _build_spu_versions(
     base_row: dict[str, Any], idx: int, end_date: date
 ) -> list[dict[str, Any]]:
-    """基于 SPU 基础信息生成拉链版本。"""
+    """基于 SPU 基础信息生成拉链版本"""
     first_visible_date = _build_first_visible_date(
         base_row["on_shelf_time"],
         base_row["presale_start_time"],
@@ -371,7 +373,7 @@ def _build_spu_versions(
 def _build_sku_versions(
     base_row: dict[str, Any], idx: int, end_date: date
 ) -> list[dict[str, Any]]:
-    """基于 SKU 基础信息生成拉链版本。"""
+    """基于 SKU 基础信息生成拉链版本"""
     first_visible_date = base_row["_first_visible_date"]
     if first_visible_date > end_date:
         return []
@@ -428,7 +430,7 @@ def _build_sku_versions(
 
 
 def run(ctx: RunContext) -> None:
-    """生成并写入 SPU/SKU 维度拉链数据。"""
+    """生成并写入 SPU/SKU 维度拉链数据"""
     logger.info("Run batch2_product_dims")
     metadata = MetaData()
     metadata.reflect(
@@ -457,7 +459,7 @@ def run(ctx: RunContext) -> None:
         brand_rows = _load_current_rows(conn, brand_table)
         shop_rows = _load_current_rows(conn, shop_table)
         logger.info(
-            "batch2 loaded source rows: category_rows={} brand_rows={} shop_rows={}",
+            "batch2 loaded source rows: category_rows=%s brand_rows=%s shop_rows=%s",
             len(category_rows),
             len(brand_rows),
             len(shop_rows),
@@ -582,7 +584,7 @@ def run(ctx: RunContext) -> None:
         )
 
     logger.info(
-        "Generated batch2 product dimensions: spu_base_rows={}, sku_base_rows={}, spu_version_rows={}, sku_version_rows={}",
+        "Generated batch2 product dimensions: spu_base_rows=%s, sku_base_rows=%s, spu_version_rows=%s, sku_version_rows=%s",
         len(spu_base_rows),
         len(sku_base_rows),
         inserted_spu_rows,

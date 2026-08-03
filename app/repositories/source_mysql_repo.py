@@ -1,6 +1,8 @@
 """业务数据访问"""
 
 import re
+from collections.abc import AsyncIterator
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,7 +68,7 @@ class SourceMySQLRepo:
         table_name: str,
         column_name: str,
         limit: int | None = None,
-    ) -> list:
+    ) -> list[Any]:
         """获取字段的去重取值"""
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)
@@ -75,6 +77,23 @@ class SourceMySQLRepo:
             sql = f"{sql} limit {limit}"
         result = await self._session.execute(text(sql))
         return list(result.scalars().fetchall())
+
+    async def iter_column_value_batches(
+        self,
+        table_name: str,
+        column_name: str,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[list[Any]]:
+        """分页流式读取字段的去重取值"""
+        table_identifier = self._quote_identifier(table_name)
+        column_identifier = self._quote_identifier(column_name)
+        sql = f"select distinct {column_identifier} from {table_identifier}"
+        result = await self._session.stream_scalars(
+            text(sql),
+            execution_options={"yield_per": batch_size},
+        )
+        async for values in result.partitions(batch_size):
+            yield list(values)
 
     async def get_db_info(self) -> dict[str, str]:
         """获取数据库版本和方言信息"""

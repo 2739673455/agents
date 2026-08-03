@@ -45,30 +45,41 @@ class IndexService:
                 await self._meta_repo.get_column_info(*column_key)
                 for column_key in unique_column_keys
             ]
-            return {
-                (column_info.t_name, column_info.name): await self._sync_column_index(
-                    column_info
-                )
-                for column_info in column_infos
-            }
+        results: dict[ColumnKey, int] = {}
+        for column_info in column_infos:
+            column_key = (column_info.t_name, column_info.name)
+            results[column_key] = await self._sync_column_index(column_info)
+            async with self._meta_repo.transaction():
+                self._meta_repo.mark_column_indexed(column_info)
+        return results
 
     async def sync_column_values(
         self, column_keys: list[ColumnKey]
     ) -> dict[ColumnKey, int]:
         """同步多个字段的取值索引"""
-        unique_column_keys = list(dict.fromkeys(column_keys))
-        column_infos = [
-            await self._meta_repo.get_column_info(*column_key)
-            for column_key in unique_column_keys
-        ]
+        async with self._meta_repo.transaction():
+            unique_column_keys = list(dict.fromkeys(column_keys))
+            column_infos = [
+                await self._meta_repo.get_column_info(*column_key)
+                for column_key in unique_column_keys
+            ]
         results: dict[ColumnKey, int] = {}
         for column_info in column_infos:
             column_key = (column_info.t_name, column_info.name)
-            if column_info.index_values:
-                results[column_key] = await self._sync_column_values(column_info)
-            else:
-                await self._clear_column_values(*column_key)
-                results[column_key] = 0
+            async with self._meta_repo.transaction():
+                self._meta_repo.mark_column_values_syncing(column_info)
+            try:
+                if column_info.index_values:
+                    results[column_key] = await self._sync_column_values(column_info)
+                else:
+                    await self._clear_column_values(*column_key)
+                    results[column_key] = 0
+            except Exception:
+                async with self._meta_repo.transaction():
+                    self._meta_repo.mark_column_values_failed(column_info)
+                raise
+            async with self._meta_repo.transaction():
+                self._meta_repo.mark_column_values_succeeded(column_info)
         return results
 
     async def sync_metric_indexes(self, metric_names: list[str]) -> dict[str, int]:
@@ -79,39 +90,23 @@ class IndexService:
                 await self._meta_repo.get_metric_info(metric_name)
                 for metric_name in unique_metric_names
             ]
-            return {
-                metric_info.name: await self._sync_metric_index(metric_info)
-                for metric_info in metric_infos
-            }
+        results: dict[str, int] = {}
+        for metric_info in metric_infos:
+            results[metric_info.name] = await self._sync_metric_index(metric_info)
+            async with self._meta_repo.transaction():
+                self._meta_repo.mark_metric_indexed(metric_info)
+        return results
 
-    async def sync_table(self, t_name: str) -> dict[str, int]:
-        """同步表下全部字段向量及字段值索引"""
-        async with self._meta_repo.transaction():
-            table_info = await self._meta_repo.get_table_info(t_name)
-            column_infos = await self._meta_repo.get_columns_by_table_name(t_name)
-            column_vector_count = 0
-            for column_info in column_infos:
-                column_vector_count += await self._sync_column_index(column_info)
-            self._meta_repo.mark_table_indexed(table_info)
+    async def delete_column_indexes(self, column_keys: list[ColumnKey]) -> None:
+        """删除多个字段的向量和取值索引"""
+        for t_name, c_name in dict.fromkeys(column_keys):
+            await self._column_repo.delete(t_name, c_name)
+            await self._value_repo.delete_by_column(t_name, c_name)
 
-        value_column_count = 0
-        value_count = 0
-        for column_info in column_infos:
-            if column_info.index_values:
-                value_column_count += 1
-                value_count += await self._sync_column_values(column_info)
-            else:
-                await self._clear_column_values(
-                    column_info.t_name,
-                    column_info.name,
-                )
-
-        return {
-            "column_count": len(column_infos),
-            "column_vector_count": column_vector_count,
-            "value_column_count": value_column_count,
-            "value_count": value_count,
-        }
+    async def delete_metric_indexes(self, metric_names: list[str]) -> None:
+        """删除多个指标的向量索引"""
+        for metric_name in dict.fromkeys(metric_names):
+            await self._metric_repo.delete_by_name(metric_name)
 
     async def _sync_column_index(self, column_info: ColumnInfo) -> int:
         """替换字段的全部向量索引"""
@@ -131,7 +126,6 @@ class IndexService:
             embeddings,
             [column_info] * len(point_ids),
         )
-        self._meta_repo.mark_column_indexed(column_info)
         return len(point_ids)
 
     async def _sync_metric_index(self, metric_info: MetricInfo) -> int:
@@ -151,7 +145,6 @@ class IndexService:
             embeddings,
             [metric_info] * len(point_ids),
         )
-        self._meta_repo.mark_metric_indexed(metric_info)
         return len(point_ids)
 
     async def _sync_column_values(
@@ -160,27 +153,30 @@ class IndexService:
     ) -> int:
         """替换字段的全部取值索引"""
         await self._value_repo.ensure_index()
-        values = await self._source_repo.get_column_values(
-            column_info.t_name,
-            column_info.name,
-        )
-        value_infos = [
-            ValueInfo(
-                value=self._serialize_value(value),
-                t_name=column_info.t_name,
-                c_name=column_info.name,
-            )
-            for value in values
-            if value is not None
-        ]
-
         await self._value_repo.delete_by_column(
             column_info.t_name,
             column_info.name,
         )
-        if value_infos:
-            await self._value_repo.index(value_infos)
-        return len(value_infos)
+        indexed_count = 0
+        async for values in self._source_repo.iter_column_value_batches(
+            column_info.t_name,
+            column_info.name,
+        ):
+            value_infos = [
+                ValueInfo(
+                    value=self._serialize_value(value),
+                    t_name=column_info.t_name,
+                    c_name=column_info.name,
+                )
+                for value in values
+                if value is not None
+            ]
+            if value_infos:
+                await self._value_repo.index(value_infos)
+                indexed_count += len(value_infos)
+        if indexed_count:
+            await self._value_repo.refresh()
+        return indexed_count
 
     async def _clear_column_values(self, t_name: str, c_name: str) -> None:
         """清理未启用字段的取值索引"""
