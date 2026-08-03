@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+import os
 import random
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
+import dotenv
 from sqlalchemy import Engine, create_engine
 
-DB_HOST = "127.0.0.1"
-DB_PORT = 3306
-DB_USER = "root"
-DB_PASSWORD = "123321"
-DB_NAME = "ecommerce"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+ENV_FILE = ROOT_DIR / ".env"
+
+dotenv.load_dotenv(ENV_FILE)
+
+DB_HOST = os.environ["DB_HOST"]
+DB_PORT = int(os.environ["DB_PORT"])
+DB_USER = os.environ["DB_USER"]
+DB_PASSWORD = os.environ["DB_PASSWORD"]
+DB_NAME = os.environ["DB_NAME"]
 BATCH_SIZE = 5000
 SEED = 42
 

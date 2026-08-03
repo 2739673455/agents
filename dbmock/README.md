@@ -1,6 +1,6 @@
 # 数据生成
 ## 使用方式
-在项目根目录的 `.env` 中配置 `DB_SOURCE_PASSWORD`
+在项目根目录的 `.env` 中配置数据库连接信息，可参考 `.env.example`
 
 ```bash
 uv sync                         # 安装依赖

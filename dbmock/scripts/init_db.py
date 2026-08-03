@@ -118,13 +118,14 @@ class MySQLInitializer:
 
 if __name__ == "__main__":
     dotenv.load_dotenv(ENV_FILE)
+    db_name = os.environ["DB_NAME"]
     db_initializer = MySQLInitializer(
-        host="127.0.0.1",
-        port=3306,
-        user="root",
-        password=os.environ["DB_SOURCE_PASSWORD"],
+        host=os.environ["DB_HOST"],
+        port=int(os.environ["DB_PORT"]),
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASSWORD"],
     )
-    db_initializer.delete_db("ecommerce")
-    db_initializer.create_db("ecommerce")
-    db_initializer.exec_sql_file("ecommerce", SQL_DIR / "ecommerce.sql")
-    db_initializer.gen_tb_model("ecommerce", ENTITIES_DIR / "ecommerce.py")
+    db_initializer.delete_db(db_name)
+    db_initializer.create_db(db_name)
+    db_initializer.exec_sql_file(db_name, SQL_DIR / "ecommerce.sql")
+    db_initializer.gen_tb_model(db_name, ENTITIES_DIR / "ecommerce.py")
