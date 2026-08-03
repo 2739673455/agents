@@ -518,7 +518,7 @@ def _load_all_rows(conn, table) -> list[dict[str, Any]]:
 
 def _has_rows(conn, table) -> bool:
     """判断目标表是否已有数据"""
-    return conn.execute(select(table.c.id).limit(1)).first() is not None
+    return conn.execute(select(table).limit(1)).first() is not None
 
 
 def _build_weighted_dates(
@@ -865,42 +865,42 @@ def run(ctx: RunContext) -> None:
     metadata.reflect(
         bind=ctx.engine,
         only=[
-            "dwd_dim_user_info_df",
-            "dwd_dim_shop_info_df",
-            "dwd_dim_spu_info_df",
-            "dwd_dim_sku_info_df",
-            "dwd_dim_payment_type_df",
-            "dwd_dim_logistics_company_df",
-            "dwd_dim_promotion_info_df",
-            "dwd_dim_coupon_info_df",
-            "dwd_fact_trade_order_detail_di",
-            "dwd_fact_trade_order_detail_activity_di",
-            "dwd_fact_trade_order_detail_coupon_di",
-            "dwd_fact_trade_pay_detail_di",
-            "dwd_fact_trade_delivery_detail_di",
-            "dwd_fact_trade_refund_detail_di",
-            "dwd_fact_trade_refund_pay_detail_di",
-            "dwd_fact_service_comment_detail_di",
-            "dwd_fact_inventory_change_di",
+            "dim_user_info_zip",
+            "dim_shop_info_zip",
+            "dim_spu_info_zip",
+            "dim_sku_info_zip",
+            "dim_payment_type_zip",
+            "dim_logistics_company_zip",
+            "dim_promotion_info_df",
+            "dim_coupon_info_df",
+            "dwd_trade_order_detail_di",
+            "dwd_trade_order_detail_activity_di",
+            "dwd_trade_order_detail_coupon_di",
+            "dwd_trade_pay_detail_di",
+            "dwd_trade_delivery_detail_di",
+            "dwd_trade_refund_detail_di",
+            "dwd_trade_refund_pay_detail_di",
+            "dwd_service_comment_detail_di",
+            "dwd_inventory_change_di",
         ],
     )
-    user_table = metadata.tables["dwd_dim_user_info_df"]
-    shop_table = metadata.tables["dwd_dim_shop_info_df"]
-    spu_table = metadata.tables["dwd_dim_spu_info_df"]
-    sku_table = metadata.tables["dwd_dim_sku_info_df"]
-    payment_type_table = metadata.tables["dwd_dim_payment_type_df"]
-    logistics_table = metadata.tables["dwd_dim_logistics_company_df"]
-    promotion_table = metadata.tables["dwd_dim_promotion_info_df"]
-    coupon_table = metadata.tables["dwd_dim_coupon_info_df"]
-    order_detail_table = metadata.tables["dwd_fact_trade_order_detail_di"]
-    order_activity_table = metadata.tables["dwd_fact_trade_order_detail_activity_di"]
-    order_coupon_table = metadata.tables["dwd_fact_trade_order_detail_coupon_di"]
-    pay_table = metadata.tables["dwd_fact_trade_pay_detail_di"]
-    delivery_table = metadata.tables["dwd_fact_trade_delivery_detail_di"]
-    refund_table = metadata.tables["dwd_fact_trade_refund_detail_di"]
-    refund_pay_table = metadata.tables["dwd_fact_trade_refund_pay_detail_di"]
-    comment_table = metadata.tables["dwd_fact_service_comment_detail_di"]
-    inventory_table = metadata.tables["dwd_fact_inventory_change_di"]
+    user_table = metadata.tables["dim_user_info_zip"]
+    shop_table = metadata.tables["dim_shop_info_zip"]
+    spu_table = metadata.tables["dim_spu_info_zip"]
+    sku_table = metadata.tables["dim_sku_info_zip"]
+    payment_type_table = metadata.tables["dim_payment_type_zip"]
+    logistics_table = metadata.tables["dim_logistics_company_zip"]
+    promotion_table = metadata.tables["dim_promotion_info_df"]
+    coupon_table = metadata.tables["dim_coupon_info_df"]
+    order_detail_table = metadata.tables["dwd_trade_order_detail_di"]
+    order_activity_table = metadata.tables["dwd_trade_order_detail_activity_di"]
+    order_coupon_table = metadata.tables["dwd_trade_order_detail_coupon_di"]
+    pay_table = metadata.tables["dwd_trade_pay_detail_di"]
+    delivery_table = metadata.tables["dwd_trade_delivery_detail_di"]
+    refund_table = metadata.tables["dwd_trade_refund_detail_di"]
+    refund_pay_table = metadata.tables["dwd_trade_refund_pay_detail_di"]
+    comment_table = metadata.tables["dwd_service_comment_detail_di"]
+    inventory_table = metadata.tables["dwd_inventory_change_di"]
 
     with ctx.engine.begin() as conn:
         if _has_rows(conn, order_detail_table):

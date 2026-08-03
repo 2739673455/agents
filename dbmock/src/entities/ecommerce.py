@@ -22,8 +22,8 @@ class Base(DeclarativeBase):
     pass
 
 
-class DwdDimBrandInfoDf(Base):
-    __tablename__ = "dwd_dim_brand_info_df"
+class DimBrandInfoZip(Base):
+    __tablename__ = "dim_brand_info_zip"
     __table_args__ = (
         Index("idx_brand_current", "brand_id", "is_current"),
         Index("idx_brand_name", "brand_name"),
@@ -33,7 +33,7 @@ class DwdDimBrandInfoDf(Base):
         {"comment": "品牌维度拉链表"},
     )
 
-    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
+    brand_sk: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     brand_id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True), nullable=False, comment="品牌ID"
     )
@@ -65,8 +65,8 @@ class DwdDimBrandInfoDf(Base):
     )
 
 
-class DwdDimCategoryInfoDf(Base):
-    __tablename__ = "dwd_dim_category_info_df"
+class DimCategoryInfoZip(Base):
+    __tablename__ = "dim_category_info_zip"
     __table_args__ = (
         Index("idx_category_current", "category_id", "is_current"),
         Index("idx_parent_id", "parent_category_id"),
@@ -75,7 +75,7 @@ class DwdDimCategoryInfoDf(Base):
         {"comment": "类目维度拉链表"},
     )
 
-    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
+    category_sk: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     category_id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True), nullable=False, comment="类目ID"
     )
@@ -120,16 +120,18 @@ class DwdDimCategoryInfoDf(Base):
     )
 
 
-class DwdDimCouponInfoDf(Base):
-    __tablename__ = "dwd_dim_coupon_info_df"
+class DimCouponInfoDf(Base):
+    __tablename__ = "dim_coupon_info_df"
     __table_args__ = (
         Index("idx_coupon_type", "coupon_type"),
         Index("idx_use_time", "use_start_time", "use_end_time"),
         Index("uk_coupon_etl", "coupon_id", "etl_date", unique=True),
-        {"comment": "优惠券维度明细快照"},
+        {"comment": "优惠券维度每日全量快照"},
     )
 
-    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
+    coupon_snapshot_sk: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), primary_key=True
+    )
     coupon_id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True), nullable=False, comment="优惠券ID"
     )
@@ -177,8 +179,8 @@ class DwdDimCouponInfoDf(Base):
     )
 
 
-class DwdDimGeoRegionDf(Base):
-    __tablename__ = "dwd_dim_geo_region_df"
+class DimGeoRegionZip(Base):
+    __tablename__ = "dim_geo_region_zip"
     __table_args__ = (
         Index("idx_parent_region", "parent_region_code"),
         Index("idx_province_city", "province_code", "city_code"),
@@ -187,7 +189,7 @@ class DwdDimGeoRegionDf(Base):
         {"comment": "行政区域维度拉链表"},
     )
 
-    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
+    region_sk: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     region_code: Mapped[str] = mapped_column(
         String(20), nullable=False, comment="区域编码"
     )
@@ -226,8 +228,8 @@ class DwdDimGeoRegionDf(Base):
     )
 
 
-class DwdDimLogisticsCompanyDf(Base):
-    __tablename__ = "dwd_dim_logistics_company_df"
+class DimLogisticsCompanyZip(Base):
+    __tablename__ = "dim_logistics_company_zip"
     __table_args__ = (
         Index("idx_company_code", "logistics_company_code"),
         Index("idx_logistics_current", "logistics_company_id", "is_current"),
@@ -235,7 +237,9 @@ class DwdDimLogisticsCompanyDf(Base):
         {"comment": "物流公司维度拉链表"},
     )
 
-    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
+    logistics_company_sk: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), primary_key=True
+    )
     logistics_company_id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True), nullable=False, comment="物流公司ID"
     )
@@ -266,15 +270,17 @@ class DwdDimLogisticsCompanyDf(Base):
     )
 
 
-class DwdDimPaymentTypeDf(Base):
-    __tablename__ = "dwd_dim_payment_type_df"
+class DimPaymentTypeZip(Base):
+    __tablename__ = "dim_payment_type_zip"
     __table_args__ = (
         Index("idx_payment_type_current", "payment_type_code", "is_current"),
         Index("uk_payment_type_start", "payment_type_code", "start_date", unique=True),
         {"comment": "支付方式维度拉链表"},
     )
 
-    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
+    payment_type_sk: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), primary_key=True
+    )
     payment_type_code: Mapped[str] = mapped_column(
         String(32), nullable=False, comment="支付方式编码"
     )
@@ -310,16 +316,18 @@ class DwdDimPaymentTypeDf(Base):
     )
 
 
-class DwdDimPromotionInfoDf(Base):
-    __tablename__ = "dwd_dim_promotion_info_df"
+class DimPromotionInfoDf(Base):
+    __tablename__ = "dim_promotion_info_df"
     __table_args__ = (
         Index("idx_promotion_type", "promotion_type"),
         Index("idx_time_range", "start_time", "end_time"),
         Index("uk_promotion_etl", "promotion_id", "etl_date", unique=True),
-        {"comment": "促销活动维度明细快照"},
+        {"comment": "促销活动维度每日全量快照"},
     )
 
-    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
+    promotion_snapshot_sk: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), primary_key=True
+    )
     promotion_id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True), nullable=False, comment="活动ID"
     )
@@ -365,8 +373,8 @@ class DwdDimPromotionInfoDf(Base):
     )
 
 
-class DwdDimShopInfoDf(Base):
-    __tablename__ = "dwd_dim_shop_info_df"
+class DimShopInfoZip(Base):
+    __tablename__ = "dim_shop_info_zip"
     __table_args__ = (
         Index("idx_seller_id", "seller_id"),
         Index("idx_shop_current", "shop_id", "is_current"),
@@ -375,7 +383,7 @@ class DwdDimShopInfoDf(Base):
         {"comment": "店铺维度拉链表"},
     )
 
-    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
+    shop_sk: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     shop_id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True), nullable=False, comment="店铺ID"
     )
@@ -434,8 +442,8 @@ class DwdDimShopInfoDf(Base):
     )
 
 
-class DwdDimSkuInfoDf(Base):
-    __tablename__ = "dwd_dim_sku_info_df"
+class DimSkuInfoZip(Base):
+    __tablename__ = "dim_sku_info_zip"
     __table_args__ = (
         Index("idx_brand_id", "brand_id"),
         Index("idx_category_id", "category_id"),
@@ -446,7 +454,7 @@ class DwdDimSkuInfoDf(Base):
         {"comment": "SKU维度拉链表"},
     )
 
-    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
+    sku_sk: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     sku_id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True), nullable=False, comment="SKU ID"
     )
@@ -502,8 +510,8 @@ class DwdDimSkuInfoDf(Base):
     )
 
 
-class DwdDimSpuInfoDf(Base):
-    __tablename__ = "dwd_dim_spu_info_df"
+class DimSpuInfoZip(Base):
+    __tablename__ = "dim_spu_info_zip"
     __table_args__ = (
         Index("idx_brand_id", "brand_id"),
         Index("idx_category_id", "category_id"),
@@ -513,7 +521,7 @@ class DwdDimSpuInfoDf(Base):
         {"comment": "SPU维度拉链表"},
     )
 
-    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
+    spu_sk: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     spu_id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True), nullable=False, comment="SPU ID"
     )
@@ -563,8 +571,8 @@ class DwdDimSpuInfoDf(Base):
     )
 
 
-class DwdDimUserInfoDf(Base):
-    __tablename__ = "dwd_dim_user_info_df"
+class DimUserInfoZip(Base):
+    __tablename__ = "dim_user_info_zip"
     __table_args__ = (
         Index("idx_province_city", "province_code", "city_code"),
         Index("idx_register_time", "register_time"),
@@ -573,7 +581,7 @@ class DwdDimUserInfoDf(Base):
         {"comment": "用户维度拉链表"},
     )
 
-    id: Mapped[int] = mapped_column(
+    user_sk: Mapped[int] = mapped_column(
         BIGINT(unsigned=True), primary_key=True, comment="自增主键"
     )
     user_id: Mapped[int] = mapped_column(
@@ -628,8 +636,8 @@ class DwdDimUserInfoDf(Base):
     )
 
 
-class DwdFactInteractionCartAddDi(Base):
-    __tablename__ = "dwd_fact_interaction_cart_add_di"
+class DwdInteractionCartAddDi(Base):
+    __tablename__ = "dwd_interaction_cart_add_di"
     __table_args__ = (
         Index("idx_etl_date", "etl_date"),
         Index("idx_event_time", "event_time"),
@@ -682,8 +690,8 @@ class DwdFactInteractionCartAddDi(Base):
     )
 
 
-class DwdFactInteractionFavorAddDi(Base):
-    __tablename__ = "dwd_fact_interaction_favor_add_di"
+class DwdInteractionFavorAddDi(Base):
+    __tablename__ = "dwd_interaction_favor_add_di"
     __table_args__ = (
         Index("idx_etl_date", "etl_date"),
         Index("idx_event_time", "event_time"),
@@ -723,8 +731,8 @@ class DwdFactInteractionFavorAddDi(Base):
     channel_code: Mapped[Optional[str]] = mapped_column(String(32), comment="渠道编码")
 
 
-class DwdFactInventoryChangeDi(Base):
-    __tablename__ = "dwd_fact_inventory_change_di"
+class DwdInventoryChangeDi(Base):
+    __tablename__ = "dwd_inventory_change_di"
     __table_args__ = (
         Index("idx_biz", "biz_type", "biz_id"),
         Index("idx_change_time", "change_time"),
@@ -800,8 +808,8 @@ class DwdFactInventoryChangeDi(Base):
     remark: Mapped[Optional[str]] = mapped_column(String(512), comment="备注")
 
 
-class DwdFactServiceCommentDetailDi(Base):
-    __tablename__ = "dwd_fact_service_comment_detail_di"
+class DwdServiceCommentDetailDi(Base):
+    __tablename__ = "dwd_service_comment_detail_di"
     __table_args__ = (
         Index("idx_comment_id", "comment_id"),
         Index("idx_comment_time", "comment_time"),
@@ -877,8 +885,8 @@ class DwdFactServiceCommentDetailDi(Base):
     )
 
 
-class DwdFactTradeDeliveryDetailDi(Base):
-    __tablename__ = "dwd_fact_trade_delivery_detail_di"
+class DwdTradeDeliveryDetailDi(Base):
+    __tablename__ = "dwd_trade_delivery_detail_di"
     __table_args__ = (
         Index("idx_delivery_no", "delivery_no"),
         Index("idx_delivery_time", "delivery_time"),
@@ -963,8 +971,8 @@ class DwdFactTradeDeliveryDetailDi(Base):
     )
 
 
-class DwdFactTradeOrderDetailActivityDi(Base):
-    __tablename__ = "dwd_fact_trade_order_detail_activity_di"
+class DwdTradeOrderDetailActivityDi(Base):
+    __tablename__ = "dwd_trade_order_detail_activity_di"
     __table_args__ = (
         Index("idx_etl_date", "etl_date"),
         Index("idx_order_detail_id", "order_detail_id"),
@@ -1006,8 +1014,8 @@ class DwdFactTradeOrderDetailActivityDi(Base):
     )
 
 
-class DwdFactTradeOrderDetailCouponDi(Base):
-    __tablename__ = "dwd_fact_trade_order_detail_coupon_di"
+class DwdTradeOrderDetailCouponDi(Base):
+    __tablename__ = "dwd_trade_order_detail_coupon_di"
     __table_args__ = (
         Index("idx_coupon_id", "coupon_id"),
         Index("idx_etl_date", "etl_date"),
@@ -1056,8 +1064,8 @@ class DwdFactTradeOrderDetailCouponDi(Base):
     )
 
 
-class DwdFactTradeOrderDetailDi(Base):
-    __tablename__ = "dwd_fact_trade_order_detail_di"
+class DwdTradeOrderDetailDi(Base):
+    __tablename__ = "dwd_trade_order_detail_di"
     __table_args__ = (
         Index("idx_etl_date", "etl_date"),
         Index("idx_order_create_time", "order_create_time"),
@@ -1193,8 +1201,8 @@ class DwdFactTradeOrderDetailDi(Base):
     )
 
 
-class DwdFactTradePayDetailDi(Base):
-    __tablename__ = "dwd_fact_trade_pay_detail_di"
+class DwdTradePayDetailDi(Base):
+    __tablename__ = "dwd_trade_pay_detail_di"
     __table_args__ = (
         Index("idx_etl_date", "etl_date"),
         Index("idx_order_id", "order_id"),
@@ -1273,8 +1281,8 @@ class DwdFactTradePayDetailDi(Base):
     )
 
 
-class DwdFactTradeRefundDetailDi(Base):
-    __tablename__ = "dwd_fact_trade_refund_detail_di"
+class DwdTradeRefundDetailDi(Base):
+    __tablename__ = "dwd_trade_refund_detail_di"
     __table_args__ = (
         Index("idx_apply_time", "apply_time"),
         Index("idx_etl_date", "etl_date"),
@@ -1363,8 +1371,8 @@ class DwdFactTradeRefundDetailDi(Base):
     )
 
 
-class DwdFactTradeRefundPayDetailDi(Base):
-    __tablename__ = "dwd_fact_trade_refund_pay_detail_di"
+class DwdTradeRefundPayDetailDi(Base):
+    __tablename__ = "dwd_trade_refund_pay_detail_di"
     __table_args__ = (
         Index("idx_etl_date", "etl_date"),
         Index("idx_refund_detail_id", "refund_detail_id"),
@@ -1425,8 +1433,8 @@ class DwdFactTradeRefundPayDetailDi(Base):
     )
 
 
-class DwdFactTrafficPageViewDi(Base):
-    __tablename__ = "dwd_fact_traffic_page_view_di"
+class DwdTrafficPageViewDi(Base):
+    __tablename__ = "dwd_traffic_page_view_di"
     __table_args__ = (
         Index("idx_business", "business_type", "business_id"),
         Index("idx_etl_date", "etl_date"),
@@ -1484,8 +1492,8 @@ class DwdFactTrafficPageViewDi(Base):
     )
 
 
-class DwdFactTrafficSearchDi(Base):
-    __tablename__ = "dwd_fact_traffic_search_di"
+class DwdTrafficSearchDi(Base):
+    __tablename__ = "dwd_traffic_search_di"
     __table_args__ = (
         Index("idx_click_sku_id", "click_sku_id"),
         Index("idx_etl_date", "etl_date"),

@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 def _has_rows(conn, table) -> bool:
     """判断目标表是否已经存在数据"""
-    stmt = select(table.c.id).limit(1)
+    stmt = select(table).limit(1)
     return conn.execute(stmt).first() is not None
 
 
@@ -452,18 +452,18 @@ def run(ctx: RunContext) -> None:
     metadata.reflect(
         bind=ctx.engine,
         only=[
-            "dwd_dim_shop_info_df",
-            "dwd_dim_brand_info_df",
-            "dwd_dim_category_info_df",
-            "dwd_dim_promotion_info_df",
-            "dwd_dim_coupon_info_df",
+            "dim_shop_info_zip",
+            "dim_brand_info_zip",
+            "dim_category_info_zip",
+            "dim_promotion_info_df",
+            "dim_coupon_info_df",
         ],
     )
-    shop_table = metadata.tables["dwd_dim_shop_info_df"]
-    brand_table = metadata.tables["dwd_dim_brand_info_df"]
-    category_table = metadata.tables["dwd_dim_category_info_df"]
-    promotion_table = metadata.tables["dwd_dim_promotion_info_df"]
-    coupon_table = metadata.tables["dwd_dim_coupon_info_df"]
+    shop_table = metadata.tables["dim_shop_info_zip"]
+    brand_table = metadata.tables["dim_brand_info_zip"]
+    category_table = metadata.tables["dim_category_info_zip"]
+    promotion_table = metadata.tables["dim_promotion_info_df"]
+    coupon_table = metadata.tables["dim_coupon_info_df"]
 
     with ctx.engine.begin() as conn:
         if _has_rows(conn, promotion_table) or _has_rows(conn, coupon_table):

@@ -46,7 +46,7 @@ def _validate_catalogs(level1_categories: set[str], brand_names: set[str]) -> No
 
 def _has_rows(conn, table) -> bool:
     """判断目标表是否已经存在数据"""
-    stmt = select(table.c.id).limit(1)
+    stmt = select(table).limit(1)
     return conn.execute(stmt).first() is not None
 
 
@@ -436,18 +436,18 @@ def run(ctx: RunContext) -> None:
     metadata.reflect(
         bind=ctx.engine,
         only=[
-            "dwd_dim_category_info_df",
-            "dwd_dim_brand_info_df",
-            "dwd_dim_shop_info_df",
-            "dwd_dim_spu_info_df",
-            "dwd_dim_sku_info_df",
+            "dim_category_info_zip",
+            "dim_brand_info_zip",
+            "dim_shop_info_zip",
+            "dim_spu_info_zip",
+            "dim_sku_info_zip",
         ],
     )
-    category_table = metadata.tables["dwd_dim_category_info_df"]
-    brand_table = metadata.tables["dwd_dim_brand_info_df"]
-    shop_table = metadata.tables["dwd_dim_shop_info_df"]
-    spu_table = metadata.tables["dwd_dim_spu_info_df"]
-    sku_table = metadata.tables["dwd_dim_sku_info_df"]
+    category_table = metadata.tables["dim_category_info_zip"]
+    brand_table = metadata.tables["dim_brand_info_zip"]
+    shop_table = metadata.tables["dim_shop_info_zip"]
+    spu_table = metadata.tables["dim_spu_info_zip"]
+    sku_table = metadata.tables["dim_sku_info_zip"]
 
     with ctx.engine.begin() as conn:
         if _has_rows(conn, spu_table) or _has_rows(conn, sku_table):

@@ -15,18 +15,18 @@ from ..utils.loaders import bulk_insert
 
 logger = logging.getLogger(__name__)
 
-USER_TABLE_NAME = "dwd_dim_user_info_df"
+USER_TABLE_NAME = "dim_user_info_zip"
 TABLE_TO_SEED_FILE = {
-    "dwd_dim_shop_info_df": "shops.json",
-    "dwd_dim_category_info_df": "categories.json",
-    "dwd_dim_brand_info_df": "brands.json",
-    "dwd_dim_payment_type_df": "payment_types.json",
-    "dwd_dim_logistics_company_df": "logistics_companies.json",
-    "dwd_dim_geo_region_df": "geo_regions.json",
+    "dim_shop_info_zip": "shops.json",
+    "dim_category_info_zip": "categories.json",
+    "dim_brand_info_zip": "brands.json",
+    "dim_payment_type_zip": "payment_types.json",
+    "dim_logistics_company_zip": "logistics_companies.json",
+    "dim_geo_region_zip": "geo_regions.json",
 }
 
 REQUIRED_FIELDS = {
-    "dwd_dim_shop_info_df": [
+    "dim_shop_info_zip": [
         "shop_id",
         "shop_name",
         "shop_type",
@@ -35,7 +35,7 @@ REQUIRED_FIELDS = {
         "industry_type",
         "shop_status",
     ],
-    "dwd_dim_category_info_df": [
+    "dim_category_info_zip": [
         "category_id",
         "category_name",
         "category_level",
@@ -44,22 +44,22 @@ REQUIRED_FIELDS = {
         "is_leaf",
         "status",
     ],
-    "dwd_dim_brand_info_df": ["brand_id", "brand_name", "status"],
-    "dwd_dim_payment_type_df": [
+    "dim_brand_info_zip": ["brand_id", "brand_name", "status"],
+    "dim_payment_type_zip": [
         "payment_type_code",
         "payment_type_name",
         "is_online",
         "is_installment",
         "status",
     ],
-    "dwd_dim_logistics_company_df": [
+    "dim_logistics_company_zip": [
         "logistics_company_id",
         "logistics_company_code",
         "logistics_company_name",
         "logistics_type",
         "status",
     ],
-    "dwd_dim_geo_region_df": [
+    "dim_geo_region_zip": [
         "region_code",
         "region_name",
         "region_level",
@@ -68,12 +68,12 @@ REQUIRED_FIELDS = {
 }
 
 UNIQUE_KEYS = {
-    "dwd_dim_shop_info_df": "shop_id",
-    "dwd_dim_category_info_df": "category_id",
-    "dwd_dim_brand_info_df": "brand_id",
-    "dwd_dim_payment_type_df": "payment_type_code",
-    "dwd_dim_logistics_company_df": "logistics_company_id",
-    "dwd_dim_geo_region_df": "region_code",
+    "dim_shop_info_zip": "shop_id",
+    "dim_category_info_zip": "category_id",
+    "dim_brand_info_zip": "brand_id",
+    "dim_payment_type_zip": "payment_type_code",
+    "dim_logistics_company_zip": "logistics_company_id",
+    "dim_geo_region_zip": "region_code",
 }
 
 SHOP_TYPES = {"自营", "旗舰店", "专卖店", "普通店"}
@@ -349,11 +349,11 @@ def _validate_regions(rows: list[dict[str, Any]]) -> None:
 
 def _validate_seed_bundle(seed_rows: dict[str, list[dict[str, Any]]], tables) -> None:
     """对店铺、类目、品牌、支付方式、物流公司和地理区域种子执行跨表与单表校验"""
-    level1_names = _validate_categories(seed_rows["dwd_dim_category_info_df"])
-    _validate_shops(seed_rows["dwd_dim_shop_info_df"], level1_names)
-    _validate_payments(seed_rows["dwd_dim_payment_type_df"])
-    _validate_logistics(seed_rows["dwd_dim_logistics_company_df"])
-    _validate_regions(seed_rows["dwd_dim_geo_region_df"])
+    level1_names = _validate_categories(seed_rows["dim_category_info_zip"])
+    _validate_shops(seed_rows["dim_shop_info_zip"], level1_names)
+    _validate_payments(seed_rows["dim_payment_type_zip"])
+    _validate_logistics(seed_rows["dim_logistics_company_zip"])
+    _validate_regions(seed_rows["dim_geo_region_zip"])
 
     for table_name, rows in seed_rows.items():
         _validate_required_fields(table_name, rows)
@@ -564,7 +564,7 @@ def _existing_user_keys(conn, table) -> set[tuple[int, date]]:
 
 def _has_user_rows(conn, table) -> bool:
     """判断用户维表是否已经存在数据"""
-    stmt = select(table.c.id).limit(1)
+    stmt = select(table).limit(1)
     return conn.execute(stmt).first() is not None
 
 
@@ -600,7 +600,7 @@ def run(ctx: RunContext) -> None:
     user_rows = _build_user_rows(
         start_date,
         end_date,
-        seed_rows["dwd_dim_geo_region_df"],
+        seed_rows["dim_geo_region_zip"],
         ctx.gen.seed,
     )
 

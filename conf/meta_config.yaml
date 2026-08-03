@@ -1,12 +1,12 @@
 tables:
-  - name: dwd_dim_user_info_df
+  - name: dim_user_info_zip
     role: dim
     description: 用户维度拉链表，记录用户的基本属性信息，支持拉链式历史版本管理
     columns:
-      - name: id
-        description: 自增主键
+      - name: user_sk
+        description: 用户维度代理键
         alias:
-          - 主键ID
+          - 用户代理键
         index_values: false
       - name: user_id
         description: 用户业务ID，用户的唯一标识
@@ -139,14 +139,14 @@ tables:
         alias:
           - 结束日期
         index_values: false
-  - name: dwd_dim_shop_info_df
+  - name: dim_shop_info_zip
     role: dim
     description: 店铺维度拉链表，记录店铺的基本属性和评分信息
     columns:
-      - name: id
-        description: 自增主键
+      - name: shop_sk
+        description: 店铺维度代理键
         alias:
-          - 主键ID
+          - 店铺代理键
         index_values: false
       - name: shop_id
         description: 店铺ID，店铺的唯一标识
@@ -254,14 +254,14 @@ tables:
         alias:
           - 逻辑删除标识
         index_values: true
-  - name: dwd_dim_category_info_df
+  - name: dim_category_info_zip
     role: dim
     description: 类目维度拉链表，记录商品类目的层级结构和属性
     columns:
-      - name: id
-        description: 自增主键
+      - name: category_sk
+        description: 类目维度代理键
         alias:
-          - 主键ID
+          - 类目代理键
         index_values: false
       - name: category_id
         description: 类目ID
@@ -339,14 +339,14 @@ tables:
         alias:
           - 状态
         index_values: true
-  - name: dwd_dim_brand_info_df
+  - name: dim_brand_info_zip
     role: dim
     description: 品牌维度拉链表，记录品牌的基本信息和归属国家
     columns:
-      - name: id
-        description: 自增主键
+      - name: brand_sk
+        description: 品牌维度代理键
         alias:
-          - 主键ID
+          - 品牌代理键
         index_values: false
       - name: brand_id
         description: 品牌ID
@@ -411,14 +411,14 @@ tables:
         description: 品牌故事
         alias: []
         index_values: true
-  - name: dwd_dim_payment_type_df
+  - name: dim_payment_type_zip
     role: dim
     description: 支付方式维度拉链表，记录支付方式和支付渠道信息
     columns:
-      - name: id
-        description: 自增主键
+      - name: payment_type_sk
+        description: 支付方式维度代理键
         alias:
-          - 主键ID
+          - 支付方式代理键
         index_values: false
       - name: payment_type_code
         description: 支付方式编码
@@ -476,14 +476,14 @@ tables:
         alias:
           - 状态
         index_values: true
-  - name: dwd_dim_logistics_company_df
+  - name: dim_logistics_company_zip
     role: dim
     description: 物流公司维度拉链表，记录物流公司的基本信息
     columns:
-      - name: id
-        description: 自增主键
+      - name: logistics_company_sk
+        description: 物流公司维度代理键
         alias:
-          - 主键ID
+          - 物流公司代理键
         index_values: false
       - name: logistics_company_id
         description: 物流公司ID
@@ -536,14 +536,14 @@ tables:
         alias:
           - 状态
         index_values: true
-  - name: dwd_dim_geo_region_df
+  - name: dim_geo_region_zip
     role: dim
     description: 行政区域维度拉链表，记录省市区等地理区域信息
     columns:
-      - name: id
-        description: 自增主键
+      - name: region_sk
+        description: 行政区域维度代理键
         alias:
-          - 主键ID
+          - 行政区域代理键
         index_values: false
       - name: region_code
         description: 区域编码
@@ -625,14 +625,14 @@ tables:
         alias:
           - 状态
         index_values: true
-  - name: dwd_dim_spu_info_df
+  - name: dim_spu_info_zip
     role: dim
     description: SPU维度拉链表，记录标准产品单元的基本信息
     columns:
-      - name: id
-        description: 自增主键
+      - name: spu_sk
+        description: SPU维度代理键
         alias:
-          - 主键ID
+          - SPU代理键
         index_values: false
       - name: spu_id
         description: SPU ID，标准产品单元标识
@@ -652,7 +652,7 @@ tables:
           - 产品副标题
         index_values: true
       - name: category_id
-        reference_t_name: dwd_dim_category_info_df
+        reference_t_name: dim_category_info_zip
         reference_c_name: category_id
         description: 三级类目ID，关联类目维度
         alias:
@@ -660,7 +660,7 @@ tables:
           - 分类ID
         index_values: true
       - name: brand_id
-        reference_t_name: dwd_dim_brand_info_df
+        reference_t_name: dim_brand_info_zip
         reference_c_name: brand_id
         description: 品牌ID，关联品牌维度
         alias:
@@ -671,7 +671,7 @@ tables:
         alias: []
         index_values: true
       - name: shop_id
-        reference_t_name: dwd_dim_shop_info_df
+        reference_t_name: dim_shop_info_zip
         reference_c_name: shop_id
         description: 店铺ID，关联店铺维度
         alias:
@@ -726,14 +726,14 @@ tables:
         description: 上架时间
         alias: []
         index_values: false
-  - name: dwd_dim_sku_info_df
+  - name: dim_sku_info_zip
     role: dim
     description: SKU维度拉链表，记录库存量单位的基本信息和价格
     columns:
-      - name: id
-        description: 自增主键
+      - name: sku_sk
+        description: SKU维度代理键
         alias:
-          - 主键ID
+          - SKU代理键
         index_values: false
       - name: sku_id
         description: SKU ID，库存量单位标识
@@ -747,28 +747,28 @@ tables:
           - 规格名称
         index_values: true
       - name: spu_id
-        reference_t_name: dwd_dim_spu_info_df
+        reference_t_name: dim_spu_info_zip
         reference_c_name: spu_id
         description: SPU ID，关联SPU维度
         alias:
           - SPU_ID
         index_values: true
       - name: shop_id
-        reference_t_name: dwd_dim_shop_info_df
+        reference_t_name: dim_shop_info_zip
         reference_c_name: shop_id
         description: 店铺ID，关联店铺维度
         alias:
           - 店铺ID
         index_values: true
       - name: category_id
-        reference_t_name: dwd_dim_category_info_df
+        reference_t_name: dim_category_info_zip
         reference_c_name: category_id
         description: 三级类目ID，关联类目维度
         alias:
           - 类目ID
         index_values: true
       - name: brand_id
-        reference_t_name: dwd_dim_brand_info_df
+        reference_t_name: dim_brand_info_zip
         reference_c_name: brand_id
         description: 品牌ID，关联品牌维度
         alias:
@@ -840,14 +840,14 @@ tables:
         alias:
           - 逻辑删除标识
         index_values: true
-  - name: dwd_dim_promotion_info_df
+  - name: dim_promotion_info_df
     role: dim
-    description: 促销活动维度明细快照，记录各类营销活动的信息和规则
+    description: 促销活动维度每日全量快照，记录各类营销活动的信息和规则
     columns:
-      - name: id
-        description: 自增主键
+      - name: promotion_snapshot_sk
+        description: 活动快照代理键
         alias:
-          - 主键ID
+          - 活动快照代理键
         index_values: false
       - name: promotion_id
         description: 活动ID
@@ -929,14 +929,14 @@ tables:
         alias:
           - 赞助商ID
         index_values: true
-  - name: dwd_dim_coupon_info_df
+  - name: dim_coupon_info_df
     role: dim
-    description: 优惠券维度明细快照，记录各类优惠券的信息和使用规则
+    description: 优惠券维度每日全量快照，记录各类优惠券的信息和使用规则
     columns:
-      - name: id
-        description: 自增主键
+      - name: coupon_snapshot_sk
+        description: 优惠券快照代理键
         alias:
-          - 主键ID
+          - 优惠券快照代理键
         index_values: false
       - name: coupon_id
         description: 优惠券ID
@@ -1012,7 +1012,7 @@ tables:
         description: 可用结束时间
         alias: []
         index_values: false
-  - name: dwd_fact_trade_order_detail_di
+  - name: dwd_trade_order_detail_di
     role: fact
     description: 交易域-下单事实明细，记录订单级别的交易数据，包括商品、金额、时间等信息
     columns:
@@ -1032,7 +1032,7 @@ tables:
           - 订单ID
         index_values: false
       - name: user_id
-        reference_t_name: dwd_dim_user_info_df
+        reference_t_name: dim_user_info_zip
         reference_c_name: user_id
         description: 用户ID，关联用户维度
         alias:
@@ -1040,42 +1040,42 @@ tables:
           - 客户ID
         index_values: false
       - name: shop_id
-        reference_t_name: dwd_dim_shop_info_df
+        reference_t_name: dim_shop_info_zip
         reference_c_name: shop_id
         description: 店铺ID，关联店铺维度
         alias:
           - 店铺ID
         index_values: false
       - name: sku_id
-        reference_t_name: dwd_dim_sku_info_df
+        reference_t_name: dim_sku_info_zip
         reference_c_name: sku_id
         description: SKU ID，关联SKU维度
         alias:
           - SKU_ID
         index_values: false
       - name: spu_id
-        reference_t_name: dwd_dim_spu_info_df
+        reference_t_name: dim_spu_info_zip
         reference_c_name: spu_id
         description: SPU ID，关联SPU维度
         alias:
           - SPU_ID
         index_values: false
       - name: category_id
-        reference_t_name: dwd_dim_category_info_df
+        reference_t_name: dim_category_info_zip
         reference_c_name: category_id
         description: 类目ID，关联类目维度
         alias:
           - 类目ID
         index_values: false
       - name: brand_id
-        reference_t_name: dwd_dim_brand_info_df
+        reference_t_name: dim_brand_info_zip
         reference_c_name: brand_id
         description: 品牌ID，关联品牌维度
         alias:
           - 品牌ID
         index_values: false
       - name: province_code
-        reference_t_name: dwd_dim_geo_region_df
+        reference_t_name: dim_geo_region_zip
         reference_c_name: province_code
         description: 收货省编码，关联地区维度
         alias:
@@ -1182,7 +1182,7 @@ tables:
           - 数据日期
         index_values: false
       - name: parent_order_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_id
         description: 父订单ID(拆单场景)
         alias:
@@ -1263,7 +1263,7 @@ tables:
         alias:
           - 取消阶段
         index_values: true
-  - name: dwd_fact_trade_order_detail_activity_di
+  - name: dwd_trade_order_detail_activity_di
     role: fact
     description: 交易域-订单明细活动分摊事实，记录订单中各商品分摊的活动优惠明细
     columns:
@@ -1278,20 +1278,20 @@ tables:
           - 活动摊销ID
         index_values: false
       - name: order_detail_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_detail_id
         description: 订单明细ID，关联订单明细
         alias:
           - 订单明细ID
         index_values: false
       - name: order_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_id
         description: 订单ID
         alias: []
         index_values: false
       - name: promotion_id
-        reference_t_name: dwd_dim_promotion_info_df
+        reference_t_name: dim_promotion_info_df
         reference_c_name: promotion_id
         description: 活动ID，关联促销维度
         alias:
@@ -1327,7 +1327,7 @@ tables:
         alias:
           - 订单创建时间
         index_values: false
-  - name: dwd_fact_trade_order_detail_coupon_di
+  - name: dwd_trade_order_detail_coupon_di
     role: fact
     description: 交易域-订单明细优惠券分摊事实，记录订单中各商品分摊的优惠券优惠明细
     columns:
@@ -1342,19 +1342,19 @@ tables:
           - 优惠券摊销ID
         index_values: false
       - name: order_detail_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_detail_id
         description: 订单明细ID
         alias: []
         index_values: false
       - name: order_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_id
         description: 订单ID
         alias: []
         index_values: false
       - name: coupon_id
-        reference_t_name: dwd_dim_coupon_info_df
+        reference_t_name: dim_coupon_info_df
         reference_c_name: coupon_id
         description: 优惠券ID，关联优惠券维度
         alias:
@@ -1376,7 +1376,7 @@ tables:
           - 数据日期
         index_values: false
       - name: coupon_user_id
-        reference_t_name: dwd_dim_user_info_df
+        reference_t_name: dim_user_info_zip
         reference_c_name: user_id
         description: 领券用户ID
         alias: []
@@ -1404,7 +1404,7 @@ tables:
         alias:
           - 订单创建时间
         index_values: false
-  - name: dwd_fact_trade_pay_detail_di
+  - name: dwd_trade_pay_detail_di
     role: fact
     description: 交易域-支付事实明细，记录订单支付的详细信息和支付方式
     columns:
@@ -1418,25 +1418,25 @@ tables:
         alias: []
         index_values: false
       - name: order_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_id
         description: 订单ID
         alias: []
         index_values: false
       - name: user_id
-        reference_t_name: dwd_dim_user_info_df
+        reference_t_name: dim_user_info_zip
         reference_c_name: user_id
         description: 用户ID
         alias: []
         index_values: false
       - name: shop_id
-        reference_t_name: dwd_dim_shop_info_df
+        reference_t_name: dim_shop_info_zip
         reference_c_name: shop_id
         description: 店铺ID
         alias: []
         index_values: false
       - name: payment_type_code
-        reference_t_name: dwd_dim_payment_type_df
+        reference_t_name: dim_payment_type_zip
         reference_c_name: payment_type_code
         description: 支付方式编码，关联支付方式维度
         alias:
@@ -1527,7 +1527,7 @@ tables:
         description: 支付失败原因
         alias: []
         index_values: true
-  - name: dwd_fact_trade_delivery_detail_di
+  - name: dwd_trade_delivery_detail_di
     role: fact
     description: 交易域-履约发货事实明细，记录订单发货和物流的详细信息
     columns:
@@ -1541,31 +1541,31 @@ tables:
         alias: []
         index_values: false
       - name: order_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_id
         description: 订单ID
         alias: []
         index_values: false
       - name: order_detail_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_detail_id
         description: 订单明细ID
         alias: []
         index_values: false
       - name: user_id
-        reference_t_name: dwd_dim_user_info_df
+        reference_t_name: dim_user_info_zip
         reference_c_name: user_id
         description: 用户ID
         alias: []
         index_values: false
       - name: shop_id
-        reference_t_name: dwd_dim_shop_info_df
+        reference_t_name: dim_shop_info_zip
         reference_c_name: shop_id
         description: 店铺ID
         alias: []
         index_values: false
       - name: logistics_company_id
-        reference_t_name: dwd_dim_logistics_company_df
+        reference_t_name: dim_logistics_company_zip
         reference_c_name: logistics_company_id
         description: 物流公司ID，关联物流公司维度
         alias:
@@ -1655,7 +1655,7 @@ tables:
         description: 出库时间
         alias: []
         index_values: false
-  - name: dwd_fact_trade_refund_detail_di
+  - name: dwd_trade_refund_detail_di
     role: fact
     description: 交易域-退款事实明细，记录订单退款的详细信息和原因
     columns:
@@ -1669,31 +1669,31 @@ tables:
         alias: []
         index_values: false
       - name: order_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_id
         description: 订单ID
         alias: []
         index_values: false
       - name: order_detail_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_detail_id
         description: 订单明细ID
         alias: []
         index_values: false
       - name: user_id
-        reference_t_name: dwd_dim_user_info_df
+        reference_t_name: dim_user_info_zip
         reference_c_name: user_id
         description: 用户ID
         alias: []
         index_values: false
       - name: shop_id
-        reference_t_name: dwd_dim_shop_info_df
+        reference_t_name: dim_shop_info_zip
         reference_c_name: shop_id
         description: 店铺ID
         alias: []
         index_values: false
       - name: sku_id
-        reference_t_name: dwd_dim_sku_info_df
+        reference_t_name: dim_sku_info_zip
         reference_c_name: sku_id
         description: SKU ID
         alias:
@@ -1781,7 +1781,7 @@ tables:
         description: 退款关闭时间
         alias: []
         index_values: false
-  - name: dwd_fact_trade_refund_pay_detail_di
+  - name: dwd_trade_refund_pay_detail_di
     role: fact
     description: 交易域-退款打款事实明细，记录退款资金的实际打款信息
     columns:
@@ -1799,25 +1799,25 @@ tables:
         alias: []
         index_values: false
       - name: refund_detail_id
-        reference_t_name: dwd_fact_trade_refund_detail_di
+        reference_t_name: dwd_trade_refund_detail_di
         reference_c_name: refund_detail_id
         description: 退款明细ID
         alias: []
         index_values: false
       - name: order_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_id
         description: 订单ID
         alias: []
         index_values: false
       - name: user_id
-        reference_t_name: dwd_dim_user_info_df
+        reference_t_name: dim_user_info_zip
         reference_c_name: user_id
         description: 用户ID
         alias: []
         index_values: false
       - name: payment_type_code
-        reference_t_name: dwd_dim_payment_type_df
+        reference_t_name: dim_payment_type_zip
         reference_c_name: payment_type_code
         description: 原支付方式编码
         alias:
@@ -1843,7 +1843,7 @@ tables:
         alias: []
         index_values: true
       - name: order_detail_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_detail_id
         description: 订单明细ID
         alias: []
@@ -1869,7 +1869,7 @@ tables:
         description: 退款失败原因
         alias: []
         index_values: true
-  - name: dwd_fact_interaction_cart_add_di
+  - name: dwd_interaction_cart_add_di
     role: fact
     description: 互动域-加购事实明细，记录用户加购行为的事件数据
     columns:
@@ -1883,7 +1883,7 @@ tables:
         alias: []
         index_values: false
       - name: user_id
-        reference_t_name: dwd_dim_user_info_df
+        reference_t_name: dim_user_info_zip
         reference_c_name: user_id
         description: 用户ID
         alias: []
@@ -1893,27 +1893,27 @@ tables:
         alias: []
         index_values: false
       - name: shop_id
-        reference_t_name: dwd_dim_shop_info_df
+        reference_t_name: dim_shop_info_zip
         reference_c_name: shop_id
         description: 店铺ID
         alias: []
         index_values: false
       - name: sku_id
-        reference_t_name: dwd_dim_sku_info_df
+        reference_t_name: dim_sku_info_zip
         reference_c_name: sku_id
         description: SKU ID
         alias:
           - SKU_ID
         index_values: false
       - name: spu_id
-        reference_t_name: dwd_dim_spu_info_df
+        reference_t_name: dim_spu_info_zip
         reference_c_name: spu_id
         description: SPU ID
         alias:
           - SPU_ID
         index_values: false
       - name: category_id
-        reference_t_name: dwd_dim_category_info_df
+        reference_t_name: dim_category_info_zip
         reference_c_name: category_id
         description: 类目ID
         alias: []
@@ -1962,7 +1962,7 @@ tables:
         description: 渠道编码
         alias: []
         index_values: true
-  - name: dwd_fact_interaction_favor_add_di
+  - name: dwd_interaction_favor_add_di
     role: fact
     description: 互动域-收藏事实明细，记录用户收藏商品或店铺的行为数据
     columns:
@@ -1976,26 +1976,26 @@ tables:
         alias: []
         index_values: false
       - name: user_id
-        reference_t_name: dwd_dim_user_info_df
+        reference_t_name: dim_user_info_zip
         reference_c_name: user_id
         description: 用户ID
         alias: []
         index_values: false
       - name: shop_id
-        reference_t_name: dwd_dim_shop_info_df
+        reference_t_name: dim_shop_info_zip
         reference_c_name: shop_id
         description: 店铺ID
         alias: []
         index_values: false
       - name: sku_id
-        reference_t_name: dwd_dim_sku_info_df
+        reference_t_name: dim_sku_info_zip
         reference_c_name: sku_id
         description: SKU ID
         alias:
           - SKU_ID
         index_values: false
       - name: spu_id
-        reference_t_name: dwd_dim_spu_info_df
+        reference_t_name: dim_spu_info_zip
         reference_c_name: spu_id
         description: SPU ID
         alias:
@@ -2027,7 +2027,7 @@ tables:
         description: 渠道编码
         alias: []
         index_values: true
-  - name: dwd_fact_traffic_page_view_di
+  - name: dwd_traffic_page_view_di
     role: fact
     description: 流量域-页面访问事实明细，记录用户的页面浏览行为数据
     columns:
@@ -2042,7 +2042,7 @@ tables:
           - 页面访问ID
         index_values: false
       - name: user_id
-        reference_t_name: dwd_dim_user_info_df
+        reference_t_name: dim_user_info_zip
         reference_c_name: user_id
         description: 用户ID
         alias: []
@@ -2140,7 +2140,7 @@ tables:
           - 城市编码
           - 市代码
         index_values: true
-  - name: dwd_fact_traffic_search_di
+  - name: dwd_traffic_search_di
     role: fact
     description: 流量域-搜索事实明细，记录用户的搜索行为及结果点击数据
     columns:
@@ -2154,7 +2154,7 @@ tables:
         alias: []
         index_values: false
       - name: user_id
-        reference_t_name: dwd_dim_user_info_df
+        reference_t_name: dim_user_info_zip
         reference_c_name: user_id
         description: 用户ID
         alias: []
@@ -2188,7 +2188,7 @@ tables:
           - 点击排名
         index_values: false
       - name: click_sku_id
-        reference_t_name: dwd_dim_sku_info_df
+        reference_t_name: dim_sku_info_zip
         reference_c_name: sku_id
         description: 点击SKU ID
         alias:
@@ -2216,7 +2216,7 @@ tables:
         alias: []
         index_values: true
       - name: click_spu_id
-        reference_t_name: dwd_dim_spu_info_df
+        reference_t_name: dim_spu_info_zip
         reference_c_name: spu_id
         description: 点击SPU ID
         alias:
@@ -2235,7 +2235,7 @@ tables:
         alias:
           - 终端类型
         index_values: true
-  - name: dwd_fact_service_comment_detail_di
+  - name: dwd_service_comment_detail_di
     role: fact
     description: 服务域-评价事实明细，记录用户对订单的评价信息和评分
     columns:
@@ -2249,38 +2249,38 @@ tables:
         alias: []
         index_values: false
       - name: order_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_id
         description: 订单ID
         alias: []
         index_values: false
       - name: order_detail_id
-        reference_t_name: dwd_fact_trade_order_detail_di
+        reference_t_name: dwd_trade_order_detail_di
         reference_c_name: order_detail_id
         description: 订单明细ID
         alias: []
         index_values: false
       - name: user_id
-        reference_t_name: dwd_dim_user_info_df
+        reference_t_name: dim_user_info_zip
         reference_c_name: user_id
         description: 用户ID
         alias: []
         index_values: false
       - name: shop_id
-        reference_t_name: dwd_dim_shop_info_df
+        reference_t_name: dim_shop_info_zip
         reference_c_name: shop_id
         description: 店铺ID
         alias: []
         index_values: false
       - name: sku_id
-        reference_t_name: dwd_dim_sku_info_df
+        reference_t_name: dim_sku_info_zip
         reference_c_name: sku_id
         description: SKU ID
         alias:
           - SKU_ID
         index_values: false
       - name: spu_id
-        reference_t_name: dwd_dim_spu_info_df
+        reference_t_name: dim_spu_info_zip
         reference_c_name: spu_id
         description: SPU ID
         alias:
@@ -2335,7 +2335,7 @@ tables:
         alias: []
         index_values: true
       - name: category_id
-        reference_t_name: dwd_dim_category_info_df
+        reference_t_name: dim_category_info_zip
         reference_c_name: category_id
         description: 类目ID
         alias:
@@ -2361,7 +2361,7 @@ tables:
         description: 敏感标签
         alias: []
         index_values: true
-  - name: dwd_fact_inventory_change_di
+  - name: dwd_inventory_change_di
     role: fact
     description: 库存域-库存变更事实明细，记录商品库存的增减变动情况
     columns:
@@ -2376,21 +2376,21 @@ tables:
           - 库存变更ID
         index_values: false
       - name: sku_id
-        reference_t_name: dwd_dim_sku_info_df
+        reference_t_name: dim_sku_info_zip
         reference_c_name: sku_id
         description: SKU ID
         alias:
           - SKU_ID
         index_values: false
       - name: spu_id
-        reference_t_name: dwd_dim_spu_info_df
+        reference_t_name: dim_spu_info_zip
         reference_c_name: spu_id
         description: SPU ID
         alias:
           - SPU_ID
         index_values: false
       - name: shop_id
-        reference_t_name: dwd_dim_shop_info_df
+        reference_t_name: dim_shop_info_zip
         reference_c_name: shop_id
         description: 店铺ID
         alias: []
@@ -2485,7 +2485,7 @@ metrics:
   - name: GMV
     description: 全称Gross Merchandise Value，表示所有订单的成交金额总和，即应付金额合计
     relevant_columns:
-      - t_name: dwd_fact_trade_order_detail_di
+      - t_name: dwd_trade_order_detail_di
         c_name: payable_amount
     alias:
       - 成交总额
@@ -2495,7 +2495,7 @@ metrics:
   - name: 实付GMV
     description: 用户实际支付的金额总和
     relevant_columns:
-      - t_name: dwd_fact_trade_order_detail_di
+      - t_name: dwd_trade_order_detail_di
         c_name: paid_amount
     alias:
       - 实付金额
@@ -2504,7 +2504,7 @@ metrics:
   - name: 订单量
     description: 订单数量统计，去重后的订单数
     relevant_columns:
-      - t_name: dwd_fact_trade_order_detail_di
+      - t_name: dwd_trade_order_detail_di
         c_name: order_id
     alias:
       - 订单数
@@ -2512,7 +2512,7 @@ metrics:
   - name: 销量
     description: 商品销售件数总和
     relevant_columns:
-      - t_name: dwd_fact_trade_order_detail_di
+      - t_name: dwd_trade_order_detail_di
         c_name: sku_num
     alias:
       - 销售件数
@@ -2521,9 +2521,9 @@ metrics:
   - name: 客单价
     description: 平均每个订单的金额，GMV除以订单量
     relevant_columns:
-      - t_name: dwd_fact_trade_order_detail_di
+      - t_name: dwd_trade_order_detail_di
         c_name: payable_amount
-      - t_name: dwd_fact_trade_order_detail_di
+      - t_name: dwd_trade_order_detail_di
         c_name: order_id
     alias:
       - 平均订单金额
@@ -2532,7 +2532,7 @@ metrics:
   - name: 退款金额
     description: 退款成功的金额总和
     relevant_columns:
-      - t_name: dwd_fact_trade_refund_detail_di
+      - t_name: dwd_trade_refund_detail_di
         c_name: refund_success_amount
     alias:
       - 退款总额
@@ -2540,14 +2540,14 @@ metrics:
   - name: 退款订单数
     description: 发生退款的订单数量
     relevant_columns:
-      - t_name: dwd_fact_trade_refund_detail_di
+      - t_name: dwd_trade_refund_detail_di
         c_name: order_id
     alias:
       - 退款笔数
   - name: 加购次数
     description: 用户加购行为的次数统计
     relevant_columns:
-      - t_name: dwd_fact_interaction_cart_add_di
+      - t_name: dwd_interaction_cart_add_di
         c_name: cart_add_id
     alias:
       - 加购量
@@ -2555,21 +2555,21 @@ metrics:
   - name: 加购商品数
     description: 加购的商品件数总和
     relevant_columns:
-      - t_name: dwd_fact_interaction_cart_add_di
+      - t_name: dwd_interaction_cart_add_di
         c_name: add_sku_num
     alias:
       - 加购件数
   - name: 收藏次数
     description: 用户收藏商品或店铺的次数
     relevant_columns:
-      - t_name: dwd_fact_interaction_favor_add_di
+      - t_name: dwd_interaction_favor_add_di
         c_name: favor_add_id
     alias:
       - 收藏量
   - name: 搜索次数
     description: 用户发起搜索的次数统计
     relevant_columns:
-      - t_name: dwd_fact_traffic_search_di
+      - t_name: dwd_traffic_search_di
         c_name: search_detail_id
     alias:
       - 搜索量
@@ -2577,7 +2577,7 @@ metrics:
   - name: 页面浏览量
     description: 页面被访问的总次数
     relevant_columns:
-      - t_name: dwd_fact_traffic_page_view_di
+      - t_name: dwd_traffic_page_view_di
         c_name: page_view_id
     alias:
       - PV
@@ -2586,21 +2586,21 @@ metrics:
   - name: 平均停留时长
     description: 用户在页面上停留的平均秒数
     relevant_columns:
-      - t_name: dwd_fact_traffic_page_view_di
+      - t_name: dwd_traffic_page_view_di
         c_name: stay_duration_sec
     alias:
       - 平均停留时间
   - name: 好评率
     description: 4-5分评价占所有评价的比例
     relevant_columns:
-      - t_name: dwd_fact_service_comment_detail_di
+      - t_name: dwd_service_comment_detail_di
         c_name: comment_level
     alias:
       - 好评比例
   - name: 平均评分
     description: 用户评价的平均分数
     relevant_columns:
-      - t_name: dwd_fact_service_comment_detail_di
+      - t_name: dwd_service_comment_detail_di
         c_name: comment_level
     alias:
       - 平均星级
@@ -2608,7 +2608,7 @@ metrics:
   - name: 支付金额
     description: 用户支付成功的总金额
     relevant_columns:
-      - t_name: dwd_fact_trade_pay_detail_di
+      - t_name: dwd_trade_pay_detail_di
         c_name: total_pay_amount
     alias:
       - 支付总额
@@ -2616,30 +2616,30 @@ metrics:
   - name: 支付订单数
     description: 支付成功的订单数量
     relevant_columns:
-      - t_name: dwd_fact_trade_pay_detail_di
+      - t_name: dwd_trade_pay_detail_di
         c_name: order_id
     alias:
       - 支付笔数
   - name: 发货订单数
     description: 已发货的订单数量
     relevant_columns:
-      - t_name: dwd_fact_trade_delivery_detail_di
+      - t_name: dwd_trade_delivery_detail_di
         c_name: order_id
     alias:
       - 发货笔数
   - name: 库存变动量
     description: 库存数量的变动统计
     relevant_columns:
-      - t_name: dwd_fact_inventory_change_di
+      - t_name: dwd_inventory_change_di
         c_name: change_qty
     alias:
       - 库存变化量
   - name: 活动优惠金额
     description: 促销活动在订单中优惠的总金额
     relevant_columns:
-      - t_name: dwd_fact_trade_order_detail_di
+      - t_name: dwd_trade_order_detail_di
         c_name: activity_discount_amount
-      - t_name: dwd_fact_trade_order_detail_activity_di
+      - t_name: dwd_trade_order_detail_activity_di
         c_name: promotion_discount_amount
     alias:
       - 促销优惠
@@ -2647,9 +2647,9 @@ metrics:
   - name: 优惠券优惠金额
     description: 优惠券在订单中抵扣的总金额
     relevant_columns:
-      - t_name: dwd_fact_trade_order_detail_di
+      - t_name: dwd_trade_order_detail_di
         c_name: coupon_discount_amount
-      - t_name: dwd_fact_trade_order_detail_coupon_di
+      - t_name: dwd_trade_order_detail_coupon_di
         c_name: coupon_discount_amount
     alias:
       - 券优惠

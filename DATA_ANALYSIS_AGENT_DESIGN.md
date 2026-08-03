@@ -296,17 +296,17 @@ metric_type: ratio
 numerator:
   aggregation: count_distinct
   column:
-    t_name: dwd_fact_trade_pay_detail_di
+    t_name: dwd_trade_pay_detail_di
     c_name: order_id
   filters:
     pay_status: 已支付
 denominator:
   aggregation: count_distinct
   column:
-    t_name: dwd_fact_traffic_page_view_di
+    t_name: dwd_traffic_page_view_di
     c_name: visitor_id
 time_column:
-  t_name: dwd_fact_trade_pay_detail_di
+  t_name: dwd_trade_pay_detail_di
   c_name: etl_date
 ```
 

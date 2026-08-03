@@ -33,7 +33,7 @@ MONEY_ZERO = Decimal("0.00")
 
 def _has_rows(conn, table) -> bool:
     """判断目标表是否已有数据"""
-    return conn.execute(select(table.c.id).limit(1)).first() is not None
+    return conn.execute(select(table).limit(1)).first() is not None
 
 
 def _load_current_rows(conn, table) -> list[dict[str, Any]]:
@@ -196,22 +196,22 @@ def run(ctx: RunContext) -> None:
     metadata.reflect(
         bind=ctx.engine,
         only=[
-            "dwd_dim_user_info_df",
-            "dwd_dim_sku_info_df",
-            "dwd_dim_category_info_df",
-            "dwd_fact_interaction_cart_add_di",
-            "dwd_fact_interaction_favor_add_di",
-            "dwd_fact_traffic_page_view_di",
-            "dwd_fact_traffic_search_di",
+            "dim_user_info_zip",
+            "dim_sku_info_zip",
+            "dim_category_info_zip",
+            "dwd_interaction_cart_add_di",
+            "dwd_interaction_favor_add_di",
+            "dwd_traffic_page_view_di",
+            "dwd_traffic_search_di",
         ],
     )
-    user_table = metadata.tables["dwd_dim_user_info_df"]
-    sku_table = metadata.tables["dwd_dim_sku_info_df"]
-    category_table = metadata.tables["dwd_dim_category_info_df"]
-    cart_table = metadata.tables["dwd_fact_interaction_cart_add_di"]
-    favor_table = metadata.tables["dwd_fact_interaction_favor_add_di"]
-    page_view_table = metadata.tables["dwd_fact_traffic_page_view_di"]
-    search_table = metadata.tables["dwd_fact_traffic_search_di"]
+    user_table = metadata.tables["dim_user_info_zip"]
+    sku_table = metadata.tables["dim_sku_info_zip"]
+    category_table = metadata.tables["dim_category_info_zip"]
+    cart_table = metadata.tables["dwd_interaction_cart_add_di"]
+    favor_table = metadata.tables["dwd_interaction_favor_add_di"]
+    page_view_table = metadata.tables["dwd_traffic_page_view_di"]
+    search_table = metadata.tables["dwd_traffic_search_di"]
 
     with ctx.engine.begin() as conn:
         table_has_rows = {
