@@ -68,8 +68,6 @@
 
 这些字段不是外部平台采集记录，但必须满足真实业务的时间顺序、金额关系、状态流转和库存连续性
 
-当前已知的真实性问题、修改优先级和验收标准见 [REALISM_ROADMAP.md](REALISM_ROADMAP.md)
-
 ## 生成架构
 
 数仓包含 45 张业务表，生成检查点不进入 Doris
@@ -326,7 +324,6 @@ src/quality.py                  跨表质量校验
 src/support.py                  公共审计和并发装载能力
 tests/test_timeline.py          时间计划和日级业务链路测试
 tests/test_catalog_quality.py   商品价格、规格和控件词清洗测试
-REALISM_ROADMAP.md              数据真实性整改优先级和验收标准
 data/                           本地商品目录和采集缓存
 ```
 
