@@ -20,7 +20,7 @@ from app.entities.meta import (
 )
 from app.errors import meta_error
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
-from app.repositories.source_mysql_repo import SourceMySQLRepo
+from app.repositories.source_doris_repo import SourceDorisRepo
 from app.services.index_service import IndexService
 
 
@@ -30,7 +30,7 @@ class MetaService:
     def __init__(
         self,
         meta_repo: MetaMySQLRepo,
-        source_repo: SourceMySQLRepo,
+        source_repo: SourceDorisRepo,
         index_service: IndexService,
     ) -> None:
         """初始化元数据管理服务"""

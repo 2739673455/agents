@@ -1,0 +1,136 @@
+"""语义目录检索模型"""
+
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+SemanticResourceType = Literal["column", "metric", "value"]
+SemanticIndexStatus = Literal["current", "stale", "missing"]
+SemanticTextType = Literal["name", "description", "alias"]
+
+
+@dataclass(frozen=True, slots=True)
+class SearchHit[SearchItemT]:
+    """索引命中及原始分数"""
+
+    item: SearchItemT
+    score: float
+
+
+class SemanticSearchRequest(BaseModel):
+    """语义目录检索请求"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=1000)
+    terms: list[str] = Field(default_factory=list, max_length=8)
+    resource_types: list[SemanticResourceType] = Field(
+        default_factory=lambda: ["column", "metric", "value"],
+        min_length=1,
+        max_length=3,
+    )
+    table_names: list[str] = Field(default_factory=list, max_length=20)
+    limit_per_type: int = Field(default=5, ge=1, le=20)
+    include_relations: bool = True
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def strip_query(cls, value: object) -> object:
+        """清理原始检索文本"""
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("terms", "table_names")
+    @classmethod
+    def normalize_string_list(cls, values: list[str]) -> list[str]:
+        """清理并稳定去重字符串列表"""
+        return list(dict.fromkeys(value.strip() for value in values if value.strip()))
+
+    @field_validator("resource_types")
+    @classmethod
+    def deduplicate_resource_types(
+        cls, values: list[SemanticResourceType]
+    ) -> list[SemanticResourceType]:
+        """稳定去重资源类型"""
+        return list(dict.fromkeys(values))
+
+
+class SemanticMetricResult(BaseModel):
+    """指标语义检索结果"""
+
+    name: str
+    description: str
+    alias: list[str]
+    relevant_columns: list[dict[str, str]]
+    rank_score: float
+    match_reasons: list[str]
+    meta_version: int
+    index_version: int
+    index_status: SemanticIndexStatus
+
+
+class SemanticColumnResult(BaseModel):
+    """字段语义检索结果"""
+
+    t_name: str
+    name: str
+    type: str
+    description: str
+    alias: list[str]
+    examples: list[Any]
+    reference_t_name: str | None
+    reference_c_name: str | None
+    inclusion_reasons: list[str]
+    rank_score: float | None
+    match_reasons: list[str]
+    meta_version: int
+    index_version: int
+    index_status: SemanticIndexStatus
+
+
+class SemanticValueResult(BaseModel):
+    """字段取值语义检索结果"""
+
+    value: str
+    t_name: str
+    c_name: str
+    rank_score: float
+    match_reasons: list[str]
+    sync_status: Literal["syncing", "succeeded", "failed"] | None
+    synced_at: datetime | None
+
+
+class SemanticTableContext(BaseModel):
+    """表语义上下文"""
+
+    name: str
+    role: str
+    description: str
+    primary_key_columns: list[str]
+    meta_version: int
+
+
+class SemanticRelation(BaseModel):
+    """字段关联关系"""
+
+    source_t_name: str
+    source_c_name: str
+    target_t_name: str
+    target_c_name: str
+    type: Literal["foreign_key"] = "foreign_key"
+
+
+class SemanticSearchResponse(BaseModel):
+    """语义目录检索响应"""
+
+    status: Literal["success", "partial"]
+    search_id: str
+    queries: list[str]
+    metrics: list[SemanticMetricResult]
+    columns: list[SemanticColumnResult]
+    values: list[SemanticValueResult]
+    tables: list[SemanticTableContext]
+    relations: list[SemanticRelation]
+    warnings: list[str]
+    truncated: bool

@@ -6,13 +6,15 @@ from typing import Any, ClassVar
 
 from elasticsearch import AsyncElasticsearch
 
+from app.conf.app_config import cfg
 from app.entities.meta import ValueInfo
+from app.entities.semantic_search import SearchHit
 
 
 class ValueESRepo:
     """字段取值索引存储"""
 
-    _index_name = "data-agent-value"
+    _index_name = cfg.elasticsearch.value_index
     _index_mappings: ClassVar[dict[str, Any]] = {
         "dynamic": False,
         "properties": {
@@ -86,14 +88,32 @@ class ValueESRepo:
             refresh=True,
         )
 
-    async def search(
-        self, keyword: str, score_threshold: float = 0.6, limit: int = 5
-    ) -> list[ValueInfo]:
-        """根据关键词检索字段取值"""
+    async def search_hits(
+        self,
+        keyword: str,
+        score_threshold: float = 0.6,
+        limit: int = 5,
+        table_names: list[str] | None = None,
+    ) -> list[SearchHit[ValueInfo]]:
+        """根据关键词检索字段取值并保留命中分数"""
+        query: dict[str, Any] = {"match": {"value": keyword}}
+        if table_names:
+            query = {
+                "bool": {
+                    "must": [query],
+                    "filter": [{"terms": {"t_name": table_names}}],
+                }
+            }
         result = await self._client.search(
             index=self._index_name,
-            query={"match": {"value": keyword}},
+            query=query,
             min_score=score_threshold,
             size=limit,
         )
-        return [ValueInfo(**hit["_source"]) for hit in result["hits"]["hits"]]
+        return [
+            SearchHit(
+                item=ValueInfo(**hit["_source"]),
+                score=float(hit.get("_score") or 0.0),
+            )
+            for hit in result["hits"]["hits"]
+        ]

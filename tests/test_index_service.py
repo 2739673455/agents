@@ -10,10 +10,10 @@ from elasticsearch import AsyncElasticsearch
 
 from app.clients.embedding_client_manager import EmbeddingClient
 from app.entities.meta import ColumnInfo, MetricInfo, ValueInfo
-from app.repositories.column_qdrant_repo import ColumnQdrantRepo
+from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
-from app.repositories.metric_qdrant_repo import MetricQdrantRepo
-from app.repositories.source_mysql_repo import SourceMySQLRepo
+from app.repositories.metric_es_repo import MetricESRepo
+from app.repositories.source_doris_repo import SourceDorisRepo
 from app.repositories.value_es_repo import ValueESRepo
 from app.services.index_service import IndexService
 
@@ -28,15 +28,18 @@ class BatchIndexSyncTest(unittest.IsolatedAsyncioTestCase):
         column_repo: MagicMock,
         embedding_client: MagicMock,
         value_repo: MagicMock,
-        metric_repo: MagicMock,
+        metric_repo: MagicMock | None = None,
     ) -> IndexService:
         return IndexService(
             meta_repo=cast(MetaMySQLRepo, meta_repo),
-            source_repo=cast(SourceMySQLRepo, source_repo),
-            column_repo=cast(ColumnQdrantRepo, column_repo),
+            source_repo=cast(SourceDorisRepo, source_repo),
+            column_repo=cast(ColumnESRepo, column_repo),
+            metric_repo=cast(
+                MetricESRepo,
+                metric_repo or MagicMock(spec=MetricESRepo),
+            ),
             embedding_client=cast(EmbeddingClient, embedding_client),
             value_repo=cast(ValueESRepo, value_repo),
-            metric_repo=cast(MetricQdrantRepo, metric_repo),
         )
 
     async def test_sync_column_values_deduplicates_columns(self) -> None:
@@ -83,7 +86,7 @@ class BatchIndexSyncTest(unittest.IsolatedAsyncioTestCase):
         meta_repo.mark_column_values_failed = MagicMock(
             side_effect=MetaMySQLRepo.mark_column_values_failed
         )
-        source_repo = MagicMock(spec=SourceMySQLRepo)
+        source_repo = MagicMock(spec=SourceDorisRepo)
 
         async def iter_column_value_batches(
             t_name: str,
@@ -102,10 +105,9 @@ class BatchIndexSyncTest(unittest.IsolatedAsyncioTestCase):
         service = self._build_service(
             meta_repo,
             source_repo,
-            MagicMock(spec=ColumnQdrantRepo),
+            MagicMock(spec=ColumnESRepo),
             MagicMock(spec=EmbeddingClient),
             value_repo,
-            MagicMock(spec=MetricQdrantRepo),
         )
 
         results = await service.sync_column_values(
@@ -157,7 +159,7 @@ class BatchIndexSyncTest(unittest.IsolatedAsyncioTestCase):
         meta_repo.mark_column_values_failed = MagicMock(
             side_effect=MetaMySQLRepo.mark_column_values_failed
         )
-        source_repo = MagicMock(spec=SourceMySQLRepo)
+        source_repo = MagicMock(spec=SourceDorisRepo)
 
         async def iter_column_value_batches(t_name: str, c_name: str):
             yield ["Alice"]
@@ -170,10 +172,9 @@ class BatchIndexSyncTest(unittest.IsolatedAsyncioTestCase):
         service = self._build_service(
             meta_repo,
             source_repo,
-            MagicMock(spec=ColumnQdrantRepo),
+            MagicMock(spec=ColumnESRepo),
             MagicMock(spec=EmbeddingClient),
             value_repo,
-            MagicMock(spec=MetricQdrantRepo),
         )
 
         with self.assertRaisesRegex(RuntimeError, "ES unavailable"):
@@ -182,6 +183,59 @@ class BatchIndexSyncTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(column_info.value_index_sync_status, "failed")
         self.assertEqual(column_info.value_index_synced_at, previous_synced_at)
         meta_repo.mark_column_values_succeeded.assert_not_called()
+
+    async def test_sync_column_index_writes_text_and_vector_documents(self) -> None:
+        """字段同步同时写入全文内容和向量"""
+        column_info = ColumnInfo(
+            t_name="orders",
+            name="amount",
+            type="decimal",
+            description="订单金额",
+            examples=[99],
+            alias=["销售额"],
+            index_values=False,
+            meta_version=2,
+            index_version=1,
+        )
+
+        @asynccontextmanager
+        async def transaction():
+            yield
+
+        meta_repo = MagicMock(spec=MetaMySQLRepo)
+        meta_repo.transaction.side_effect = transaction
+        meta_repo.get_column_info = AsyncMock(return_value=column_info)
+        meta_repo.mark_column_indexed = MagicMock(
+            side_effect=MetaMySQLRepo.mark_column_indexed
+        )
+        embedding_client = MagicMock(spec=EmbeddingClient)
+        embedding_client.aembed_documents = AsyncMock(
+            side_effect=lambda texts: [[0.1] for _ in texts]
+        )
+        column_repo = MagicMock(spec=ColumnESRepo)
+        column_repo.ensure_index = AsyncMock()
+        column_repo.delete = AsyncMock()
+        column_repo.index = AsyncMock()
+        column_repo.refresh = AsyncMock()
+        service = self._build_service(
+            meta_repo,
+            MagicMock(spec=SourceDorisRepo),
+            column_repo,
+            embedding_client,
+            MagicMock(spec=ValueESRepo),
+        )
+
+        result = await service.sync_column_indexes([("orders", "amount")])
+
+        self.assertEqual(result, {("orders", "amount"): 3})
+        column_repo.delete.assert_awaited_once_with("orders", "amount")
+        column_repo.index.assert_awaited_once()
+        index_args = column_repo.index.await_args.args
+        self.assertEqual(index_args[1], ["amount", "订单金额", "销售额"])
+        self.assertEqual(index_args[2], ["name", "description", "alias"])
+        column_repo.ensure_index.assert_awaited_once()
+        column_repo.refresh.assert_awaited_once()
+        self.assertEqual(column_info.index_version, 2)
 
     async def test_sync_metric_indexes_deduplicates_metrics(self) -> None:
         metrics = {
@@ -217,14 +271,15 @@ class BatchIndexSyncTest(unittest.IsolatedAsyncioTestCase):
         embedding_client.aembed_documents = AsyncMock(
             side_effect=lambda texts: [[0.1] for _ in texts]
         )
-        metric_repo = MagicMock(spec=MetricQdrantRepo)
-        metric_repo.ensure_collection = AsyncMock()
-        metric_repo.delete_by_name = AsyncMock()
-        metric_repo.upsert = AsyncMock()
+        metric_repo = MagicMock(spec=MetricESRepo)
+        metric_repo.ensure_index = AsyncMock()
+        metric_repo.delete = AsyncMock()
+        metric_repo.index = AsyncMock()
+        metric_repo.refresh = AsyncMock()
         service = self._build_service(
             meta_repo,
-            MagicMock(spec=SourceMySQLRepo),
-            MagicMock(spec=ColumnQdrantRepo),
+            MagicMock(spec=SourceDorisRepo),
+            MagicMock(spec=ColumnESRepo),
             embedding_client,
             MagicMock(spec=ValueESRepo),
             metric_repo,
@@ -234,21 +289,23 @@ class BatchIndexSyncTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(results, {"用户数": 3, "订单数": 2})
         self.assertEqual(meta_repo.get_metric_info.await_count, 2)
-        metric_repo.delete_by_name.assert_has_awaits([call("用户数"), call("订单数")])
-        self.assertEqual(metric_repo.upsert.await_count, 2)
+        metric_repo.delete.assert_has_awaits([call("用户数"), call("订单数")])
+        self.assertEqual(metric_repo.index.await_count, 2)
+        self.assertEqual(metric_repo.ensure_index.await_count, 2)
+        self.assertEqual(metric_repo.refresh.await_count, 2)
         self.assertEqual(metrics["用户数"].index_version, 1)
         self.assertEqual(metrics["订单数"].index_version, 1)
 
     async def test_delete_indexes_deduplicates_resources(self) -> None:
-        column_repo = MagicMock(spec=ColumnQdrantRepo)
+        column_repo = MagicMock(spec=ColumnESRepo)
         column_repo.delete = AsyncMock()
+        metric_repo = MagicMock(spec=MetricESRepo)
+        metric_repo.delete = AsyncMock()
         value_repo = MagicMock(spec=ValueESRepo)
         value_repo.delete_by_column = AsyncMock()
-        metric_repo = MagicMock(spec=MetricQdrantRepo)
-        metric_repo.delete_by_name = AsyncMock()
         service = self._build_service(
             MagicMock(spec=MetaMySQLRepo),
-            MagicMock(spec=SourceMySQLRepo),
+            MagicMock(spec=SourceDorisRepo),
             column_repo,
             MagicMock(spec=EmbeddingClient),
             value_repo,
@@ -266,7 +323,7 @@ class BatchIndexSyncTest(unittest.IsolatedAsyncioTestCase):
         value_repo.delete_by_column.assert_has_awaits(
             [call("users", "name"), call("orders", "id")]
         )
-        metric_repo.delete_by_name.assert_has_awaits([call("用户数"), call("订单数")])
+        metric_repo.delete.assert_has_awaits([call("用户数"), call("订单数")])
 
 
 class ValueESRepoTest(unittest.IsolatedAsyncioTestCase):

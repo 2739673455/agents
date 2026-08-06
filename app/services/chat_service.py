@@ -112,7 +112,7 @@ async def _execute_agent(
     # 创建 Agent 运行配置
     config = RunnableConfig(configurable={"workspace_dir": str(workspace_dir)})
     # 获取 Agent 实例
-    agent = await get_agent()
+    agent = await get_agent(user_id, conversation_id)
 
     async for chunk in agent.astream(input={"messages": messages}, config=config):
         yield chunk

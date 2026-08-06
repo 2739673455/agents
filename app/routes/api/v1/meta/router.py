@@ -17,13 +17,10 @@ from fastapi import (
 from pydantic import ValidationError as PydanticValidationError
 from yaml import YAMLError
 
+from app.clients.doris_client_manager import source_doris_client_manager
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
-from app.clients.mysql_client_manager import (
-    meta_mysql_client_manager,
-    source_mysql_client_manager,
-)
-from app.clients.qdrant_client_manager import qdrant_client_manager
+from app.clients.mysql_client_manager import meta_mysql_client_manager
 from app.conf.meta_config import MetaConfig, MetadataName
 from app.entities.meta import (
     ColumnKey,
@@ -31,10 +28,10 @@ from app.entities.meta import (
     MetricInfo,
 )
 from app.errors import meta_error
-from app.repositories.column_qdrant_repo import ColumnQdrantRepo
+from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
-from app.repositories.metric_qdrant_repo import MetricQdrantRepo
-from app.repositories.source_mysql_repo import SourceMySQLRepo
+from app.repositories.metric_es_repo import MetricESRepo
+from app.repositories.source_doris_repo import SourceDorisRepo
 from app.repositories.value_es_repo import ValueESRepo
 from app.routes.api.v1.meta import schemas
 from app.services.index_service import IndexService
@@ -51,16 +48,16 @@ MetadataPath = Annotated[MetadataName, Path()]
 
 def _build_index_service(
     meta_repo: MetaMySQLRepo,
-    source_repo: SourceMySQLRepo,
+    source_repo: SourceDorisRepo,
 ) -> IndexService:
     """创建索引同步服务"""
     return IndexService(
         meta_repo=meta_repo,
         source_repo=source_repo,
-        column_repo=ColumnQdrantRepo(qdrant_client_manager.get_client()),
+        column_repo=ColumnESRepo(es_client_manager.get_client()),
+        metric_repo=MetricESRepo(es_client_manager.get_client()),
         embedding_client=embedding_client_manager.get_client(),
         value_repo=ValueESRepo(es_client_manager.get_client()),
-        metric_repo=MetricQdrantRepo(qdrant_client_manager.get_client()),
     )
 
 
@@ -68,10 +65,10 @@ async def get_meta_service() -> AsyncGenerator[MetaService]:
     """创建请求级元数据管理服务"""
     async with (
         meta_mysql_client_manager.session() as meta_session,
-        source_mysql_client_manager.session() as source_session,
+        source_doris_client_manager.connection() as source_connection,
     ):
         meta_repo = MetaMySQLRepo(meta_session)
-        source_repo = SourceMySQLRepo(source_session)
+        source_repo = SourceDorisRepo(source_connection)
         yield MetaService(
             meta_repo=meta_repo,
             source_repo=source_repo,
@@ -83,11 +80,11 @@ async def get_index_service() -> AsyncGenerator[IndexService]:
     """创建请求级索引同步服务"""
     async with (
         meta_mysql_client_manager.session() as meta_session,
-        source_mysql_client_manager.session() as source_session,
+        source_doris_client_manager.connection() as source_connection,
     ):
         yield _build_index_service(
             MetaMySQLRepo(meta_session),
-            SourceMySQLRepo(source_session),
+            SourceDorisRepo(source_connection),
         )
 
 
@@ -95,10 +92,10 @@ async def get_meta_import_service() -> AsyncGenerator[MetaImportService]:
     """创建请求级元数据导入服务"""
     async with (
         meta_mysql_client_manager.session() as meta_session,
-        source_mysql_client_manager.session() as source_session,
+        source_doris_client_manager.connection() as source_connection,
     ):
         meta_repo = MetaMySQLRepo(meta_session)
-        source_repo = SourceMySQLRepo(source_session)
+        source_repo = SourceDorisRepo(source_connection)
         yield MetaImportService(
             meta_repo=meta_repo,
             source_repo=source_repo,
@@ -332,7 +329,7 @@ async def sync_column_indexes(
     body: schemas.ColumnIndexSyncRequest,
     service: IndexServiceDep,
 ) -> schemas.BatchIndexSyncResponse:
-    """同步多个字段的向量索引"""
+    """同步多个字段的语义索引"""
     results = await service.sync_column_indexes(
         [(column.t_name, column.c_name) for column in body.columns]
     )
@@ -374,7 +371,7 @@ async def sync_metric_indexes(
     body: schemas.MetricIndexSyncRequest,
     service: IndexServiceDep,
 ) -> schemas.BatchMetricIndexSyncResponse:
-    """同步多个指标的向量索引"""
+    """同步多个指标的语义索引"""
     results = await service.sync_metric_indexes(body.metrics)
     return schemas.BatchMetricIndexSyncResponse(
         results=[

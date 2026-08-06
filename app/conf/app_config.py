@@ -32,16 +32,13 @@ class RedisCfg(BaseModel):
     db: int
 
 
-class QdrantConfig(BaseModel):
-    host: str
-    port: int
-    embedding_size: int
-
-
 class ESConfig(BaseModel):
     host: str
     port: int
-    index_name: str
+    column_index: str
+    metric_index: str
+    value_index: str
+    embedding_size: int
 
 
 class EmbeddingConfig(BaseModel):
@@ -112,7 +109,6 @@ class Cfg(BaseModel):
     db_meta: DBConfig
     db_chat: DBConfig
     redis: RedisCfg
-    qdrant: QdrantConfig
     elasticsearch: ESConfig
     embedding: EmbeddingConfig
     lm_config: LMConfigCfg

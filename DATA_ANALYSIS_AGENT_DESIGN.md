@@ -8,7 +8,7 @@
 
 ## 2. 背景与现状
 
-当前系统存在两层分析决策：
+旧系统曾存在两层分析决策：
 
 ```text
 Deep Agent
@@ -22,7 +22,7 @@ Deep Agent
                     └── SQL 验证与执行
 ```
 
-主要问题：
+旧架构的主要问题：
 
 - 外层 Agent 无法直接观察内层工作流的分析过程和中间证据
 - 简单查询和复杂分析都必须执行相同的固定流程
@@ -33,6 +33,9 @@ Deep Agent
 - 当前 SQL 验证主要依赖 `EXPLAIN`，没有形成完整的只读查询安全边界
 - SQL 校正后缺少再次验证便直接执行的风险
 - 当前指标元数据缺少机器可读的计算口径，无法稳定支持复杂问数和归因
+
+固定工作流、`db_query` 和 `QueryService` 已删除。当前统一 Agent 已直接注册
+`search_semantics`，SQL 分析与执行能力将在 `run_analysis` 和只读查询安全层完成后恢复。
 
 ## 3. 设计目标
 
@@ -177,6 +180,26 @@ class AnalysisSpec:
 - `filter_metric`
 
 语义检索本身应为确定性服务。Agent 可以根据第一次返回结果修改关键词并再次调用，而不是在 Tool 内部调用 LLM 扩词。
+
+#### 第一版实现
+
+`search_semantics` 已按以下边界实现：
+
+- Tool 位于 `app/agent/tools/search_semantics.py`，并已注册到统一 Agent
+- 核心逻辑位于 `app/services/semantic_catalog_service.py`，Tool 只负责参数校验、依赖组装和结果序列化
+- 输入包括原始问题、补充检索词、资源类型、表范围、每类候选上限和是否扩展关系
+- MySQL 提供当前元数据快照，用于校验索引命中并补全关系上下文
+- Elasticsearch 提供字段和指标的名称、别名、描述精确匹配、全文与向量候选，以及字段值全文候选
+- 多个检索词和索引通道使用 RRF 思路融合，`rank_score` 仅用于同类资源排序，不表示概率
+- 索引命中必须使用 MySQL 当前记录重新补全，残留资源会被丢弃
+- 字段和指标返回 `meta_version`、`index_version` 和 `index_status`
+- 指标依赖字段、字段值所属字段、已配置的主键字段以及一层外键关系会被自动补充
+- YAML 中省略的主键不会被构造成虚假字段，只通过表的 `primary_key_columns` 返回名称
+- 单个索引后端失败时返回 `partial` 和警告，MySQL 不可用时整体失败
+- 每类默认返回 5 个直接候选，字段上下文最多返回 30 个资源
+- 旧查询工作流已经删除，不再维护双重召回和嵌套 Agent 调用链
+
+当前实现每次检索会从 MySQL 加载元数据快照用于校验候选和补全上下文，不在 MySQL 中执行检索。后续在元数据规模或调用量增大后，可以增加按版本失效的目录缓存和更细粒度的数据库查询。
 
 ### 7.2 `run_analysis`
 
@@ -466,18 +489,16 @@ Skill 建议纳入代码仓库版本管理，只将会话工作区保留为运�
 
 ### 阶段一：提取确定性服务
 
-- 从现有 nodes 提取元数据召回与关系扩展逻辑
-- 从现有 QueryService 提取 SQL 验证和执行逻辑
-- 保持现有工作流可继续运行
+- [x] 从现有 nodes 提取元数据召回与关系扩展逻辑
 - 建立问数和归因评测问题集
 
 ### 阶段二：建立统一 Tool
 
-- 实现 `search_semantics`
+- [x] 实现 `search_semantics`
 - 实现 `run_analysis`
 - 实现只读 SQL 安全层
 - 让现有 Deep Agent 直接调用这些 Tool
-- 移除 `db_query -> QueryService -> graph` 的嵌套调用
+- [x] 移除 `db_query -> QueryService -> graph` 的嵌套调用
 
 ### 阶段三：迁移问数能力
 
@@ -496,10 +517,10 @@ Skill 建议纳入代码仓库版本管理，只将会话工作区保留为运�
 
 ### 阶段五：删除旧工作流
 
-- 删除不再使用的 `graph.py`
-- 删除不再使用的 `state.py` 和 `context.py`
-- 删除 `nodes/` 中已被 Service 或 Skill 替代的实现
-- 清理旧 Prompt 和内部 SSE 适配逻辑
+- [x] 删除不再使用的 `graph.py`
+- [x] 删除不再使用的 `state.py` 和 `context.py`
+- [x] 删除 `nodes/` 中已被 Service 或 Skill 替代的实现
+- [x] 清理旧 Prompt 和内部 SSE 适配逻辑
 
 ## 16. 评测建议
 

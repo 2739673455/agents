@@ -29,7 +29,7 @@ CREATE TABLE column_info
     reference_c_name VARCHAR(256) COMMENT '引用字段名称',
     index_values BOOLEAN NOT NULL DEFAULT FALSE COMMENT '是否索引字段值',
     meta_version INT UNSIGNED NOT NULL DEFAULT 1 COMMENT '元数据版本',
-    index_version INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '向量索引版本',
+    index_version INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '语义索引版本',
     value_index_synced_at DATETIME COMMENT '字段值索引最近同步成功时间',
     value_index_sync_status VARCHAR(16) COMMENT '字段值索引最近同步状态',
     PRIMARY KEY (t_name, name),
@@ -44,7 +44,7 @@ CREATE TABLE metric_info
     description TEXT NOT NULL COMMENT '指标描述',
     alias JSON NOT NULL COMMENT '指标别名',
     meta_version INT UNSIGNED NOT NULL DEFAULT 1 COMMENT '元数据版本',
-    index_version INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '向量索引版本'
+    index_version INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '语义索引版本'
 );
 
 

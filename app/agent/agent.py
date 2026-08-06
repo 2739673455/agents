@@ -1,15 +1,13 @@
 from asyncio import Lock
 from pathlib import Path
-from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 from langchain.chat_models import init_chat_model
-from langgraph.config import get_config
 from langgraph.graph.state import CompiledStateGraph
 
 from app.agent.mcp import get_mcp_tools
-from app.agent.tools import db_query, return_file
+from app.agent.tools import return_file, search_semantics
 from app.conf import app_config
 
 # 路径常量
@@ -19,8 +17,8 @@ DEEPAGENTS_ROOT = ROOT_DIR / ".deepagents"
 SKILLS_DIR = DEEPAGENTS_ROOT / "skills"
 WORKSPACES_DIR = DEEPAGENTS_ROOT / "workspaces"
 
-# 全局 Agent 实例
-_agent: CompiledStateGraph | None = None
+# 会话级 Agent 实例
+_agents: dict[tuple[int, int], CompiledStateGraph] = {}
 _agent_lock = Lock()
 
 
@@ -31,16 +29,13 @@ def get_workspace_dir(user_id: int, conversation_id: int) -> Path:
     return workspace_dir
 
 
-def _backend_factory(rt: Any) -> CompositeBackend:
-    """根据运行时配置动态创建工作区后端"""
-    # 从 LangGraph 运行时配置中获取工作区目录
-    workspace_dir = get_config().get("configurable", {}).get("workspace_dir")
-    if workspace_dir is None:
-        raise ValueError("workspace_dir not found in config")
-
+def _build_backend(workspace_dir: Path) -> CompositeBackend:
+    """创建会话工作区后端"""
     # 工作区文件系统后端
     workspace_backend = LocalShellBackend(
-        root_dir=Path(workspace_dir), virtual_mode=True, inherit_env=True
+        root_dir=workspace_dir,
+        virtual_mode=True,
+        inherit_env=True,
     )
 
     # 技能文件系统后端
@@ -56,8 +51,8 @@ def _backend_factory(rt: Any) -> CompositeBackend:
     )
 
 
-async def _build_agent() -> CompiledStateGraph:
-    """创建 Agent 实例"""
+async def _build_agent(workspace_dir: Path) -> CompiledStateGraph:
+    """创建会话级 Agent 实例"""
     # 初始化模型
     model_cfg = app_config.cfg.lm_config.models[app_config.cfg.lm_config.active]
     model = init_chat_model(
@@ -73,32 +68,33 @@ async def _build_agent() -> CompiledStateGraph:
 
     # 加载工具
     mcp_tools = await get_mcp_tools()
-    tools = [db_query, return_file, *mcp_tools]
+    tools = [search_semantics, return_file, *mcp_tools]
 
     agent = create_deep_agent(
         model=model,
         tools=tools,
-        backend=_backend_factory,  # 根据运行时配置动态创建工作区后端
+        backend=_build_backend(workspace_dir),
         skills=["/skills/"],  # 声明 Agent 可用的 Skill 前缀路径
     )
 
     return agent
 
 
-async def get_agent() -> CompiledStateGraph:
-    """获取全局复用的 Agent 实例，不存在时按需创建"""
-    global _agent
-    if _agent is not None:
-        return _agent
+async def get_agent(user_id: int, conversation_id: int) -> CompiledStateGraph:
+    """获取会话级 Agent 实例，不存在时按需创建"""
+    agent_key = (user_id, conversation_id)
+    if agent := _agents.get(agent_key):
+        return agent
 
     async with _agent_lock:
-        if _agent is None:
-            _agent = await _build_agent()
-        return _agent
+        if agent := _agents.get(agent_key):
+            return agent
+        agent = await _build_agent(get_workspace_dir(user_id, conversation_id))
+        _agents[agent_key] = agent
+        return agent
 
 
 async def reset_agent() -> None:
-    """使当前 Agent 实例失效，下次 get_agent() 将用最新配置重建"""
-    global _agent
+    """清空会话级 Agent 实例，下次使用时按最新配置重建"""
     async with _agent_lock:
-        _agent = None
+        _agents.clear()

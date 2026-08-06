@@ -69,7 +69,6 @@ class MysqlClientManager:
         self._session_maker = None
 
 
-source_mysql_client_manager = MysqlClientManager(cfg.db_source)
 meta_mysql_client_manager = MysqlClientManager(cfg.db_meta)
 chat_mysql_client_manager = MysqlClientManager(cfg.db_chat)
 

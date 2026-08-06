@@ -119,7 +119,7 @@ class ColumnInfo(Base):
         String(256), comment="引用字段名称"
     )
     meta_version: Mapped[int] = _version_column(1, "元数据版本")
-    index_version: Mapped[int] = _version_column(0, "向量索引版本")
+    index_version: Mapped[int] = _version_column(0, "语义索引版本")
     value_index_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         comment="字段值索引最近同步成功时间",
@@ -161,7 +161,7 @@ class MetricInfo(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, comment="指标描述")
     alias: Mapped[list[str]] = mapped_column(JSON, nullable=False, comment="指标别名")
     meta_version: Mapped[int] = _version_column(1, "元数据版本")
-    index_version: Mapped[int] = _version_column(0, "向量索引版本")
+    index_version: Mapped[int] = _version_column(0, "语义索引版本")
     relevant_columns: list[ColumnReference]
 
     def __init__(

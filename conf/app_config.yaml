@@ -2,9 +2,9 @@ log:
   level: INFO # 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
   rotation: 10MB # 日志文件滚动大小
 
-db_source: # doris
+db_source: # Doris
   host: 127.0.0.1
-  port: 3306
+  port: 9030
   user: root
   password: ${oc.env:DB_SOURCE_PASSWORD}
   database: ecommerce
@@ -29,15 +29,13 @@ redis:
   password: ${oc.env:REDIS_PASSWORD}
   db: 0
 
-qdrant:
-  host: 127.0.0.1
-  port: 6333
-  embedding_size: 1024
-
 elasticsearch:
   host: 127.0.0.1
   port: 9200
-  index_name: data_agent
+  column_index: data-agent-column
+  metric_index: data-agent-metric
+  value_index: data-agent-value
+  embedding_size: 1024
 
 embedding:
   base_url: https://api.siliconflow.cn/v1

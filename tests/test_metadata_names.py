@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import yaml
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import Session
 
 from app.conf.meta_config import MetaConfig
@@ -20,10 +20,10 @@ from app.errors.meta_error import (
     MetadataConflictError,
     MetadataNotFoundError,
 )
-from app.repositories.column_qdrant_repo import ColumnQdrantRepo
+from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.meta_mysql_repo import MetaMySQLRepo
-from app.repositories.metric_qdrant_repo import MetricQdrantRepo
-from app.repositories.source_mysql_repo import SourceMySQLRepo
+from app.repositories.metric_es_repo import MetricESRepo
+from app.repositories.source_doris_repo import SourceDorisRepo
 from app.routes.api.v1.meta.schemas import (
     ColumnIndexSyncRequest,
     ColumnInfoRequest,
@@ -207,7 +207,7 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
         meta_repo = _MetaRepo()
         service = MetaImportService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, MagicMock(spec=IndexService)),
         )
 
@@ -262,7 +262,7 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
         )
         service = MetaImportService(
             cast(MetaMySQLRepo, _MetaRepo()),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, MagicMock(spec=IndexService)),
         )
 
@@ -283,7 +283,7 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
         )
         service = MetaImportService(
             cast(MetaMySQLRepo, _MetaRepo()),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, MagicMock(spec=IndexService)),
         )
 
@@ -309,7 +309,7 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
         meta_repo = _MetaRepo()
         service = MetaImportService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, MagicMock(spec=IndexService)),
         )
 
@@ -394,7 +394,7 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
         )
         service = MetaImportService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, index_service),
         )
 
@@ -532,8 +532,8 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
             index_version=3,
         )
 
-        column_payload = ColumnQdrantRepo._to_payload(column_info)
-        metric_payload = MetricQdrantRepo._to_payload(metric_info)
+        column_payload = ColumnESRepo._to_payload(column_info)
+        metric_payload = MetricESRepo._to_payload(metric_info)
         MetaMySQLRepo.mark_column_indexed(column_info)
         MetaMySQLRepo.mark_metric_indexed(metric_info)
 
@@ -545,8 +545,8 @@ class MetadataNameKeyTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metric_info.index_version, metric_info.meta_version)
 
 
-class SourceMySQLRepoTest(unittest.IsolatedAsyncioTestCase):
-    """验证源数据库表结构查询"""
+class SourceDorisRepoTest(unittest.IsolatedAsyncioTestCase):
+    """验证 Doris 源数据库访问"""
 
     async def test_column_values_are_streamed_in_batches(self) -> None:
         stream_result = MagicMock()
@@ -557,9 +557,9 @@ class SourceMySQLRepoTest(unittest.IsolatedAsyncioTestCase):
             yield [3]
 
         stream_result.partitions = partitions
-        session = MagicMock(spec=AsyncSession)
-        session.stream_scalars = AsyncMock(return_value=stream_result)
-        repository = SourceMySQLRepo(cast(AsyncSession, session))
+        connection = MagicMock(spec=AsyncConnection)
+        connection.stream_scalars = AsyncMock(return_value=stream_result)
+        repository = SourceDorisRepo(cast(AsyncConnection, connection))
 
         batches = [
             batch
@@ -572,7 +572,7 @@ class SourceMySQLRepoTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(batches, [[1, 2], [3]])
         self.assertEqual(
-            session.stream_scalars.await_args.kwargs["execution_options"],
+            connection.stream_scalars.await_args.kwargs["execution_options"],
             {"yield_per": 2},
         )
 
@@ -584,17 +584,19 @@ class SourceMySQLRepoTest(unittest.IsolatedAsyncioTestCase):
             "tenant_id",
             "id",
         ]
-        session = MagicMock(spec=AsyncSession)
-        session.execute = AsyncMock(side_effect=[exists_result, primary_key_result])
-        repository = SourceMySQLRepo(cast(AsyncSession, session))
+        connection = MagicMock(spec=AsyncConnection)
+        connection.execute = AsyncMock(side_effect=[exists_result, primary_key_result])
+        repository = SourceDorisRepo(cast(AsyncConnection, connection))
 
         self.assertTrue(await repository.table_exists("orders"))
         self.assertEqual(
             await repository.get_primary_key_columns("orders"),
             ["tenant_id", "id"],
         )
-        for call in session.execute.await_args_list:
+        for call in connection.execute.await_args_list:
             self.assertEqual(call.args[1], {"table_name": "orders"})
+        primary_key_sql = str(connection.execute.await_args_list[1].args[0])
+        self.assertIn("column_key = 'UNI'", primary_key_sql)
 
 
 class MetaServiceIntegrityTest(unittest.IsolatedAsyncioTestCase):
@@ -632,7 +634,7 @@ class MetaServiceIntegrityTest(unittest.IsolatedAsyncioTestCase):
         )
         service = MetaService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, MagicMock(spec=IndexService)),
         )
 
@@ -661,7 +663,7 @@ class MetaServiceIntegrityTest(unittest.IsolatedAsyncioTestCase):
         meta_repo = _MetaRepo()
         service = MetaService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, MagicMock(spec=IndexService)),
         )
         with self.assertRaisesRegex(
@@ -688,7 +690,7 @@ class MetaServiceIntegrityTest(unittest.IsolatedAsyncioTestCase):
         )
         service = MetaService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, MagicMock(spec=IndexService)),
         )
 
@@ -708,7 +710,7 @@ class MetaServiceIntegrityTest(unittest.IsolatedAsyncioTestCase):
         meta_repo = _MetaRepo()
         service = MetaService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, MagicMock(spec=IndexService)),
         )
 
@@ -720,7 +722,7 @@ class MetaServiceIntegrityTest(unittest.IsolatedAsyncioTestCase):
         meta_repo = _MetaRepo()
         service = MetaService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, MagicMock(spec=IndexService)),
         )
 
@@ -770,7 +772,7 @@ class MetaServiceIntegrityTest(unittest.IsolatedAsyncioTestCase):
         )
         service = MetaService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, index_service),
         )
 
@@ -803,7 +805,7 @@ class MetaServiceIntegrityTest(unittest.IsolatedAsyncioTestCase):
         index_service.delete_column_indexes = AsyncMock()
         service = MetaService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, index_service),
         )
 
@@ -823,7 +825,7 @@ class MetaServiceIntegrityTest(unittest.IsolatedAsyncioTestCase):
         index_service.delete_metric_indexes = AsyncMock()
         service = MetaService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, index_service),
         )
 
@@ -866,7 +868,7 @@ class MetaServiceIntegrityTest(unittest.IsolatedAsyncioTestCase):
         index_service.delete_column_indexes = AsyncMock()
         service = MetaService(
             cast(MetaMySQLRepo, meta_repo),
-            cast(SourceMySQLRepo, _SourceRepo()),
+            cast(SourceDorisRepo, _SourceRepo()),
             cast(IndexService, index_service),
         )
 
