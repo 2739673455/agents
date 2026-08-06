@@ -5,7 +5,6 @@ import type {
   MessageListResponse,
   UploadAttachmentResponse,
   WebSocketChatRequest,
-  WebSocketTokenResponse,
 } from "@/types";
 import appClient from "./appClient";
 
@@ -54,15 +53,10 @@ export const chatApi = {
     });
   },
 
-  createWebSocketToken() {
-    return appClient.post<WebSocketTokenResponse>(CHAT_API_ROUTES.createWebSocketToken);
-  },
-
-  buildChatSocket(conversationId: number, websocketToken: string) {
+  buildChatSocket(conversationId: number) {
     const wsBase = window.location.origin.replace(/^http/, "ws");
     const url = new URL(`${wsBase}${CHAT_API_ROUTES.chatWebSocket}`);
     url.searchParams.set("conversation_id", String(conversationId));
-    url.searchParams.set("websocket_token", websocketToken);
     return new WebSocket(url.toString());
   },
 

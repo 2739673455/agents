@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { chatApi } from "@/api/chat";
 import { authApi, buildAuthorizeUrl, clearAccessToken, getAccessToken, useAuthStore } from "@/auth";
 import { ROUTES } from "@/config/settings";
-import { createLocalTimestamp } from "@/lib/message";
 import { getAttachmentName } from "@/lib/utils";
 import { useChatStore } from "@/stores/chatStore";
 import type {
@@ -321,12 +320,11 @@ export default function ChatPage() {
 
     let cancelled = false;
 
-    const connectSocket = async () => {
+    const connectSocket = () => {
       try {
-        const response = await chatApi.createWebSocketToken();
         if (cancelled) return;
 
-        const socket = chatApi.buildChatSocket(conversationId, response.data.websocket_token);
+        const socket = chatApi.buildChatSocket(conversationId);
         socketsRef.current.set(conversationId, socket);
 
         socket.onopen = () => {
@@ -385,11 +383,6 @@ export default function ChatPage() {
             return next;
           });
 
-          if (event.code === 4401) {
-            redirectToAuth();
-            return;
-          }
-
           if (event.code === 4404) {
             toast.error("对话不存在或无权限访问");
           }
@@ -416,7 +409,7 @@ export default function ChatPage() {
       }
     };
 
-    void connectSocket();
+    connectSocket();
 
     return () => {
       cancelled = true;
@@ -560,10 +553,10 @@ export default function ChatPage() {
     }
 
     const userMessage: MessageSchema = {
+      message_id: crypto.randomUUID(),
       role: "user",
       parts: value ? [{ type: "text", text: value }] : [],
       attachments: attachments.length > 0 ? attachments : undefined,
-      timestamp: createLocalTimestamp(),
     };
 
     let conversationId = routeConversationId ?? draftConversationId;

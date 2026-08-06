@@ -40,25 +40,18 @@ export interface ToolResultPart {
 export type MessagePart = TextContent | ImageContent | ToolCallPart | ToolResultPart;
 
 export type MessageRole = "user" | "assistant" | "tool" | "system";
-export type FinishReason = "stop" | "tool_calls";
+export type FinishReason = string;
 
 export interface MessageSchema {
-  message_id?: number | null;
-  context_seq?: number | null;
+  message_id?: string | null;
   role: MessageRole;
   parts: MessagePart[];
   attachments?: Attachment[] | null;
   finish_reason?: FinishReason | null;
-  timestamp?: string | null;
 }
 
 export interface MessageListResponse {
   messages: MessageSchema[];
-}
-
-export interface WebSocketTokenResponse {
-  websocket_token: string;
-  expires_in: number;
 }
 
 export interface UploadAttachmentResponse {

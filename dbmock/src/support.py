@@ -7,18 +7,18 @@ import json
 import warnings
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import MetaData, Table, func, select, text
+from sqlalchemy import MetaData, Table, select, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SAWarning
 
-from ..database import DorisStreamLoader
+from .database import DorisStreamLoader
 
-SOURCE_SYSTEM = "DBMOCK"
 UNKNOWN_SK = -1
 UNKNOWN_ID = 0
 END_OF_TIME = datetime(9999, 12, 31, 23, 59, 59, 999999)
@@ -122,11 +122,9 @@ def iter_jsonl_rows(path: Path) -> Iterator[dict[str, Any]]:
 def dimension_audit(
     attributes: Mapping[str, Any],
     batch_id: str,
-    source_system_code: str = SOURCE_SYSTEM,
 ) -> dict[str, Any]:
     return {
         "attribute_hash": stable_hash(attributes),
-        "source_system_code": source_system_code,
         "source_update_time": None,
         "load_batch_id": batch_id,
     }
@@ -134,7 +132,6 @@ def dimension_audit(
 
 def fact_audit(record_id: str, batch_id: str) -> dict[str, Any]:
     return {
-        "source_system_code": SOURCE_SYSTEM,
         "source_record_id": record_id,
         "load_batch_id": batch_id,
     }
@@ -172,10 +169,13 @@ def doris_unique_key_columns(
     return [str(value) for value in rows.scalars()]
 
 
-def assert_empty(conn: Connection, tables: Mapping[str, Table]) -> None:
+def assert_empty(
+    conn: Connection,
+    tables: Mapping[str, Table],
+) -> None:
     populated = []
     for name, table in tables.items():
-        if conn.execute(select(func.count()).select_from(table)).scalar_one() > 0:
+        if conn.execute(select(1).select_from(table).limit(1)).first() is not None:
             populated.append(name)
     if populated:
         names = ", ".join(sorted(populated))
@@ -225,11 +225,13 @@ class TableWriter:
         self,
         loader: DorisStreamLoader,
         batch_size: int,
+        load_workers: int,
         start_date: date,
         as_of_time: datetime,
     ) -> None:
         self.loader = loader
         self.batch_size = batch_size
+        self.load_workers = load_workers
         self.start_time = start_of_day(start_date)
         self.as_of_time = as_of_time
         self.buffers: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -303,6 +305,27 @@ class TableWriter:
         rows.clear()
 
     def flush_all(self) -> dict[str, int]:
-        for table_name in list(self.buffers):
-            self.flush(table_name)
+        table_names = [name for name, rows in self.buffers.items() if rows]
+        if not table_names:
+            return dict(self.counts)
+        with ThreadPoolExecutor(
+            max_workers=min(self.load_workers, len(table_names)),
+            thread_name_prefix="doris-stream-load",
+        ) as executor:
+            futures = {
+                table_name: executor.submit(self._load_buffer, table_name)
+                for table_name in table_names
+            }
+            for table_name, future in futures.items():
+                future.result()
+                self.counts[table_name] += len(self.buffers[table_name])
+                self.buffers[table_name].clear()
         return dict(self.counts)
+
+    def _load_buffer(self, table_name: str) -> None:
+        rows = self.buffers[table_name]
+        groups: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            groups[tuple(sorted(row))].append(row)
+        for group in groups.values():
+            self.loader.load(table_name, group)

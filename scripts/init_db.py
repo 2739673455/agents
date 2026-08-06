@@ -129,7 +129,3 @@ if __name__ == "__main__":
     db_initializer.delete_db("meta")
     db_initializer.create_db("meta")
     db_initializer.exec_sql_file("meta", MYSQL_SQL_DIR / "meta.sql")
-
-    db_initializer.delete_db("chat")
-    db_initializer.create_db("chat")
-    db_initializer.exec_sql_file("chat", MYSQL_SQL_DIR / "chat.sql")

@@ -1,9 +1,10 @@
 """聊天接口的请求与响应模型"""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # 对话
 
@@ -11,26 +12,26 @@ from pydantic import BaseModel, Field
 class CreateConversationRequest(BaseModel):
     """创建对话请求"""
 
-    is_draft: Literal[0, 1] = Field(default=0, description="是否创建草稿对话")
+    is_draft: bool = Field(default=False, description="是否创建草稿对话")
 
 
 class DeleteConversationRequest(BaseModel):
     """删除对话请求"""
 
-    conversation_ids: list[int] = Field(..., description="对话ID列表")
+    conversation_ids: list[UUID] = Field(..., description="对话ID列表")
 
 
 class UpdateConversationRequest(BaseModel):
     """更新对话请求"""
 
-    conversation_id: int = Field(..., description="对话ID")
+    conversation_id: UUID = Field(..., description="对话ID")
     title: str = Field(..., description="对话标题")
 
 
 class ConversationResponse(BaseModel):
     """对话响应"""
 
-    conversation_id: int
+    conversation_id: UUID
     title: str
     update_at: datetime
 
@@ -39,13 +40,6 @@ class ConversationListResponse(BaseModel):
     """对话列表响应"""
 
     conversations: list[ConversationResponse]
-
-
-class WebSocketTokenResponse(BaseModel):
-    """WebSocket 临时令牌响应"""
-
-    websocket_token: str = Field(..., description="WebSocket 临时令牌")
-    expires_in: int = Field(..., description="过期时间（秒）")
 
 
 # 消息
@@ -84,7 +78,7 @@ class ToolResultPart(BaseModel):
 
 
 MessageRole = Literal["user", "assistant", "tool", "system"]
-FinishReason = Literal["stop", "tool_calls"]
+FinishReason = str
 MessagePart = Annotated[
     TextContent | ImageContent | ToolCallPart | ToolResultPart,
     Field(discriminator="type"),
@@ -100,25 +94,31 @@ class Attachment(BaseModel):
 class MessageSchema(BaseModel):
     """消息"""
 
-    message_id: int | None = Field(default=None, description="消息ID")
-    context_seq: int | None = Field(default=None, description="对话内上下文顺序号")
+    message_id: str | None = Field(default=None, description="LangGraph 消息ID")
     role: MessageRole = Field(..., description="发送者")
     parts: list[MessagePart] = Field(..., description="消息片段")
     attachments: list[Attachment] | None = Field(default=None, description="附件列表")
     finish_reason: FinishReason | None = Field(default=None, description="完成原因")
-    timestamp: datetime | None = Field(default=None, description="发送时间")
 
 
-class WebSocketChatRequest(BaseModel):
-    """WebSocket 聊天请求"""
+class ChatStreamRequest(BaseModel):
+    """SSE 聊天请求"""
 
+    conversation_id: UUID = Field(..., description="对话ID")
     message: MessageSchema = Field(..., description="用户消息")
+
+    @model_validator(mode="after")
+    def validate_user_message(self) -> Self:
+        """校验聊天请求只包含用户消息"""
+        if self.message.role != "user":
+            raise ValueError("message.role must be 'user'")
+        return self
 
 
 class DeleteAttachmentRequest(BaseModel):
     """删除附件请求"""
 
-    conversation_id: int = Field(..., description="对话ID")
+    conversation_id: UUID = Field(..., description="对话ID")
     f_path: str = Field(..., description="工作区内的文件路径")
 
 
@@ -128,18 +128,24 @@ class MessageListResponse(BaseModel):
     messages: list[MessageSchema]
 
 
-class WebSocketMessageResponse(BaseModel):
-    """WebSocket 消息响应"""
+class ChatStreamMessageEvent(BaseModel):
+    """SSE 消息事件"""
 
     type: Literal["message"] = "message"
     message: MessageSchema = Field(..., description="消息内容")
 
 
-class WebSocketErrorResponse(BaseModel):
-    """WebSocket 错误响应"""
+class ChatStreamErrorEvent(BaseModel):
+    """SSE 错误事件"""
 
     type: Literal["error"] = "error"
     content: str = Field(..., description="错误信息")
+
+
+class ChatStreamDoneEvent(BaseModel):
+    """SSE 完成事件"""
+
+    type: Literal["done"] = "done"
 
 
 class UploadAttachmentResponse(BaseModel):

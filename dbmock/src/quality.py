@@ -7,13 +7,34 @@ from collections.abc import Mapping
 
 from sqlalchemy import Table, text
 
-from ..settings import RunContext
+from .checkpoint import CheckpointStore
+from .settings import RunContext
 from .support import doris_unique_key_columns, iter_jsonl_rows
+from .timeline import month_periods
 
 logger = logging.getLogger(__name__)
 
-
 CHECKS: dict[str, str] = {
+    "日期节假日配置": """
+        SELECT
+            CASE
+                WHEN DATEDIFF(MAX(full_date), MIN(full_date)) >= 365
+                 AND SUM(is_holiday) = 0
+                THEN 1
+                ELSE 0
+            END
+            + SUM(
+                CASE
+                    WHEN is_holiday = 1
+                     AND (holiday_name IS NULL OR is_workday <> 0)
+                    THEN 1
+                    WHEN is_holiday = 0 AND holiday_name IS NOT NULL
+                    THEN 1
+                    ELSE 0
+                END
+            )
+        FROM dim_date
+    """,
     "订单活动优惠分摊": """
         SELECT COUNT(*)
         FROM dwd_trade_order_detail_di d
@@ -70,6 +91,54 @@ CHECKS: dict[str, str] = {
             SELECT COUNT(*) FROM dwd_inventory_change_di
              WHERE biz_date <> DATE(event_time)
                 OR event_date_key <> DATE_FORMAT(event_time, '%Y%m%d') + 0
+        ) q
+    """,
+    "业务状态时间严格递增": """
+        SELECT SUM(violations) FROM (
+            SELECT COUNT(*) violations FROM (
+                SELECT event_time,
+                       LAG(event_time) OVER (
+                           PARTITION BY order_id ORDER BY event_seq_no
+                       ) previous_time
+                FROM dwd_trade_order_status_event_di
+            ) x
+            WHERE previous_time IS NOT NULL AND event_time <= previous_time
+            UNION ALL
+            SELECT COUNT(*) FROM (
+                SELECT event_time,
+                       LAG(event_time) OVER (
+                           PARTITION BY pay_detail_id ORDER BY event_seq_no
+                       ) previous_time
+                FROM dwd_trade_pay_status_event_di
+            ) x
+            WHERE previous_time IS NOT NULL AND event_time <= previous_time
+            UNION ALL
+            SELECT COUNT(*) FROM (
+                SELECT event_time,
+                       LAG(event_time) OVER (
+                           PARTITION BY delivery_id ORDER BY event_seq_no
+                       ) previous_time
+                FROM dwd_trade_delivery_status_event_di
+            ) x
+            WHERE previous_time IS NOT NULL AND event_time <= previous_time
+            UNION ALL
+            SELECT COUNT(*) FROM (
+                SELECT event_time,
+                       LAG(event_time) OVER (
+                           PARTITION BY refund_detail_id ORDER BY event_seq_no
+                       ) previous_time
+                FROM dwd_trade_refund_status_event_di
+            ) x
+            WHERE previous_time IS NOT NULL AND event_time <= previous_time
+            UNION ALL
+            SELECT COUNT(*) FROM (
+                SELECT event_time,
+                       LAG(event_time) OVER (
+                           PARTITION BY refund_pay_detail_id ORDER BY event_seq_no
+                       ) previous_time
+                FROM dwd_trade_refund_pay_status_event_di
+            ) x
+            WHERE previous_time IS NOT NULL AND event_time <= previous_time
         ) q
     """,
     "订单维度时点命中": """
@@ -194,6 +263,39 @@ CHECKS: dict[str, str] = {
         WHERE s.on_hand_qty <> e.last_on_hand
            OR s.reserved_qty <> e.last_reserved
     """,
+    "库存快照覆盖范围": """
+        WITH expected AS (
+            SELECT d.date_key snapshot_date_key,
+                   b.warehouse_sk,
+                   b.sku_sk
+            FROM (
+                SELECT warehouse_sk,
+                       sku_sk,
+                       MIN(biz_date) listing_date
+                FROM dwd_inventory_change_di
+                WHERE change_type = 'INITIAL_STOCK'
+                GROUP BY warehouse_sk, sku_sk
+            ) b
+            JOIN dim_date d ON d.full_date >= b.listing_date
+        )
+        SELECT SUM(violations) FROM (
+            SELECT COUNT(*) violations
+            FROM expected e
+            LEFT JOIN dwd_inventory_daily_snapshot_df s
+              ON s.snapshot_date_key = e.snapshot_date_key
+             AND s.warehouse_sk = e.warehouse_sk
+             AND s.sku_sk = e.sku_sk
+            WHERE s.sku_sk IS NULL
+            UNION ALL
+            SELECT COUNT(*)
+            FROM dwd_inventory_daily_snapshot_df s
+            LEFT JOIN expected e
+              ON e.snapshot_date_key = s.snapshot_date_key
+             AND e.warehouse_sk = s.warehouse_sk
+             AND e.sku_sk = s.sku_sk
+            WHERE e.sku_sk IS NULL
+        ) q
+    """,
     "会话事件汇总": """
         SELECT COUNT(*)
         FROM dwd_traffic_session_di s
@@ -207,6 +309,40 @@ CHECKS: dict[str, str] = {
         ) q ON q.session_id = s.session_id
         WHERE s.page_view_count <> COALESCE(p.count_value, 0)
            OR s.search_count <> COALESCE(q.count_value, 0)
+    """,
+    "订单行为链路": """
+        SELECT COUNT(*)
+        FROM dwd_trade_order_detail_di d
+        LEFT JOIN dwd_traffic_session_di s
+          ON s.session_id = d.source_session_id
+         AND s.user_id = d.user_id
+        LEFT JOIN dwd_interaction_cart_event_di c
+          ON c.session_id = d.source_session_id
+         AND c.user_id = d.user_id
+         AND c.sku_id = d.sku_id
+         AND c.cart_event_type = '加入'
+         AND c.event_time <= d.order_create_time
+        WHERE s.session_id IS NULL OR c.cart_event_id IS NULL
+    """,
+    "订单成本完整性": """
+        SELECT COUNT(*)
+        FROM dwd_trade_order_detail_di
+        WHERE cost_amount IS NULL OR cost_amount <= 0
+    """,
+    "库存数量合法性": """
+        SELECT SUM(violations) FROM (
+            SELECT COUNT(*) violations
+            FROM dwd_inventory_change_di
+            WHERE after_on_hand_qty < 0
+               OR after_reserved_qty < 0
+               OR after_reserved_qty > after_on_hand_qty
+            UNION ALL
+            SELECT COUNT(*)
+            FROM dwd_inventory_daily_snapshot_df
+            WHERE on_hand_qty < 0
+               OR reserved_qty < 0
+               OR available_qty <> on_hand_qty - reserved_qty
+        ) q
     """,
 }
 
@@ -245,6 +381,14 @@ OPTIONAL_EMPTY_TABLES = {
     "dwd_product_shop_score_daily_snapshot_df",
 }
 
+SMOKE_OPTIONAL_EMPTY_TABLES = {
+    "dwd_service_comment_detail_di",
+    "dwd_trade_refund_detail_di",
+    "dwd_trade_refund_pay_detail_di",
+    "dwd_trade_refund_pay_status_event_di",
+    "dwd_trade_refund_status_event_di",
+}
+
 FACT_TIME_COLUMNS = {
     "dwd_interaction_cart_event_di": "event_time",
     "dwd_interaction_favor_event_di": "event_time",
@@ -252,7 +396,6 @@ FACT_TIME_COLUMNS = {
     "dwd_inventory_daily_snapshot_df": "snapshot_time",
     "dwd_marketing_user_coupon_event_di": "event_time",
     "dwd_product_shop_score_daily_snapshot_df": "snapshot_time",
-    "dwd_product_sku_operation_daily_snapshot_df": "snapshot_time",
     "dwd_product_sku_price_change_di": "price_effective_time",
     "dwd_service_comment_detail_di": "comment_time",
     "dwd_trade_delivery_di": "delivery_create_time",
@@ -296,6 +439,16 @@ def validate_catalog_dimensions(ctx: RunContext) -> None:
         "SKU数量": (
             "SELECT COUNT(*) FROM dim_sku_info_zip WHERE sku_id <> 0 AND is_current = 1",
             expected_skus,
+        ),
+        "SKU库存预警阈值": (
+            """
+            SELECT COUNT(*)
+            FROM dim_sku_info_zip
+            WHERE sku_id <> 0
+              AND is_current = 1
+              AND warning_stock_qty <= 0
+            """,
+            0,
         ),
         "没有SKU的SPU数量": (
             """
@@ -363,6 +516,9 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
     failures: list[str] = []
     counts: dict[str, int] = {}
     earliest_load_time = None
+    optional_empty_tables = OPTIONAL_EMPTY_TABLES | (
+        SMOKE_OPTIONAL_EMPTY_TABLES if ctx.gen.is_smoke else set()
+    )
     with ctx.engine.connect() as conn:
         for table_name in sorted(tables):
             table = tables[table_name]
@@ -370,7 +526,7 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
                 conn.execute(text(f"SELECT COUNT(*) FROM `{table_name}`")).scalar_one()
             )
             counts[table_name] = count
-            if count == 0 and table_name not in OPTIONAL_EMPTY_TABLES:
+            if count == 0 and table_name not in optional_empty_tables:
                 failures.append(f"空表: {table_name}")
             if count == 0 or "dw_load_time" not in table.c:
                 continue
@@ -401,6 +557,20 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
                     failures.append(
                         f"{table_name} 入仓时间早于业务日期: "
                         f"{before_business_date} 条"
+                    )
+                batch_month_mismatch = int(
+                    conn.execute(
+                        text(
+                            f"SELECT COUNT(*) FROM `{table_name}` "
+                            "WHERE RIGHT(load_batch_id, 7) "
+                            "<> DATE_FORMAT(biz_date, '%Y-%m')"
+                        )
+                    ).scalar_one()
+                )
+                if batch_month_mismatch:
+                    failures.append(
+                        f"{table_name} 业务月份与装载批次不一致: "
+                        f"{batch_month_mismatch} 条"
                     )
             fact_time_column = FACT_TIME_COLUMNS.get(table_name)
             if fact_time_column is not None:
@@ -434,6 +604,23 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
             violations = int(conn.execute(text(sql)).scalar_one() or 0)
             if violations:
                 failures.append(f"{name}: {violations} 条")
+        expected_periods = len(month_periods(ctx.gen.start_date, ctx.gen.end_date))
+        checkpoint_status = CheckpointStore(ctx).run_status()
+        if checkpoint_status.completed_periods != expected_periods:
+            failures.append(
+                "完成月份数量异常: "
+                f"expected={expected_periods} "
+                f"actual={checkpoint_status.completed_periods}"
+            )
+        if checkpoint_status.unfinished_periods:
+            failures.append(
+                f"存在未完成月份: {checkpoint_status.unfinished_periods} 个"
+            )
+        if checkpoint_status.last_period_end != ctx.gen.end_date:
+            failures.append(
+                f"最后完成日期异常: expected={ctx.gen.end_date} "
+                f"actual={checkpoint_status.last_period_end}"
+            )
         for table_name, business_keys in SCD_TABLES.items():
             partition = ", ".join(f"`{key}`" for key in business_keys)
             overlap_sql = f"""

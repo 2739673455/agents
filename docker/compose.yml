@@ -30,6 +30,8 @@ services:
     environment:
       discovery.type: single-node
       xpack.security.enabled: false
+      ES_JAVA_OPTS: "-Xms2g -Xmx2g"
+    mem_limit: 4g
     ports:
       - "9200:9200"
     volumes:

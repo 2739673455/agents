@@ -107,7 +107,6 @@ class Cfg(BaseModel):
     log: LogCfg
     db_source: DBConfig
     db_meta: DBConfig
-    db_chat: DBConfig
     redis: RedisCfg
     elasticsearch: ESConfig
     embedding: EmbeddingConfig

@@ -39,7 +39,6 @@ CREATE TABLE dim_channel_info (
     channel_status TINYINT NOT NULL DEFAULT 1 COMMENT '状态:0停用 1启用',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -63,7 +62,6 @@ CREATE TABLE dim_page_info (
     page_status TINYINT NOT NULL DEFAULT 1 COMMENT '状态:0停用 1启用',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -100,7 +98,6 @@ CREATE TABLE dim_geo_region_zip (
     is_current TINYINT NOT NULL DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -142,7 +139,6 @@ CREATE TABLE dim_user_info_zip (
     is_current TINYINT NOT NULL DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -164,7 +160,6 @@ CREATE TABLE dim_user_tag_info (
     tag_value_type VARCHAR(64) NOT NULL DEFAULT 'BOOLEAN' COMMENT '标签值类型',
     tag_description VARCHAR(2048) DEFAULT NULL COMMENT '标签说明',
     tag_status TINYINT NOT NULL DEFAULT 1 COMMENT '状态:0停用 1启用',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
     dw_update_time DATETIME(6) NOT NULL COMMENT '最近更新时间'
@@ -186,7 +181,6 @@ CREATE TABLE bridge_user_tag_relation_zip (
     effective_start_time DATETIME(6) NOT NULL COMMENT '关系生效时间',
     effective_end_time DATETIME(6) NOT NULL COMMENT '关系失效时间',
     is_current TINYINT NOT NULL DEFAULT 1 COMMENT '是否当前关系:0否 1是',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
 )
@@ -215,7 +209,6 @@ CREATE TABLE dim_seller_info_zip (
     is_current TINYINT NOT NULL DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -249,7 +242,6 @@ CREATE TABLE dim_shop_info_zip (
     is_current TINYINT NOT NULL DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -283,7 +275,6 @@ CREATE TABLE dim_category_info_zip (
     is_current TINYINT NOT NULL DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -311,7 +302,6 @@ CREATE TABLE dim_brand_info (
     brand_status TINYINT NOT NULL DEFAULT 1 COMMENT '状态:0停用 1启用',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -337,7 +327,6 @@ CREATE TABLE dim_payment_type (
         COMMENT '状态:0停用 1启用',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -364,7 +353,6 @@ CREATE TABLE dim_logistics_company (
         COMMENT '状态:0停用 1启用',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -398,7 +386,6 @@ CREATE TABLE dim_warehouse_info_zip (
     is_current TINYINT NOT NULL DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -434,7 +421,6 @@ CREATE TABLE dim_spu_info_zip (
     is_current TINYINT NOT NULL DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -459,6 +445,7 @@ CREATE TABLE dim_sku_info_zip (
     bar_code VARCHAR(256) DEFAULT NULL COMMENT '商品条码',
     sku_specs_json JSON DEFAULT NULL COMMENT '低频SKU规格属性',
     unit VARCHAR(64) DEFAULT NULL COMMENT '计量单位',
+    warning_stock_qty INT NOT NULL DEFAULT 0 COMMENT 'SKU级库存预警阈值',
     sku_status VARCHAR(64) NOT NULL DEFAULT '在售' COMMENT 'SKU状态',
     effective_start_time DATETIME(6) NOT NULL COMMENT '版本生效时间',
     effective_end_time DATETIME(6) NOT NULL COMMENT '版本失效时间',
@@ -466,7 +453,6 @@ CREATE TABLE dim_sku_info_zip (
     is_current TINYINT NOT NULL DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '源记录是否删除:0否 1是',
     attribute_hash CHAR(64) NOT NULL COMMENT '业务属性哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '首次入仓时间',
@@ -501,7 +487,6 @@ CREATE TABLE dim_promotion_rule_version (
     sponsor_business_id VARCHAR(256) DEFAULT NULL COMMENT '发起方业务ID',
     promotion_status VARCHAR(64) NOT NULL COMMENT '该规则版本发布状态',
     rule_hash CHAR(64) NOT NULL COMMENT '规则内容哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -521,7 +506,6 @@ CREATE TABLE bridge_promotion_scope (
     scope_type VARCHAR(128) NOT NULL COMMENT '适用对象类型',
     scope_business_id VARCHAR(256) NOT NULL COMMENT '适用对象业务ID',
     is_excluded TINYINT NOT NULL DEFAULT 0 COMMENT '是否排除对象:0否 1是',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
 )
@@ -554,7 +538,6 @@ CREATE TABLE dim_coupon_template_version (
     per_user_limit INT DEFAULT NULL COMMENT '单用户领取上限',
     coupon_status VARCHAR(64) NOT NULL COMMENT '该规则版本发布状态',
     rule_hash CHAR(64) NOT NULL COMMENT '规则内容哈希',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_update_time DATETIME(6) DEFAULT NULL COMMENT '源系统更新时间',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -574,7 +557,6 @@ CREATE TABLE bridge_coupon_scope (
     scope_type VARCHAR(128) NOT NULL COMMENT '适用对象类型',
     scope_business_id VARCHAR(256) NOT NULL COMMENT '适用对象业务ID',
     is_excluded TINYINT NOT NULL DEFAULT 0 COMMENT '是否排除对象:0否 1是',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
 )
@@ -611,7 +593,6 @@ CREATE TABLE dwd_product_sku_price_change_di (
     price_effective_time DATETIME(6) NOT NULL COMMENT '新价格生效时间',
     change_time DATETIME(6) NOT NULL COMMENT '价格配置变更时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取新价格生效日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -635,7 +616,6 @@ CREATE TABLE dwd_product_shop_score_daily_snapshot_df (
     description_score DECIMAL(4, 2) DEFAULT NULL COMMENT '描述评分',
     snapshot_time DATETIME(6) NOT NULL COMMENT '快照时点',
     biz_date DATE NOT NULL COMMENT '业务日期，取快照日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -648,40 +628,13 @@ PROPERTIES (
     'replication_num' = '1'
 );
 
-CREATE TABLE dwd_product_sku_operation_daily_snapshot_df (
-    snapshot_date_key INT NOT NULL COMMENT '快照日期键',
-    sku_id BIGINT NOT NULL COMMENT 'SKU业务ID',
-    sku_sk BIGINT NOT NULL COMMENT '快照时SKU版本代理键',
-    spu_sk BIGINT NOT NULL COMMENT '快照时SPU版本代理键',
-    spu_id BIGINT NOT NULL COMMENT 'SPU业务ID',
-    shop_sk BIGINT NOT NULL COMMENT '快照时店铺版本代理键',
-    shop_id BIGINT NOT NULL COMMENT '店铺业务ID',
-    category_sk BIGINT NOT NULL COMMENT '快照时叶子类目版本代理键',
-    category_id BIGINT NOT NULL COMMENT '叶子类目业务ID',
-    warning_stock_qty INT NOT NULL DEFAULT 0 COMMENT 'SKU级运营预警库存量',
-    is_hot_sale TINYINT NOT NULL DEFAULT 0 COMMENT '运营口径是否热销:0否 1是',
-    is_new TINYINT NOT NULL DEFAULT 0 COMMENT '运营口径是否新品:0否 1是',
-    snapshot_time DATETIME(6) NOT NULL COMMENT '快照时点',
-    biz_date DATE NOT NULL COMMENT '业务日期，取快照日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
-    source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
-    load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
-    dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
-)
-ENGINE = OLAP
-UNIQUE KEY (`snapshot_date_key`, `sku_id`)
-COMMENT '商品域SKU运营属性每日周期快照事实'
-DISTRIBUTED BY HASH (`snapshot_date_key`) BUCKETS AUTO
-PROPERTIES (
-    'replication_num' = '1'
-);
-
 CREATE TABLE dwd_trade_order_detail_di (
     order_detail_id BIGINT NOT NULL COMMENT '订单明细业务ID',
     order_id BIGINT NOT NULL COMMENT '订单业务ID',
     parent_order_id BIGINT DEFAULT NULL COMMENT '父订单业务ID',
     trade_no VARCHAR(256) DEFAULT NULL COMMENT '交易流水号',
     order_no VARCHAR(256) NOT NULL COMMENT '订单编号',
+    source_session_id VARCHAR(512) NOT NULL COMMENT '产生订单的来源会话ID',
     order_date_key INT NOT NULL COMMENT '下单日期键',
     user_sk BIGINT NOT NULL COMMENT '下单时用户版本代理键',
     user_id BIGINT NOT NULL COMMENT '用户业务ID',
@@ -727,7 +680,6 @@ CREATE TABLE dwd_trade_order_detail_di (
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',
     order_create_time DATETIME(6) NOT NULL COMMENT '下单时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取下单日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -760,7 +712,6 @@ CREATE TABLE dwd_trade_order_status_event_di (
     operator_type VARCHAR(128) DEFAULT NULL COMMENT '操作人类型',
     event_time DATETIME(6) NOT NULL COMMENT '状态变更时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取状态变更日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -784,7 +735,6 @@ CREATE TABLE dwd_trade_order_detail_activity_di (
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',
     order_create_time DATETIME(6) NOT NULL COMMENT '下单时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取下单日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -813,7 +763,6 @@ CREATE TABLE dwd_trade_order_detail_coupon_di (
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',
     order_create_time DATETIME(6) NOT NULL COMMENT '下单时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取下单日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -842,7 +791,6 @@ CREATE TABLE dwd_marketing_user_coupon_event_di (
     coupon_batch_no VARCHAR(256) DEFAULT NULL COMMENT '发券批次号',
     event_time DATETIME(6) NOT NULL COMMENT '事件发生时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取事件发生日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -873,7 +821,6 @@ CREATE TABLE dwd_trade_pay_detail_di (
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',
     pay_request_time DATETIME(6) NOT NULL COMMENT '支付请求时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取支付请求日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -899,7 +846,6 @@ CREATE TABLE dwd_trade_pay_order_detail_di (
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',
     pay_request_time DATETIME(6) NOT NULL COMMENT '支付请求时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取支付请求日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -925,7 +871,6 @@ CREATE TABLE dwd_trade_pay_status_event_di (
     status_reason_description VARCHAR(2048) DEFAULT NULL COMMENT '状态原因说明',
     event_time DATETIME(6) NOT NULL COMMENT '状态变更时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取状态变更日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -968,7 +913,6 @@ CREATE TABLE dwd_trade_delivery_di (
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',
     delivery_create_time DATETIME(6) NOT NULL COMMENT '包裹创建时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取包裹创建日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1001,7 +945,6 @@ CREATE TABLE dwd_trade_delivery_item_di (
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',
     delivery_create_time DATETIME(6) NOT NULL COMMENT '包裹创建时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取包裹创建日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1028,7 +971,6 @@ CREATE TABLE dwd_trade_delivery_status_event_di (
     event_remark VARCHAR(2048) DEFAULT NULL COMMENT '物流事件说明',
     event_time DATETIME(6) NOT NULL COMMENT '状态变更时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取状态变更日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1069,7 +1011,6 @@ CREATE TABLE dwd_trade_refund_detail_di (
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',
     apply_time DATETIME(6) NOT NULL COMMENT '退款申请时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取退款申请日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1097,7 +1038,6 @@ CREATE TABLE dwd_trade_refund_status_event_di (
     operator_type VARCHAR(128) DEFAULT NULL COMMENT '操作人类型',
     event_time DATETIME(6) NOT NULL COMMENT '状态变更时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取状态变更日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1133,7 +1073,6 @@ CREATE TABLE dwd_trade_refund_pay_detail_di (
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',
     refund_pay_request_time DATETIME(6) NOT NULL COMMENT '退款打款请求时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取退款打款请求日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1158,7 +1097,6 @@ CREATE TABLE dwd_trade_refund_pay_status_event_di (
     status_reason_description VARCHAR(2048) DEFAULT NULL COMMENT '状态原因说明',
     event_time DATETIME(6) NOT NULL COMMENT '状态变更时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取状态变更日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1197,7 +1135,6 @@ CREATE TABLE dwd_interaction_cart_event_di (
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',
     event_time DATETIME(6) NOT NULL COMMENT '事件发生时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取事件发生日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1230,7 +1167,6 @@ CREATE TABLE dwd_interaction_favor_event_di (
     favor_event_type VARCHAR(64) NOT NULL COMMENT '事件类型:收藏/取消收藏',
     event_time DATETIME(6) NOT NULL COMMENT '事件发生时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取事件发生日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1269,7 +1205,6 @@ CREATE TABLE dwd_traffic_session_di (
     session_start_time DATETIME(6) NOT NULL COMMENT '会话开始时间',
     session_end_time DATETIME(6) NOT NULL COMMENT '会话结束时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取会话开始日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1317,7 +1252,6 @@ CREATE TABLE dwd_traffic_page_view_di (
     stay_duration_sec INT DEFAULT NULL COMMENT '页面停留秒数',
     event_time DATETIME(6) NOT NULL COMMENT '页面加载时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取页面加载日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1349,7 +1283,6 @@ CREATE TABLE dwd_traffic_search_di (
         COMMENT '请求是否成功:0否 1是',
     event_time DATETIME(6) NOT NULL COMMENT '搜索请求时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取搜索请求日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1384,7 +1317,6 @@ CREATE TABLE dwd_traffic_search_click_di (
     click_rank INT NOT NULL COMMENT '点击结果位次',
     event_time DATETIME(6) NOT NULL COMMENT '点击时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取点击日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1427,7 +1359,6 @@ CREATE TABLE dwd_service_comment_detail_di (
     sentiment VARCHAR(64) DEFAULT NULL COMMENT '情感分析结果',
     comment_time DATETIME(6) NOT NULL COMMENT '评价发布时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取评价发布日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1469,7 +1400,6 @@ CREATE TABLE dwd_inventory_change_di (
     remark VARCHAR(2048) DEFAULT NULL COMMENT '变更说明',
     event_time DATETIME(6) NOT NULL COMMENT '库存变更时间',
     biz_date DATE NOT NULL COMMENT '业务日期，取库存变更日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源事件唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
@@ -1501,7 +1431,6 @@ CREATE TABLE dwd_inventory_daily_snapshot_df (
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',
     snapshot_time DATETIME(6) NOT NULL COMMENT '快照时点',
     biz_date DATE NOT NULL COMMENT '业务日期，取快照日期',
-    source_system_code VARCHAR(128) NOT NULL COMMENT '来源系统编码',
     source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
     load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
     dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'

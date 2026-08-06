@@ -660,7 +660,7 @@ tables:
           - 分类ID
         index_values: true
       - name: brand_id
-        reference_t_name: dim_brand_info_zip
+        reference_t_name: dim_brand_info
         reference_c_name: brand_id
         description: 品牌ID，关联品牌维度
         alias:
@@ -728,7 +728,7 @@ tables:
         index_values: false
   - name: dim_sku_info_zip
     role: dim
-    description: SKU维度拉链表，记录库存量单位的基本信息和价格
+    description: SKU维度拉链表，记录库存量单位的基本信息和库存策略
     columns:
       - name: sku_sk
         description: SKU维度代理键
@@ -768,7 +768,7 @@ tables:
           - 类目ID
         index_values: true
       - name: brand_id
-        reference_t_name: dim_brand_info_zip
+        reference_t_name: dim_brand_info
         reference_c_name: brand_id
         description: 品牌ID，关联品牌维度
         alias:
@@ -780,45 +780,24 @@ tables:
           - 条码
           - 条形码
         index_values: true
-      - name: origin_price
-        description: 原价
+      - name: sku_status
+        description: SKU状态
         alias:
-          - 吊牌价
-        index_values: true
-      - name: sale_price
-        description: 销售价
-        alias:
-          - 售价
-          - 现价
-        index_values: true
-      - name: cost_price
-        description: 成本价
-        alias:
-          - 成本
-        index_values: true
-      - name: is_hot_sale
-        description: 是否热销
-        alias:
-          - 热销标识
-        index_values: true
-      - name: is_new
-        description: 是否新品
-        alias:
-          - 新品标识
+          - 商品状态
         index_values: true
       - name: is_current
         description: 是否当前版本
         alias: []
         index_values: false
-      - name: start_date
-        description: 生效开始日期
+      - name: effective_start_time
+        description: 版本生效开始时间
         alias:
-          - 开始日期
+          - 生效开始时间
         index_values: false
-      - name: end_date
-        description: 生效结束日期
+      - name: effective_end_time
+        description: 版本生效结束时间
         alias:
-          - 结束日期
+          - 生效结束时间
         index_values: false
       - name: sku_specs_json
         description: SKU规格JSON
@@ -830,8 +809,8 @@ tables:
         description: 单位
         alias: []
         index_values: true
-      - name: warning_stock
-        description: 预警库存
+      - name: warning_stock_qty
+        description: SKU级库存预警阈值
         alias:
           - 库存预警值
         index_values: true
@@ -1068,7 +1047,7 @@ tables:
           - 类目ID
         index_values: false
       - name: brand_id
-        reference_t_name: dim_brand_info_zip
+        reference_t_name: dim_brand_info
         reference_c_name: brand_id
         description: 品牌ID，关联品牌维度
         alias:

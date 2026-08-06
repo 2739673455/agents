@@ -4,7 +4,7 @@
 - 执行 `docker compose up -d`
 
 ## 在数据库中建表并导入数据
-- 元数据和会话数据库表 [scripts/sql/mysql](scripts/sql/mysql)
+- 元数据和会话基本信息表 [scripts/sql/mysql](scripts/sql/mysql)
   ```bash
   uv run scripts/init_db.py  # 初始化 meta 和 chat 数据库
   ```
@@ -14,7 +14,9 @@
 ## 修改配置信息
 - 编辑 [conf/app_config.yaml](conf/app_config.yaml)，配置数据库和模型信息
 - 编辑 [`conf/.env`](conf/.env)，配置模型服务密钥
-- `db_source` 配置指向 Doris，`db_meta` 和 `db_chat` 配置指向 MySQL
+- `db_source` 配置指向 Doris，`db_meta` 配置指向 MySQL
+- 对话目录由 LangGraph Redis Store 持久化，对话消息和 Agent 执行状态由 Redis Checkpointer 持久化
+- Redis 需要 RedisJSON 和 RediSearch，[docker/compose.yml](docker/compose.yml) 中的 Redis 8 已包含所需能力并开启 AOF
 - [conf/meta_config.yaml](conf/meta_config.yaml) 是元数据导入文件示例
 - Doris `UNIQUE KEY` 字段作为表的逻辑主键自动读取，不需要在 YAML 或接口请求中填写
 - 字段类型和示例值从业务数据库自动读取，不需要在 YAML 或接口请求中填写

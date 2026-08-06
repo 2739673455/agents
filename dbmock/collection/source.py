@@ -1,4 +1,4 @@
-"""国内公开电商商品目录采集与标准化"""
+"""国内公开电商商品数据来源采集"""
 
 from __future__ import annotations
 
@@ -26,9 +26,7 @@ from scrapling.parser import Selector
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-CATALOG_DATASET_NAME = "国内公开电商商品页"
-CATALOG_PRODUCT_SOURCE_SYSTEM = "PIM"
-CATALOG_MERCHANT_SOURCE_SYSTEM = "MERCHANT_CENTER"
+CATALOG_DATASET_NAME = "苏宁易购公开商品页"
 SUNING_DATASET_NAME = "苏宁易购公开商品页"
 SUNING_DATASET_URL = "https://www.suning.com/"
 SUNING_REPOSITORY_URL = "https://search.suning.com/"
@@ -647,8 +645,7 @@ def _redistribute_exhausted_quotas(
     exhausted = [
         group
         for group, quota in quotas.items()
-        if group_counts[group] < quota
-        and _group_search_exhausted(group, next_pages)
+        if group_counts[group] < quota and _group_search_exhausted(group, next_pages)
     ]
     if not exhausted:
         return
@@ -851,9 +848,7 @@ def _variant_specs(page: Selector, script: str) -> dict[str, dict[str, str]]:
     return _subcode_variant_specs(page, script)
 
 
-def _subcode_variant_specs(
-    page: Selector, script: str
-) -> dict[str, dict[str, str]]:
+def _subcode_variant_specs(page: Selector, script: str) -> dict[str, dict[str, str]]:
     g_info = _script_value(script, "gInfo")
     if not isinstance(g_info, dict):
         return {}
@@ -881,9 +876,7 @@ def _subcode_variant_specs(
             composite_key = "".join(value_id for value_id, _ in combination)
             combinations[composite_key] = {
                 axis_name: label
-                for (axis_name, _), (_, label) in zip(
-                    axes, combination, strict=True
-                )
+                for (axis_name, _), (_, label) in zip(axes, combination, strict=True)
             }
     output: dict[str, dict[str, str]] = {}
     for raw_group in raw_groups:
@@ -922,13 +915,13 @@ def _filter_variant_specs_to_spu(
     return {
         sku_code: specs
         for sku_code, specs in variant_specs.items()
-        if all(specs.get(axis_name) == value for axis_name, value in discriminators.items())
+        if all(
+            specs.get(axis_name) == value for axis_name, value in discriminators.items()
+        )
     }
 
 
-def _suning_source_key(
-    vendor_code: str, brand_id: str, sku_codes: list[str]
-) -> str:
+def _suning_source_key(vendor_code: str, brand_id: str, sku_codes: list[str]) -> str:
     group_material = f"{vendor_code}|{brand_id}|" + ",".join(sorted(sku_codes))
     group_hash = hashlib.sha256(group_material.encode()).hexdigest()[:24]
     return f"{SUNING_ORIGIN_PLATFORM}:{group_hash}"
@@ -1211,7 +1204,6 @@ def _cache_valid(
     metadata_path: Path,
     cache_path: Path,
     target_spu_count: int,
-    target_sku_count: int,
 ) -> bool:
     if not metadata_path.exists() or not cache_path.exists():
         return False
@@ -1220,15 +1212,12 @@ def _cache_valid(
     except (json.JSONDecodeError, OSError):
         return False
     return (
-        int(metadata.get("schema_version", 0)) == 8
-        and int(metadata.get("variant_parser_revision", 0))
-        == VARIANT_PARSER_REVISION
+        int(metadata.get("schema_version", 0)) == 9
+        and int(metadata.get("variant_parser_revision", 0)) == VARIANT_PARSER_REVISION
         and int(metadata.get("target_spu_count", 0)) == target_spu_count
-        and int(metadata.get("target_sku_count", 0)) == target_sku_count
         and int(metadata.get("selected_spus", 0)) == target_spu_count
-        and int(metadata.get("selected_skus", 0)) == target_sku_count
         and int(metadata.get("cached_spus", 0)) == target_spu_count
-        and int(metadata.get("available_skus", 0)) >= target_sku_count
+        and int(metadata.get("selected_skus", 0)) >= target_spu_count
         and metadata.get("price_region_code") == PRICE_REGION_CODE
         and metadata.get("sha256") == sha256(cache_path)
     )
@@ -1442,9 +1431,7 @@ def _refresh_cached_variant_relations(
             active = {product.source_key: product for product in products}
             batch = [
                 active[product.source_key]
-                for product in group_queue[
-                    start : start + VARIANT_REFRESH_CHECKPOINT
-                ]
+                for product in group_queue[start : start + VARIANT_REFRESH_CHECKPOINT]
                 if product.source_key in active
             ]
             if not batch:
@@ -1522,44 +1509,40 @@ def _refresh_cached_variant_relations(
     return products
 
 
-def _select_real_skus(
-    products: list[CatalogProduct], target_sku_count: int
+def _select_products(
+    products: list[CatalogProduct], target_spu_count: int
 ) -> list[CatalogProduct]:
-    if target_sku_count < len(products):
-        raise ValueError("真实SKU目标数不能小于SPU目标数")
-    available = sum(len(product.skus) for product in products)
-    if available < target_sku_count:
+    if len(products) < target_spu_count:
         raise ValueError(
-            f"已采商品的真实SKU不足 requested={target_sku_count} available={available}"
+            f"苏宁真实 SPU 不足 requested={target_spu_count} available={len(products)}"
         )
-    selected_counts = [1] * len(products)
-    remaining = target_sku_count - len(products)
-    while remaining:
-        made_progress = False
-        for index, product in enumerate(products):
-            if selected_counts[index] >= len(product.skus):
+    quotas = _target_quotas(target_spu_count)
+    group_counts: Counter[str] = Counter()
+    selected: list[CatalogProduct] = []
+    selected_keys: set[str] = set()
+    for product in products:
+        if group_counts[product.selection_group] >= quotas[product.selection_group]:
+            continue
+        selected.append(product)
+        selected_keys.add(product.source_key)
+        group_counts[product.selection_group] += 1
+    if len(selected) < target_spu_count:
+        for product in products:
+            if product.source_key in selected_keys:
                 continue
-            selected_counts[index] += 1
-            remaining -= 1
-            made_progress = True
-            if remaining == 0:
+            selected.append(product)
+            if len(selected) == target_spu_count:
                 break
-        if not made_progress:
-            raise ValueError("真实SKU选择过程无法满足目标数量")
-    output = []
-    for product, count in zip(products, selected_counts, strict=True):
-        payload = asdict(product)
-        payload["source_category_ids"] = tuple(payload["source_category_ids"])
-        payload["source_category_path"] = tuple(payload["source_category_path"])
-        payload["skus"] = tuple(product.skus[:count])
-        output.append(CatalogProduct(**payload))
-    return output
+    if len(selected) != target_spu_count:
+        raise ValueError(
+            f"苏宁 SPU 选择数量不一致 expected={target_spu_count} actual={len(selected)}"
+        )
+    return selected
 
 
 def _prepare_suning_source(
     data_dir: Path,
     target_spu_count: int,
-    target_sku_count: int,
     *,
     force: bool = False,
     delay_seconds: float = 0.5,
@@ -1567,23 +1550,15 @@ def _prepare_suning_source(
     cache_path = data_dir / SOURCE_CACHE
     metadata_path = data_dir / SOURCE_CACHE_METADATA
     state_path = data_dir / SOURCE_CRAWL_STATE
-    if not force and _cache_valid(
-        metadata_path, cache_path, target_spu_count, target_sku_count
-    ):
+    if not force and _cache_valid(metadata_path, cache_path, target_spu_count):
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         cached_products = _read_cache(cache_path)
-        return (
-            cache_path,
-            metadata,
-            _select_real_skus(cached_products, target_sku_count),
-        )
+        return cache_path, metadata, cached_products
     variant_state_path = data_dir / SOURCE_VARIANT_STATE
     if force:
         for path in (cache_path, metadata_path, state_path, variant_state_path):
             path.unlink(missing_ok=True)
 
-    if target_sku_count < target_spu_count:
-        raise ValueError("真实SKU目标数不能小于SPU目标数")
     cached_products = _read_cache(cache_path)
     products = [
         product for product in cached_products if _has_complete_core_fields(product)
@@ -1608,7 +1583,26 @@ def _prepare_suning_source(
         )
         _rewrite_products(cache_path, products)
     if len(products) > target_spu_count:
-        raise ValueError("现有商品源缓存超过本次SPU目标，请使用--force-download")
+        products = _select_products(products, target_spu_count)
+        _rewrite_products(cache_path, products)
+        state_path.unlink(missing_ok=True)
+        refreshed = _load_variant_refresh_state(variant_state_path)
+        _atomic_json(
+            variant_state_path,
+            {
+                "schema_version": 1,
+                "parser_revision": VARIANT_PARSER_REVISION,
+                "refreshed_source_keys": sorted(
+                    refreshed & {product.source_key for product in products}
+                ),
+                "updated_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        logger.info(
+            "按综合类目配额缩减苏宁商品缓存 spus=%s skus=%s",
+            len(products),
+            sum(len(product.skus) for product in products),
+        )
 
     state = _load_state(state_path)
     next_pages = {
@@ -1637,18 +1631,8 @@ def _prepare_suning_source(
     client.claim_sources(seen_source_keys)
     group_counts = Counter(product.selection_group for product in products)
     quotas = _target_quotas(target_spu_count)
-    variant_upgrade_count = 0
-
-    while (
-        len(products) < target_spu_count
-        or sum(len(product.skus) for product in products) < target_sku_count
-    ):
-        if len(products) < target_spu_count:
-            _redistribute_exhausted_quotas(quotas, group_counts, next_pages)
-        available_skus = sum(len(product.skus) for product in products)
-        needs_variant_upgrade = (
-            len(products) == target_spu_count and available_skus < target_sku_count
-        )
+    while len(products) < target_spu_count:
+        _redistribute_exhausted_quotas(quotas, group_counts, next_pages)
         made_progress = False
         processed_page = False
         queries = sorted(
@@ -1662,10 +1646,7 @@ def _prepare_suning_source(
         for query in queries:
             if quotas[query.group] == 0:
                 continue
-            if (
-                not needs_variant_upgrade
-                and group_counts[query.group] >= quotas[query.group]
-            ):
+            if group_counts[query.group] >= quotas[query.group]:
                 continue
             page_number = next_pages.get(query.keyword, 0)
             if page_number >= SEARCH_PAGE_LIMIT:
@@ -1720,7 +1701,6 @@ def _prepare_suning_source(
                     error,
                 )
                 continue
-            page_replaced_product = False
             for candidate, product in zip(
                 pending_candidates,
                 normalized_products,
@@ -1728,42 +1708,13 @@ def _prepare_suning_source(
             ):
                 if product is None or product.source_key in seen_source_keys:
                     continue
-                if len(products) < target_spu_count:
-                    if group_counts[query.group] >= quotas[query.group]:
-                        continue
-                    _append_product(cache_path, product)
-                    products.append(product)
-                    seen_source_keys.add(product.source_key)
-                    group_counts[query.group] += 1
-                    made_progress = True
-                else:
-                    group_indexes = [
-                        index
-                        for index, existing in enumerate(products)
-                        if existing.selection_group == query.group
-                    ]
-                    if not group_indexes:
-                        continue
-                    replace_index = min(
-                        group_indexes,
-                        key=lambda index: len(products[index].skus),
-                    )
-                    replaced = products[replace_index]
-                    if len(product.skus) <= len(replaced.skus):
-                        continue
-                    products[replace_index] = product
-                    seen_source_keys.add(product.source_key)
-                    page_replaced_product = True
-                    variant_upgrade_count += 1
-                    made_progress = True
-                    logger.info(
-                        "真实SKU容量升级 group=%s old=%s new=%s available=%s/%s",
-                        query.group,
-                        len(replaced.skus),
-                        len(product.skus),
-                        sum(len(row.skus) for row in products),
-                        target_sku_count,
-                    )
+                if group_counts[query.group] >= quotas[query.group]:
+                    continue
+                _append_product(cache_path, product)
+                products.append(product)
+                seen_source_keys.add(product.source_key)
+                group_counts[query.group] += 1
+                made_progress = True
                 if len(products) % 100 == 0:
                     logger.info(
                         "真实商品采集进度 spus=%s/%s available_skus=%s",
@@ -1771,19 +1722,10 @@ def _prepare_suning_source(
                         target_spu_count,
                         sum(len(row.skus) for row in products),
                     )
-                available_skus = sum(len(row.skus) for row in products)
-                if (
-                    len(products) == target_spu_count
-                    and available_skus >= target_sku_count
-                ):
+                if len(products) == target_spu_count:
                     break
-                if (
-                    not needs_variant_upgrade
-                    and group_counts[query.group] == quotas[query.group]
-                ):
+                if group_counts[query.group] == quotas[query.group]:
                     break
-            if page_replaced_product:
-                _rewrite_products(cache_path, products)
             next_pages[query.keyword] = page_number + 1
             _atomic_json(
                 state_path,
@@ -1804,15 +1746,9 @@ def _prepare_suning_source(
                 group_counts[query.group],
                 quotas[query.group],
             )
-            if (
-                len(products) == target_spu_count
-                and sum(len(row.skus) for row in products) >= target_sku_count
-            ):
+            if len(products) == target_spu_count:
                 break
-        if (
-            len(products) == target_spu_count
-            and sum(len(row.skus) for row in products) >= target_sku_count
-        ):
+        if len(products) == target_spu_count:
             break
         if not processed_page:
             exhausted = [
@@ -1830,20 +1766,21 @@ def _prepare_suning_source(
                     "国内真实商品不足，请扩充检索词或数据源: " + ", ".join(exhausted)
                 )
             raise ValueError(
-                "真实SKU关系不足: "
-                f"requested={target_sku_count} "
-                f"available={sum(len(row.skus) for row in products)}"
+                f"苏宁真实 SPU 不足 requested={target_spu_count} "
+                f"available={len(products)}"
             )
         if not made_progress:
             logger.info(
-                "当前检索页未提升SKU容量 available=%s/%s",
-                sum(len(row.skus) for row in products),
-                target_sku_count,
+                "当前检索页没有新增有效商品 selected=%s/%s",
+                len(products),
+                target_spu_count,
             )
 
-    selected_products = _select_real_skus(products, target_sku_count)
+    selected_products = _select_products(products, target_spu_count)
+    _rewrite_products(cache_path, selected_products)
+    group_counts = Counter(product.selection_group for product in selected_products)
     metadata = {
-        "schema_version": 8,
+        "schema_version": 9,
         "variant_parser_revision": VARIANT_PARSER_REVISION,
         "dataset": SUNING_DATASET_NAME,
         "dataset_url": SUNING_DATASET_URL,
@@ -1851,14 +1788,11 @@ def _prepare_suning_source(
         "revision": SUNING_REVISION,
         "captured_at": datetime.now(UTC).isoformat(),
         "target_spu_count": target_spu_count,
-        "target_sku_count": target_sku_count,
         "selected_spus": len(selected_products),
         "selected_skus": sum(len(product.skus) for product in selected_products),
-        "cached_spus": len(products),
-        "available_skus": sum(len(product.skus) for product in products),
+        "cached_spus": len(selected_products),
         "sha256": sha256(cache_path),
         "selection_group_distribution": dict(group_counts),
-        "variant_upgrade_count": variant_upgrade_count,
         "request_delay_seconds": delay_seconds,
         "price_region_code": PRICE_REGION_CODE,
         "robots_checked_at": datetime.now(UTC).isoformat(),
@@ -1879,106 +1813,43 @@ def _prepare_suning_source(
     return cache_path, metadata, selected_products
 
 
-def _source_targets(target_spu_count: int, target_sku_count: int) -> dict[str, int]:
-    if target_spu_count < 2:
-        return {
-            "suning_spus": target_spu_count,
-            "suning_skus": target_sku_count,
-            "dangdang_spus": 0,
-        }
-    dangdang_spus = max(1, target_spu_count * 25 // 100)
-    return {
-        "suning_spus": target_spu_count - dangdang_spus,
-        "suning_skus": target_sku_count - dangdang_spus,
-        "dangdang_spus": dangdang_spus,
-    }
-
-
-def _cross_source_identity(product: CatalogProduct) -> str:
-    brand = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", product.brand.casefold())
-    model = re.sub(
-        r"[^0-9a-z\u4e00-\u9fff]+",
-        "",
-        (product.model or "").casefold(),
-    )
-    title = re.sub(
-        r"[^0-9a-z\u4e00-\u9fff]+",
-        "",
-        product.spu_name.casefold(),
-    )
-    return f"{brand}|{model or title}"
-
-
 def prepare_source(
     data_dir: Path,
     target_spu_count: int,
-    target_sku_count: int,
     *,
     force: bool = False,
     delay_seconds: float = 0.5,
 ) -> tuple[list[Path], dict[str, Any], list[CatalogProduct]]:
-    from .sources.dangdang import prepare_dangdang_source
-
-    targets = _source_targets(target_spu_count, target_sku_count)
-    source_paths: list[Path] = []
-    source_metadata: list[dict[str, Any]] = []
-    products: list[CatalogProduct] = []
-
-    if targets["dangdang_spus"]:
-        path, metadata, rows = prepare_dangdang_source(
-            data_dir,
-            targets["dangdang_spus"],
-            force=force,
-            delay_seconds=delay_seconds,
-        )
-        source_paths.append(path)
-        source_metadata.append(metadata)
-        products.extend(rows)
-
-    path, metadata, rows = _prepare_suning_source(
+    path, metadata, products = _prepare_suning_source(
         data_dir,
-        targets["suning_spus"],
-        targets["suning_skus"],
+        target_spu_count,
         force=force,
         delay_seconds=delay_seconds,
     )
-    source_paths.append(path)
-    source_metadata.append(metadata)
-    products.extend(rows)
-
-    identities: dict[str, CatalogProduct] = {}
-    for product in products:
-        identity = _cross_source_identity(product)
-        previous = identities.get(identity)
-        if previous is not None and previous.origin_platform != product.origin_platform:
-            raise ValueError(
-                f"跨来源商品重复: {previous.source_key} <-> {product.source_key}"
-            )
-        identities[identity] = product
-
     if len(products) != target_spu_count:
         raise ValueError(
-            f"多来源SPU数量不一致 expected={target_spu_count} actual={len(products)}"
+            f"苏宁 SPU 数量不一致 expected={target_spu_count} actual={len(products)}"
         )
-    selected_skus = sum(len(product.skus) for product in products)
-    if selected_skus != target_sku_count:
-        raise ValueError(
-            f"多来源SKU数量不一致 expected={target_sku_count} actual={selected_skus}"
-        )
+    invalid_origins = [
+        product.source_key
+        for product in products
+        if product.origin_platform != SUNING_ORIGIN_PLATFORM
+    ]
+    if invalid_origins:
+        raise ValueError(f"商品包含非苏宁来源: {invalid_origins[:10]}")
     origin_distribution = Counter(product.origin_platform for product in products)
     return (
-        source_paths,
+        [path],
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "dataset_name": CATALOG_DATASET_NAME,
             "captured_at": datetime.now(UTC).isoformat(),
             "request_delay_seconds": delay_seconds,
             "origin_distribution": dict(origin_distribution),
-            "cross_source_deduplication": "品牌加型号，缺少型号时使用品牌加标准化SPU标题",
             "selection_group_distribution": dict(
                 Counter(product.selection_group for product in products)
             ),
-            "sources": source_metadata,
+            "sources": [metadata],
         },
         products,
     )

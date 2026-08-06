@@ -1,51 +1,32 @@
 import asyncio
 import contextlib
-import json
-import secrets
 import shutil
-from typing import Annotated
+from collections.abc import AsyncIterator
+from uuid import UUID
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    Request,
-    WebSocket,
-    WebSocketDisconnect,
-    status,
-)
+from fastapi import APIRouter, Request, status
+from fastapi.responses import StreamingResponse
 from loguru import logger
-from pydantic import ValidationError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.agent import get_workspace_dir
-from app.clients.mysql_client_manager import chat_mysql_client_manager
-from app.clients.redis_client_manager import redis_client_manager
 from app.core import context
 from app.errors import chat_error
-from app.mappers import message_mapper
-from app.repositories.compaction_mysql_repo import CompactionMySQLRepo
-from app.repositories.conversation_mysql_repo import ConversationMySQLRepo
-from app.repositories.message_mysql_repo import MessageMySQLRepo
-from app.repositories.websocket_token_redis_repo import WebSocketTokenRedisRepo
 from app.routes.api.v1.chat import schemas as chat_schema
+from app.routes.api.v1.chat.dependencies import ConversationRepoDep
 from app.services import chat_service
 
 router = APIRouter(tags=["chat"])
+_SSE_HEARTBEAT_SECONDS = 15
 
 
 @router.post("/create", status_code=status.HTTP_201_CREATED)
 async def api_create_conversation(
     request: Request,
     body: chat_schema.CreateConversationRequest,
-    db_session: Annotated[
-        AsyncSession,
-        Depends(chat_mysql_client_manager.get_session),
-    ],
+    conversation_repo: ConversationRepoDep,
 ) -> chat_schema.ConversationResponse:
     """创建新对话"""
     user_id = request.state.payload.sub
-    conversation_repo = ConversationMySQLRepo(db_session)
-
     conversation = await conversation_repo.create(
         user_id,
         "新对话",
@@ -66,29 +47,21 @@ async def api_create_conversation(
 async def api_delete_conversations(
     request: Request,
     body: chat_schema.DeleteConversationRequest,
-    db_session: Annotated[
-        AsyncSession,
-        Depends(chat_mysql_client_manager.get_session),
-    ],
+    conversation_repo: ConversationRepoDep,
 ) -> None:
-    """删除对话(逻辑删除)"""
+    """删除对话"""
     user_id = request.state.payload.sub
-    conversation_repo = ConversationMySQLRepo(db_session)
-    message_repo = MessageMySQLRepo(db_session)
-    compaction_repo = CompactionMySQLRepo(db_session)
 
     for conversation_id in body.conversation_ids:
         # 检查对话是否存在且属于当前用户
-        conversation = await conversation_repo.get_by_id(conversation_id)
-        if (conversation is None) or (conversation.user_id != user_id):
+        conversation = await conversation_repo.get(user_id, conversation_id)
+        if conversation is None:
             raise chat_error.ConversationNotFoundError
 
-        # 禁用对话
-        await conversation_repo.update(conversation, yn=0)
-        # 禁用对话下所有消息
-        await message_repo.update_yn_by_conversation_id(conversation_id, yn=0)
-        # 禁用对话下所有上下文压缩记录
-        await compaction_repo.update_yn_by_conversation_id(conversation_id, yn=0)
+        # 删除 LangGraph 线程状态
+        await chat_service.delete_conversation_state(user_id, conversation_id)
+        # 删除会话目录信息
+        await conversation_repo.delete(user_id, conversation_id)
 
         # 删除对话对应工作区
         await asyncio.to_thread(
@@ -104,298 +77,152 @@ async def api_delete_conversations(
 async def api_update_conversation(
     request: Request,
     body: chat_schema.UpdateConversationRequest,
-    db_session: Annotated[
-        AsyncSession,
-        Depends(chat_mysql_client_manager.get_session),
-    ],
+    conversation_repo: ConversationRepoDep,
 ) -> None:
     """修改对话信息"""
     user_id = request.state.payload.sub
-    conversation_repo = ConversationMySQLRepo(db_session)
 
     # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get_by_id(body.conversation_id)
-    if (conversation is None) or (conversation.user_id != user_id):
+    conversation = await conversation_repo.get(user_id, body.conversation_id)
+    if conversation is None:
         raise chat_error.ConversationNotFoundError
 
     await conversation_repo.update(conversation, title=body.title)
-
     logger.info(f"conversation_id={body.conversation_id}: Update conversation")
 
 
 @router.get("/ls")
 async def api_get_conversations(
     request: Request,
-    db_session: Annotated[
-        AsyncSession,
-        Depends(chat_mysql_client_manager.get_session),
-    ],
+    conversation_repo: ConversationRepoDep,
 ) -> chat_schema.ConversationListResponse:
     """获取所有对话"""
     user_id = request.state.payload.sub
-    conversation_repo = ConversationMySQLRepo(db_session)
-    conversations = await conversation_repo.ls(user_id)
-    logger.info(f"Get conversations: conversation_ids={[i.id for i in conversations]}")
+    conversations = await conversation_repo.list_by_user(user_id)
+    logger.info(
+        f"Get conversations: conversation_ids={[item.id for item in conversations]}"
+    )
     return chat_schema.ConversationListResponse(
         conversations=[
             chat_schema.ConversationResponse(
-                conversation_id=i.id,
-                title=i.title,
-                update_at=i.update_at,
+                conversation_id=item.id,
+                title=item.title,
+                update_at=item.update_at,
             )
-            for i in conversations
+            for item in conversations
         ]
     )
 
 
 @router.get("/ls/{conversation_id}")
 async def api_get_messages(
-    conversation_id: int,
-    db_session: Annotated[
-        AsyncSession,
-        Depends(chat_mysql_client_manager.get_session),
-    ],
-) -> chat_schema.MessageListResponse:
-    """获取某个对话所有消息"""
-    message_repo = MessageMySQLRepo(db_session)
-    messages = await message_repo.ls(conversation_id)
-    logger.info(f"{conversation_id=}: Get messages(count={len(messages)})")
-    return chat_schema.MessageListResponse(
-        messages=[message_mapper.entity_to_schema(message) for message in messages]
-    )
-
-
-@router.post("/ws-token")
-async def api_create_websocket_token(
+    conversation_id: UUID,
     request: Request,
-) -> chat_schema.WebSocketTokenResponse:
-    """创建 WebSocket 临时令牌"""
-    # 临时令牌过期时间
-    ws_token_expire_seconds = 30
-
-    # 获取用户ID
+    conversation_repo: ConversationRepoDep,
+) -> chat_schema.MessageListResponse:
+    """从 LangGraph 状态获取某个对话的所有消息"""
     user_id = request.state.payload.sub
+    conversation = await conversation_repo.get(user_id, conversation_id)
+    if conversation is None:
+        raise chat_error.ConversationNotFoundError
 
-    # 创建 WebSocket 临时令牌
-    websocket_token = secrets.token_urlsafe(32)
-    token_repo = WebSocketTokenRedisRepo(redis_client_manager.get_client())
-    # 存储 WebSocket 临时令牌
-    await token_repo.create(
-        token=websocket_token,
-        user_id=user_id,
-        expire_seconds=ws_token_expire_seconds,
+    messages = await chat_service.list_messages(user_id, conversation_id)
+    logger.info(f"{conversation_id=}: Get messages(count={len(messages)})")
+    return chat_schema.MessageListResponse(messages=messages)
+
+
+ChatStreamEvent = (
+    chat_schema.ChatStreamMessageEvent
+    | chat_schema.ChatStreamErrorEvent
+    | chat_schema.ChatStreamDoneEvent
+)
+
+
+def _serialize_sse_event(event: ChatStreamEvent) -> str:
+    """将聊天事件序列化为 SSE 数据帧"""
+    return f"data: {event.model_dump_json()}\n\n"
+
+
+async def _stream_agent_response(
+    user_id: int,
+    conversation_id: UUID,
+    user_message: chat_schema.MessageSchema,
+) -> AsyncIterator[str]:
+    """流式执行单轮 Agent 对话"""
+    cancel = asyncio.Event()
+    responses = chat_service.run_agent_turn(
+        user_id,
+        conversation_id,
+        user_message,
+        cancel,
     )
-
-    logger.info("Create websocket token")
-
-    return chat_schema.WebSocketTokenResponse(
-        websocket_token=websocket_token,
-        expires_in=ws_token_expire_seconds,
-    )
-
-
-async def _validate_and_accept(
-    websocket: WebSocket, conversation_id: int
-) -> int | None:
-    """校验 WebSocket 令牌并接受连接，返回 user_id；失败时关闭连接返回 None"""
-    # 从请求参数中获取 WebSocket 临时令牌
-    websocket_token = websocket.query_params.get("websocket_token")
-    if not websocket_token:
-        # 缺少 WebSocket 临时令牌则拒绝连接
-        await websocket.close(code=4401)
-        return None
-
-    # 使用 WebSocket 临时令牌获取用户信息
-    token_repo = WebSocketTokenRedisRepo(redis_client_manager.get_client())
-    token_data = await token_repo.consume(websocket_token)
-    if token_data is None:
-        # 无法获取用户信息则拒绝连接
-        await websocket.close(code=4401)
-        return None
-
-    # 获取用户 ID 并放入上下文变量
-    user_id = token_data.user_id
-    context.user_id_ctx.set(str(user_id))
-
-    # 接收 WebSocket 连接
-    await websocket.accept()
-    logger.info(f"{conversation_id=}: WebSocket connected")
-    return user_id
-
-
-async def _receive_user_message(
-    websocket: WebSocket,
-) -> chat_schema.MessageSchema | None:
-    """接收并校验用户消息；cancel 或格式错误时返回 None"""
+    next_message_task: asyncio.Task[chat_schema.MessageSchema] | None = None
     try:
-        raw = await websocket.receive_json()
-    except RuntimeError:
-        return None
-
-    # 接收到取消请求
-    if isinstance(raw, dict) and raw.get("type") == "cancel":
-        return None
-
-    # 校验消息格式
-    try:
-        body = chat_schema.WebSocketChatRequest(**raw)
-    except (json.JSONDecodeError, ValidationError) as e:
-        # 格式错误则发送错误响应
-        await websocket.send_json(
-            chat_schema.WebSocketErrorResponse(
-                content=f"Invalid request: {e!s}"
-            ).model_dump(mode="json")
-        )
-        return None
-
-    # 校验消息角色
-    if body.message.role != "user":
-        # 非用户消息则发送错误响应
-        await websocket.send_json(
-            chat_schema.WebSocketErrorResponse(
-                content="Invalid request format: message.role must be 'user'"
-            ).model_dump(mode="json")
-        )
-        return None
-
-    return body.message
-
-
-async def _ensure_not_draft(db_session: AsyncSession, conversation_id: int) -> None:
-    """草稿对话转正式对话"""
-    conversation_repo = ConversationMySQLRepo(db_session)
-    conversation = await conversation_repo.get_by_id(conversation_id)
-    if conversation:
-        await conversation_repo.update(conversation, is_draft=0)
-
-
-class _TurnStream:
-    """管理单轮 Agent 调用的 WebSocket I/O 与 cancel 协调。
-
-    在 async with 块内：
-    - stream.send(msg)  向客户端推送消息，断开时自动标记
-    - stream.send_error(text)  向客户端推送错误
-    - stream.cancel  asyncio.Event，set 即通知 Agent 中断
-    - stream.disconnected  客户端是否已断开
-    """
-
-    def __init__(self, websocket: WebSocket, conversation_id: int):
-        self._ws = websocket
-        self._cid = conversation_id
-        self.cancel = asyncio.Event()  # 中断标志
-        self.disconnected = False  # 断开连接标志
-        self._listener: asyncio.Task | None = None
-
-    async def _listen_cancel(self):
-        """监听客户端 cancel 消息，收到则通知 Agent 中断"""
-        try:
-            while True:
-                raw = await self._ws.receive_json()
-                if isinstance(raw, dict) and raw.get("type") == "cancel":
-                    self.cancel.set()  # 设置中断标志，通知 Agent 中断输出
-                    logger.info(f"{self._cid=}: Received cancel signal")
-                    return
-        except (WebSocketDisconnect, RuntimeError):
-            self.disconnected = True  # 客户端断开，标记连接已断开
-
-    async def send(self, msg: chat_schema.MessageSchema):
-        """向客户端推送 Agent 消息，断开时自动标记并通知 Agent 中断"""
-        try:
-            await self._ws.send_json(
-                chat_schema.WebSocketMessageResponse(message=msg).model_dump(
-                    mode="json"
-                )
-            )
-        except WebSocketDisconnect:
-            self.disconnected = True  # 标记连接已断开
-            self.cancel.set()  # 通知 Agent 中断
-
-    async def send_error(self, content: str):
-        """向客户端推送错误消息"""
-        try:
-            await self._ws.send_json(
-                chat_schema.WebSocketErrorResponse(content=content).model_dump(
-                    mode="json"
-                )
-            )
-        except WebSocketDisconnect:
-            self.disconnected = True  # 标记连接已断开
-
-    async def __aenter__(self):
-        # 启动 cancel 监听任务，与 Agent 执行并行运行
-        self._listener = asyncio.create_task(self._listen_cancel())
-        return self
-
-    async def __aexit__(self, *args):
-        # 收尾：取消 cancel 监听任务，等待其退出
-        if self._listener:
-            self._listener.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._listener
-
-
-@router.websocket("/ws/chat")
-async def api_websocket_chat(
-    websocket: WebSocket,
-    conversation_id: int,
-):
-    """WebSocket 聊天接口"""
-    # ========== Phase 1: 校验令牌、建立连接 ==========
-    user_id = await _validate_and_accept(websocket, conversation_id)
-    if user_id is None:
-        return
-
-    # ========== Phase 2: 加载对话上下文 ==========
-    ctx = await chat_service.load_conversation_context(conversation_id, user_id)
-    if ctx is None:
-        await websocket.send_json(
-            chat_schema.WebSocketErrorResponse(
-                content=chat_error.ConversationNotFoundError.title
-            ).model_dump(mode="json")
-        )
-        await websocket.close(code=4404)
-        logger.info(f"{conversation_id=}: WebSocket disconnected")
-        return
-
-    # ========== Phase 3: 消息循环 ==========
-    try:
+        next_message_task = asyncio.create_task(anext(responses))
         while True:
-            # 接收并校验用户消息
-            user_message = await _receive_user_message(websocket)
-            if user_message is None:
-                continue  # 跳过无效消息，继续等待下一条
+            done, _ = await asyncio.wait(
+                {next_message_task},
+                timeout=_SSE_HEARTBEAT_SECONDS,
+            )
+            if not done:
+                yield ": keep-alive\n\n"
+                continue
 
-            # 上下文序号+1，并更新用户消息序号
-            ctx.context_seq += 1
-            user_message.context_seq = ctx.context_seq
+            try:
+                message = next_message_task.result()
+            except StopAsyncIteration:
+                break
 
-            async with chat_mysql_client_manager.session() as db_session:
-                if ctx.is_draft:
-                    # 草稿对话转正式对话
-                    await _ensure_not_draft(db_session, conversation_id)
-                    ctx.is_draft = False
+            yield _serialize_sse_event(
+                chat_schema.ChatStreamMessageEvent(message=message)
+            )
+            next_message_task = asyncio.create_task(anext(responses))
+    except asyncio.CancelledError:
+        logger.info(f"{conversation_id=}: SSE stream disconnected")
+        raise
+    except Exception:  # noqa: BLE001
+        logger.exception(f"{conversation_id=}: agent failed")
+        yield _serialize_sse_event(
+            chat_schema.ChatStreamErrorEvent(content="模型调用失败，请稍后重试。")
+        )
+    else:
+        yield _serialize_sse_event(chat_schema.ChatStreamDoneEvent())
+    finally:
+        cancel.set()
+        if next_message_task is not None and not next_message_task.done():
+            next_message_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await next_message_task
+        await responses.aclose()
 
-                async with _TurnStream(websocket, conversation_id) as stream:
-                    try:
-                        async for msg in chat_service.run_agent_turn(
-                            db_session,
-                            user_id,
-                            conversation_id,
-                            ctx.messages,
-                            user_message,
-                            stream.cancel,
-                        ):
-                            if stream.disconnected:
-                                break
-                            ctx.context_seq = msg.context_seq or ctx.context_seq
-                            await stream.send(msg)
-                    except Exception:  # noqa: BLE001
-                        logger.exception(f"{conversation_id=}: agent failed")
-                        if not stream.disconnected:
-                            await stream.send_error("模型调用失败，请稍后重试。")
 
-                if stream.disconnected:
-                    break
+@router.post("/stream", response_class=StreamingResponse)
+async def api_stream_chat(
+    request: Request,
+    body: chat_schema.ChatStreamRequest,
+    conversation_repo: ConversationRepoDep,
+) -> StreamingResponse:
+    """通过 SSE 执行单轮对话并流式返回 Agent 事件"""
+    user_id = request.state.payload.sub
+    conversation = await conversation_repo.get(user_id, body.conversation_id)
+    if conversation is None:
+        raise chat_error.ConversationNotFoundError
 
-    except (WebSocketDisconnect, RuntimeError):
-        logger.info(f"{conversation_id=}: WebSocket disconnected")
+    if conversation.is_draft:
+        await conversation_repo.update(conversation, is_draft=False)
+    else:
+        await conversation_repo.update(conversation)
+
+    context.user_id_ctx.set(str(user_id))
+    return StreamingResponse(
+        _stream_agent_response(
+            user_id,
+            body.conversation_id,
+            body.message,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

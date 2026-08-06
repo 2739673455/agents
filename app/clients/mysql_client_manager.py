@@ -70,7 +70,6 @@ class MysqlClientManager:
 
 
 meta_mysql_client_manager = MysqlClientManager(cfg.db_meta)
-chat_mysql_client_manager = MysqlClientManager(cfg.db_chat)
 
 if __name__ == "__main__":
     import asyncio

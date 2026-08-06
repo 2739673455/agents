@@ -1,4 +1,4 @@
-"""综合电商真实商品目录的生成与校验"""
+"""综合电商真实商品采集结果的标准化、生成与校验"""
 
 from __future__ import annotations
 
@@ -16,8 +16,7 @@ from typing import Any
 
 from .source import (
     CATALOG_DATASET_NAME,
-    CATALOG_MERCHANT_SOURCE_SYSTEM,
-    CATALOG_PRODUCT_SOURCE_SYSTEM,
+    SUNING_ORIGIN_PLATFORM,
     CatalogProduct,
     CatalogSku,
     prepare_source,
@@ -57,7 +56,7 @@ def _sku_id(sku: CatalogSku) -> int:
 
 
 def _business_store_name(value: str) -> str:
-    normalized = re.sub(r"苏宁易购|苏宁|当当网|当当", "", value)
+    normalized = re.sub(r"苏宁易购|苏宁", "", value)
     return _clean_text(normalized, 128) or "第三方店铺"
 
 
@@ -140,7 +139,6 @@ def _build_categories(
                 "sort_order": root_order,
                 "category_path": root,
                 "status": 1,
-                "source_system_code": CATALOG_PRODUCT_SOURCE_SYSTEM,
             }
         )
         second_categories = sorted({path[1] for path in paths if path[0] == root})
@@ -159,7 +157,6 @@ def _build_categories(
                     "sort_order": second_order,
                     "category_path": f"{root}/{second}",
                     "status": 1,
-                    "source_system_code": CATALOG_PRODUCT_SOURCE_SYSTEM,
                 }
             )
             leaves = sorted(
@@ -180,7 +177,6 @@ def _build_categories(
                         "sort_order": leaf_order,
                         "category_path": f"{root}/{second}/{leaf}",
                         "status": 1,
-                        "source_system_code": CATALOG_PRODUCT_SOURCE_SYSTEM,
                     }
                 )
                 leaf_ids[(root, second, leaf)] = leaf_id
@@ -255,7 +251,6 @@ def _build_brands_and_shops(
                 "country_name": None,
                 "first_letter": first_letter,
                 "status": 1,
-                "source_system_code": CATALOG_PRODUCT_SOURCE_SYSTEM,
             }
         )
     brand_ids = {
@@ -294,7 +289,6 @@ def _build_brands_and_shops(
                 "is_cross_border": int(store_cross_border[store_key]),
                 "is_deleted": 0,
                 "shop_status": "营业",
-                "source_system_code": CATALOG_MERCHANT_SOURCE_SYSTEM,
             }
         )
     shop_ids = {
@@ -327,7 +321,6 @@ def _spu_rows(
             "weight_kg": product.weight_kg,
             "volume_m3": product.volume_m3,
             "spu_status": "在售",
-            "source_system_code": CATALOG_PRODUCT_SOURCE_SYSTEM,
         }
 
 
@@ -351,7 +344,6 @@ def _sku_rows(
                 "sku_specs_json": sku.specs,
                 "unit": None,
                 "sku_status": "在售",
-                "source_system_code": CATALOG_PRODUCT_SOURCE_SYSTEM,
             }
 
 
@@ -409,20 +401,16 @@ def _lineage_rows(
 def prepare_catalog(
     data_dir: Path,
     *,
-    target_spu_count: int = 30_000,
-    target_sku_count: int = 120_000,
+    target_spu_count: int = 5_000,
     force_download: bool = False,
     crawl_delay_seconds: float = 0.5,
 ) -> dict[str, Any]:
-    if target_spu_count <= 0 or target_sku_count <= 0:
-        raise ValueError("SPU和SKU目标数量必须大于0")
-    if target_sku_count < target_spu_count:
-        raise ValueError("真实SKU目标数量不能小于SPU目标数量")
+    if target_spu_count <= 0:
+        raise ValueError("SPU 目标数量必须大于 0")
 
     source_paths, source_metadata, products = prepare_source(
         data_dir,
         target_spu_count,
-        target_sku_count,
         force=force_download,
         delay_seconds=crawl_delay_seconds,
     )
@@ -469,16 +457,16 @@ def prepare_catalog(
             _lineage_rows(products, category_ids, brand_ids, shop_ids),
         )
         manifest = {
-            "schema_version": 4,
+            "schema_version": 6,
             "generated_at": datetime.now(UTC).isoformat(),
-            "catalog_name": "国内多来源真实商品综合电商目录",
+            "catalog_name": "苏宁真实商品综合电商目录",
             "source": {
                 "dataset_name": CATALOG_DATASET_NAME,
                 "captured_at": source_metadata["captured_at"],
                 "origins": source_entries,
             },
             "selection": {
-                "strategy": "按国内来源及综合电商类目配额采集，仅保留核心字段完整且包含真实SKU关系的商品",
+                "strategy": "按综合电商类目配额采集苏宁商品，保留每个 SPU 的全部真实 SKU",
                 "request_delay_seconds": source_metadata["request_delay_seconds"],
                 "eligible_rows": len(products),
                 "source_brand_names": len(
@@ -517,14 +505,10 @@ def prepare_catalog(
                     "origin_captured_at",
                     "原始标题、类目、参数、价格和图片",
                 ],
-                "business_source_systems": [
-                    CATALOG_PRODUCT_SOURCE_SYSTEM,
-                    CATALOG_MERCHANT_SOURCE_SYSTEM,
-                ],
                 "derived_fields": [
                     "由来源业务键稳定派生的平台SPU和SKU业务ID",
                     "由标准化业务键稳定派生的平台品牌、店铺和商家业务ID",
-                    "跨来源品牌名称标准化",
+                    "品牌名称标准化",
                     "平台三级类目映射",
                     "外部自营商品归入平台自营店",
                     "第三方商家名称使用公开店铺名称",
@@ -574,12 +558,12 @@ def validate_catalog(
         raise ValueError(f"真实商品目录尚未准备: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (
-        int(manifest.get("schema_version", 0)) != 4
+        int(manifest.get("schema_version", 0)) != 6
         or manifest.get("source", {}).get("dataset_name") != CATALOG_DATASET_NAME
     ):
         raise ValueError(
             "商品目录来源已过期，请重新执行 "
-            "uv run scripts/prepare_real_catalog.py"
+            "uv run python -m collection"
         )
     expected = manifest["counts"]
     categories = _load_json_array(data_dir / "categories.json")
@@ -602,11 +586,9 @@ def validate_catalog(
             raise ValueError(f"店铺业务文件包含血缘字段: {sorted(lineage_keys)}")
         if shop.get("shop_type") not in allowed_shop_types:
             raise ValueError(f"店铺类型不是平台业务属性: {shop.get('shop_type')}")
-        if shop.get("source_system_code") != CATALOG_MERCHANT_SOURCE_SYSTEM:
-            raise ValueError(f"店铺来源系统不正确: {shop.get('shop_id')}")
         if any(key in shop for key in ("seller_name_source", "source_system")):
             raise ValueError(f"店铺包含遗留字段: {shop.get('shop_id')}")
-        if re.search(r"苏宁|当当", str(shop.get("shop_name") or "")):
+        if re.search(r"苏宁", str(shop.get("shop_name") or "")):
             raise ValueError(f"店铺业务名称包含外部平台: {shop.get('shop_id')}")
 
     category_by_id = {int(row["category_id"]): row for row in categories}
@@ -614,8 +596,6 @@ def validate_catalog(
         lineage_keys = _business_lineage_keys(category)
         if lineage_keys:
             raise ValueError(f"类目业务文件包含血缘字段: {sorted(lineage_keys)}")
-        if category.get("source_system_code") != CATALOG_PRODUCT_SOURCE_SYSTEM:
-            raise ValueError(f"类目来源系统不正确: {category.get('category_id')}")
         parent_id = category.get("parent_category_id")
         if parent_id is not None and int(parent_id) not in category_ids:
             raise ValueError(f"类目父节点不存在: {category['category_id']}")
@@ -628,8 +608,6 @@ def validate_catalog(
         lineage_keys = _business_lineage_keys(brand)
         if lineage_keys:
             raise ValueError(f"品牌业务文件包含血缘字段: {sorted(lineage_keys)}")
-        if brand.get("source_system_code") != CATALOG_PRODUCT_SOURCE_SYSTEM:
-            raise ValueError(f"品牌来源系统不正确: {brand.get('brand_id')}")
 
     lineage_spu_ids: set[int] = set()
     lineage_spu_refs: dict[int, tuple[int, int, int]] = {}
@@ -748,8 +726,6 @@ def validate_catalog(
             raise ValueError(f"SPU业务文件包含血缘字段: {sorted(lineage_keys)}")
         if not _clean_text(row.get("spu_name"), 256):
             raise ValueError(f"SPU名称缺失: {spu_id}")
-        if row.get("source_system_code") != CATALOG_PRODUCT_SOURCE_SYSTEM:
-            raise ValueError(f"SPU来源系统不正确: {spu_id}")
         if spu_id not in lineage_spu_ids:
             raise ValueError(f"SPU缺少采集血缘: {spu_id}")
         if category_id not in category_ids:
@@ -784,8 +760,6 @@ def validate_catalog(
             raise ValueError(f"SKU名称缺失: {sku_id}")
         if lineage_sku_refs.get(sku_id) != spu_id:
             raise ValueError(f"SKU缺少匹配的采集血缘: {sku_id}")
-        if row.get("source_system_code") != CATALOG_PRODUCT_SOURCE_SYSTEM:
-            raise ValueError(f"SKU来源系统不正确: {sku_id}")
         if not isinstance(row.get("sku_specs_json"), dict):
             raise ValueError(f"SKU规格不是对象: {sku_id}")
         refs = (int(row["category_id"]), int(row["brand_id"]), int(row["shop_id"]))
@@ -815,14 +789,8 @@ def validate_catalog(
     invalid_variants = [spu_id for spu_id in spu_ids if sku_counts[spu_id] < 1]
     if invalid_variants:
         raise ValueError(f"SPU没有真实SKU: {invalid_variants[:10]}")
-    if len(spu_ids) >= 2 and len(origins) < 2:
-        raise ValueError(f"商品目录不是多来源: {dict(origins)}")
-    if len(spu_ids) >= 1_000:
-        largest_origin, largest_origin_count = origins.most_common(1)[0]
-        if largest_origin_count / len(spu_ids) > 0.85:
-            raise ValueError(
-                f"商品采集来源过度集中: {largest_origin}={largest_origin_count}"
-            )
+    if origins != Counter({SUNING_ORIGIN_PLATFORM: len(spu_ids)}):
+        raise ValueError(f"商品目录不是单一苏宁来源: {dict(origins)}")
     manifest_origin_distribution = manifest.get("selection", {}).get(
         "origin_distribution"
     )
@@ -854,10 +822,8 @@ def validate_catalog(
         if actual_hash != metadata["sha256"]:
             raise ValueError(f"目录文件哈希不一致: {name}")
     source_entries = manifest.get("source", {}).get("origins")
-    if not isinstance(source_entries, list) or (
-        len(spu_ids) >= 2 and len(source_entries) < 2
-    ):
-        raise ValueError("清单缺少多来源采集文件")
+    if not isinstance(source_entries, list) or len(source_entries) != 1:
+        raise ValueError("清单必须只包含一个苏宁采集文件")
     resolved_source_data_dir = (source_data_dir or data_dir).resolve()
     for source_entry in source_entries:
         if not isinstance(source_entry, dict):

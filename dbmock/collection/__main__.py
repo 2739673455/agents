@@ -1,18 +1,15 @@
-#!/usr/bin/env python3
-"""准备真实商品维度目录"""
+"""真实商品数据采集和校验入口"""
 
 from __future__ import annotations
 
 import argparse
 import json
 import logging
-import sys
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT_DIR))
+from .preparation import prepare_catalog, validate_catalog
 
-from src.catalog.preparation import prepare_catalog, validate_catalog  # noqa: E402
+ROOT_DIR = Path(__file__).resolve().parents[1]
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,8 +20,7 @@ def parse_args() -> argparse.Namespace:
         default=ROOT_DIR / "data",
         help="目录数据输出路径",
     )
-    parser.add_argument("--spu-count", type=int, default=30_000, help="目标SPU数")
-    parser.add_argument("--sku-count", type=int, default=120_000, help="目标SKU数")
+    parser.add_argument("--spu-count", type=int, default=5_000, help="目标 SPU 数")
     parser.add_argument(
         "--crawl-delay",
         type=float,
@@ -57,7 +53,6 @@ def main() -> None:
         manifest = prepare_catalog(
             output_dir,
             target_spu_count=args.spu_count,
-            target_sku_count=args.sku_count,
             force_download=args.force_download,
             crawl_delay_seconds=args.crawl_delay,
         )

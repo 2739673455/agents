@@ -11,7 +11,6 @@ from sqlalchemy import Table
 
 from ..support import (
     END_OF_TIME,
-    SOURCE_SYSTEM,
     UNKNOWN_ID,
     UNKNOWN_SK,
     TableWriter,
@@ -20,7 +19,8 @@ from ..support import (
     load_json_rows,
     start_of_day,
 )
-from ...settings import RunContext
+from ..settings import RunContext
+from ..work_calendar import build_work_calendar
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,6 @@ def _scd(
     end_time: datetime = END_OF_TIME,
     version_no: int = 1,
     is_current: int = 1,
-    source_system_code: str = SOURCE_SYSTEM,
 ) -> dict[str, Any]:
     return (
         attributes
@@ -72,21 +71,25 @@ def _scd(
             "is_current": is_current,
             "is_deleted": attributes.get("is_deleted", 0),
         }
-        | dimension_audit(attributes, ctx.batch_id, source_system_code)
+        | dimension_audit(attributes, ctx.initial_batch_id)
     )
 
 
 def _type1(
     attributes: dict[str, Any],
     ctx: RunContext,
-    source_system_code: str = SOURCE_SYSTEM,
 ) -> dict[str, Any]:
-    return attributes | dimension_audit(attributes, ctx.batch_id, source_system_code)
+    return attributes | dimension_audit(
+        attributes,
+        ctx.initial_batch_id,
+    )
 
 
 def _date_rows(ctx: RunContext):
+    work_calendar = build_work_calendar(ctx.gen.start_date, ctx.gen.end_date)
     for day in iter_dates(ctx.gen.start_date, ctx.gen.end_date):
         iso = day.isocalendar()
+        arrangement = work_calendar[day]
         yield {
             "date_key": day.year * 10000 + day.month * 100 + day.day,
             "full_date": day,
@@ -99,9 +102,9 @@ def _date_rows(ctx: RunContext):
             "day_of_week": day.weekday() + 1,
             "day_name_cn": DAY_NAMES[day.weekday()],
             "is_weekend": int(day.weekday() >= 5),
-            "is_holiday": 0,
-            "is_workday": int(day.weekday() < 5),
-            "holiday_name": None,
+            "is_holiday": arrangement.is_holiday,
+            "is_workday": arrangement.is_workday,
+            "holiday_name": arrangement.holiday_name,
             "fiscal_year": day.year,
             "fiscal_quarter": (day.month - 1) // 3 + 1,
         }
@@ -268,7 +271,7 @@ def _brand_rows(ctx: RunContext):
                 "first_letter",
             )
         } | {"brand_status": int(seed.get("status", 1)), "is_deleted": 0}
-        yield _type1(row, ctx, ctx.gen.catalog_product_source_system)
+        yield _type1(row, ctx)
 
 
 def _payment_rows(ctx: RunContext):
@@ -382,7 +385,6 @@ def _seller_and_shop_rows(ctx: RunContext):
                 },
                 ctx,
                 effective_start,
-                source_system_code=ctx.gen.catalog_merchant_source_system,
             )
         )
 
@@ -433,7 +435,6 @@ def _seller_and_shop_rows(ctx: RunContext):
                 },
                 ctx,
                 effective_start,
-                source_system_code=ctx.gen.catalog_merchant_source_system,
             )
         )
     return seller_rows, shop_rows
@@ -493,7 +494,6 @@ def _category_rows(ctx: RunContext):
             row,
             ctx,
             effective_start,
-            source_system_code=ctx.gen.catalog_product_source_system,
         )
 
 
@@ -634,8 +634,7 @@ def _tag_rows(ctx: RunContext):
         "tag_value_type": "BOOLEAN",
         "tag_description": "未知标签成员",
         "tag_status": 1,
-        "source_system_code": SOURCE_SYSTEM,
-        "load_batch_id": ctx.batch_id,
+        "load_batch_id": ctx.initial_batch_id,
     }
     for code, name, group in USER_TAGS:
         yield {
@@ -645,8 +644,7 @@ def _tag_rows(ctx: RunContext):
             "tag_value_type": "BOOLEAN",
             "tag_description": f"{name}模拟标签",
             "tag_status": 1,
-            "source_system_code": SOURCE_SYSTEM,
-            "load_batch_id": ctx.batch_id,
+            "load_batch_id": ctx.initial_batch_id,
         }
 
 
@@ -667,8 +665,7 @@ def _tag_relation_rows(
                 "effective_start_time": start_of_day(ctx.gen.start_date),
                 "effective_end_time": END_OF_TIME,
                 "is_current": 1,
-                "source_system_code": SOURCE_SYSTEM,
-                "load_batch_id": ctx.batch_id,
+                "load_batch_id": ctx.initial_batch_id,
             }
 
 
@@ -677,6 +674,7 @@ def run(ctx: RunContext, tables: dict[str, Table]) -> None:
         writer = TableWriter(
             ctx.loader,
             ctx.gen.batch_size,
+            ctx.gen.stream_load_workers,
             ctx.gen.start_date,
             ctx.as_of_time,
         )

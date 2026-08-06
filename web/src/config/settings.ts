@@ -36,7 +36,6 @@ export const CHAT_API_ROUTES = {
   uploadAttachment: "/api/chat/attachment/upload",
   getAttachment: "/api/chat/attachment/get",
   deleteAttachment: "/api/chat/attachment/delete",
-  createWebSocketToken: "/api/chat/ws-token",
   chatWebSocket: "/api/chat/ws/chat",
 } as const;
 

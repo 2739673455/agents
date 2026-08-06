@@ -16,13 +16,6 @@ db_meta: # mysql
   password: ${oc.env:DB_META_PASSWORD}
   database: meta
 
-db_chat: # mysql
-  host: 127.0.0.1
-  port: 3306
-  user: root
-  password: ${oc.env:DB_META_PASSWORD}
-  database: chat
-
 redis:
   host: 127.0.0.1
   port: 6379

@@ -53,13 +53,13 @@ function ImagePreview({ alt, onClose, src }: { alt: string; onClose: () => void;
   );
 }
 
-// 没有持久化 message_id 的本地消息，需要退回到内容级 key
+// 没有 LangGraph message_id 的本地消息使用内容级 key
 function getMessageKey(message: MessageSchema) {
   if (message.message_id != null) {
     return `message-${message.message_id}`;
   }
 
-  return `message-${message.timestamp ?? "draft"}-${message.role}-${JSON.stringify(message.parts)}`;
+  return `message-draft-${message.role}-${JSON.stringify(message.parts)}`;
 }
 
 // 不同类型的消息片段要生成稳定 key，避免 React 反复重建节点

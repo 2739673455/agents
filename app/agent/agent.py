@@ -1,13 +1,16 @@
 from asyncio import Lock
 from pathlib import Path
+from uuid import UUID
 
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 from langchain.chat_models import init_chat_model
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
 from app.agent.mcp import get_mcp_tools
 from app.agent.tools import return_file, search_semantics
+from app.clients.langgraph_redis_manager import langgraph_redis_manager
 from app.conf import app_config
 
 # 路径常量
@@ -18,15 +21,30 @@ SKILLS_DIR = DEEPAGENTS_ROOT / "skills"
 WORKSPACES_DIR = DEEPAGENTS_ROOT / "workspaces"
 
 # 会话级 Agent 实例
-_agents: dict[tuple[int, int], CompiledStateGraph] = {}
+_agents: dict[tuple[int, UUID], CompiledStateGraph] = {}
 _agent_lock = Lock()
 
 
-def get_workspace_dir(user_id: int, conversation_id: int) -> Path:
+def get_workspace_dir(user_id: int, conversation_id: UUID) -> Path:
     """获取并确保用户会话工作区目录存在"""
     workspace_dir = WORKSPACES_DIR / f"user_{user_id}" / str(conversation_id)
     workspace_dir.mkdir(parents=True, exist_ok=True)
     return workspace_dir
+
+
+def get_thread_id(user_id: int, conversation_id: UUID) -> str:
+    """构造全局唯一的 LangGraph 会话线程 ID"""
+    return f"user_{user_id}:conversation_{conversation_id}"
+
+
+def get_agent_config(user_id: int, conversation_id: UUID) -> RunnableConfig:
+    """创建包含持久化线程和工作区的 Agent 运行配置"""
+    return RunnableConfig(
+        configurable={
+            "thread_id": get_thread_id(user_id, conversation_id),
+            "workspace_dir": str(get_workspace_dir(user_id, conversation_id)),
+        }
+    )
 
 
 def _build_backend(workspace_dir: Path) -> CompositeBackend:
@@ -75,12 +93,14 @@ async def _build_agent(workspace_dir: Path) -> CompiledStateGraph:
         tools=tools,
         backend=_build_backend(workspace_dir),
         skills=["/skills/"],  # 声明 Agent 可用的 Skill 前缀路径
+        checkpointer=langgraph_redis_manager.get_checkpointer(),
+        store=langgraph_redis_manager.get_store(),
     )
 
     return agent
 
 
-async def get_agent(user_id: int, conversation_id: int) -> CompiledStateGraph:
+async def get_agent(user_id: int, conversation_id: UUID) -> CompiledStateGraph:
     """获取会话级 Agent 实例，不存在时按需创建"""
     agent_key = (user_id, conversation_id)
     if agent := _agents.get(agent_key):
@@ -98,3 +118,10 @@ async def reset_agent() -> None:
     """清空会话级 Agent 实例，下次使用时按最新配置重建"""
     async with _agent_lock:
         _agents.clear()
+
+
+async def delete_agent(user_id: int, conversation_id: UUID) -> None:
+    """删除会话 Agent 实例及其持久化状态"""
+    async with _agent_lock:
+        _agents.pop((user_id, conversation_id), None)
+    await langgraph_redis_manager.delete_thread(get_thread_id(user_id, conversation_id))

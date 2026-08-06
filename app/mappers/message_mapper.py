@@ -1,173 +1,143 @@
 import base64
 import json
 import mimetypes
-from datetime import datetime
+import uuid
 from typing import Any, cast
+from uuid import UUID
 
-from langchain.messages import AIMessage, ToolMessage
-from langchain_core.messages import ChatMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    ChatMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from loguru import logger
+from pydantic import ValidationError
 
 from app.agent.agent import get_workspace_dir
-from app.entities.chat import Message
 from app.routes.api.v1.chat import schemas as chat_schema
 
+_MESSAGE_METADATA_KEY = "insight_message"
 
-def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
-    """将消息实体转换为 MessageSchema"""
-    # 将 json 字符串转换为消息片段对象
+
+def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
+    """将 LangChain 消息内容转换为接口消息片段"""
+    if isinstance(content, str):
+        return [chat_schema.TextContent(text=content)]
+    if not isinstance(content, list):
+        return [chat_schema.TextContent(text=str(content))]
+
     parts: list[chat_schema.MessagePart] = []
-    for item in json.loads(message.parts):
-        schema = {
-            "text": chat_schema.TextContent,
-            "image_url": chat_schema.ImageContent,
-            "tool_call": chat_schema.ToolCallPart,
-            "tool_result": chat_schema.ToolResultPart,
-        }.get(item["type"])
-        if schema is None:
-            raise ValueError(f"Unsupported message part type: {item['type']}")
-        parts.append(schema(**item))
+    for item in content:
+        if isinstance(item, str):
+            parts.append(chat_schema.TextContent(text=item))
+            continue
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") in {"text", "input_text", "output_text"} and isinstance(
+            item.get("text"), str
+        ):
+            parts.append(chat_schema.TextContent(text=item["text"]))
+            continue
+        if item.get("type") != "image_url":
+            continue
+        image_url = item.get("image_url")
+        if isinstance(image_url, dict):
+            image_url = image_url.get("url")
+        if isinstance(image_url, str):
+            parts.append(chat_schema.ImageContent(image_url=image_url))
+    return parts
 
-    # 将 json 字符串转换为附件对象
-    attachments = None
-    if message.attachments:
-        attachments = [
-            chat_schema.Attachment(**item) for item in json.loads(message.attachments)
-        ]
+
+def _schema_from_metadata(
+    message: BaseMessage,
+) -> chat_schema.MessageSchema | None:
+    """从 LangGraph 消息元数据恢复用户原始消息"""
+    payload = message.additional_kwargs.get(_MESSAGE_METADATA_KEY)
+    if not isinstance(payload, dict):
+        return None
+    try:
+        schema = chat_schema.MessageSchema.model_validate(payload)
+    except ValidationError:
+        logger.warning(f"Invalid persisted message metadata: message_id={message.id}")
+        return None
+    return schema.model_copy(update={"message_id": message.id})
+
+
+def _tool_message_to_schema(message: ToolMessage) -> chat_schema.MessageSchema:
+    """将工具结果转换为接口消息"""
+    attachments: list[chat_schema.Attachment] | None = None
+    if message.name == "return_file" and isinstance(message.content, str):
+        try:
+            payload = json.loads(message.content)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict) and payload.get("status") == "success":
+            f_path = payload.get("f_path")
+            if isinstance(f_path, str):
+                attachments = [chat_schema.Attachment(f_path=f_path)]
 
     return chat_schema.MessageSchema(
         message_id=message.id,
-        context_seq=message.context_seq,
-        role=cast(chat_schema.MessageRole, message.role),
-        parts=parts,
+        role="tool",
+        parts=[
+            chat_schema.ToolResultPart(
+                tool_call_id=message.tool_call_id,
+                name=message.name or "",
+                content=str(message.content),
+            )
+        ],
         attachments=attachments,
-        finish_reason=cast(chat_schema.FinishReason | None, message.finish_reason),
-        timestamp=message.create_at,
     )
-
-
-def schema_to_entity(
-    message: chat_schema.MessageSchema, conversation_id: int
-) -> Message:
-    """将 MessageSchema 转换为消息实体"""
-    # 检查是否有上下文顺序号
-    if message.context_seq is None:
-        raise ValueError("Message context_seq is required")
-
-    # 将消息片段对象转换为 json 字符串
-    parts = json.dumps(
-        [part.model_dump() for part in message.parts], ensure_ascii=False
-    )
-
-    # 将附件对象转换为 json 字符串
-    attachments = None
-    if message.attachments:
-        attachments = json.dumps(
-            [attachment.model_dump() for attachment in message.attachments],
-            ensure_ascii=False,
-        )
-
-    entity = Message(
-        conversation_id=conversation_id,
-        context_seq=message.context_seq,
-        role=message.role,
-        parts=parts,
-        attachments=attachments,
-        finish_reason=message.finish_reason,
-    )
-
-    if message.message_id is not None:
-        entity.id = message.message_id
-    if message.timestamp is not None:
-        entity.create_at = message.timestamp
-
-    return entity
 
 
 def langchain_message_to_schema(
-    message: AIMessage | ChatMessage | ToolMessage,
+    message: BaseMessage,
 ) -> chat_schema.MessageSchema | None:
-    """
-    将 LangChain 消息转换为 MessageSchema，同时添加时间戳。
+    """将 LangChain 消息转换为接口消息"""
+    if stored_schema := _schema_from_metadata(message):
+        return stored_schema
+    if isinstance(message, ToolMessage):
+        return _tool_message_to_schema(message)
 
-    主要处理模型输出消息，包括 AIMessage、ChatMessage 和 ToolMessage
-    """
-    timestamp = datetime.now()
-
-    # 处理 AIMessage / ChatMessage
-    if isinstance(message, (AIMessage, ChatMessage)):
-        # 获取消息内容
-        content = message.content
-        # 如果消息内容是字符串，转换为文本消息片段
-        if isinstance(content, str):
-            parts: list[chat_schema.MessagePart] = [
-                chat_schema.TextContent(text=content)
-            ]
-        # 如果消息内容是列表，转换为文本消息片段列表
-        elif isinstance(content, list):
-            parts = [
-                chat_schema.TextContent(text=item["text"])
-                for item in content
-                if isinstance(item, dict) and item.get("type") == "text"
-            ]
-        # 其他情况，转换为文本消息片段
-        else:
-            parts = [chat_schema.TextContent(text=str(content))]
-
-        # 追加 tool_calls（仅 AIMessage 具有该属性）
-        if isinstance(message, AIMessage) and message.tool_calls:
-            parts.extend(
-                chat_schema.ToolCallPart(
-                    tool_call_id=tool_call.get("id") or "",
-                    name=tool_call.get("name") or "",
-                    args=tool_call.get("args", {}),
-                )
-                for tool_call in message.tool_calls
-            )
-
-        return chat_schema.MessageSchema(
-            role="assistant",
-            parts=parts,
-            finish_reason=message.response_metadata.get("finish_reason"),
-            timestamp=timestamp,
-        )
-
-    # 处理 ToolMessage
-    elif isinstance(message, ToolMessage):
-        parts: list[chat_schema.MessagePart] = []
-        attachments: list[chat_schema.Attachment] | None = None
-
-        # 处理 return_file 的工具结果：将文件路径添加到附件中
-        if message.name == "return_file" and isinstance(message.content, str):
-            try:
-                # 解析 JSON 字符串，获取工具调用结果
-                payload = json.loads(message.content)
-            except json.JSONDecodeError:
-                payload = None
-
-            # 检查工具调用结果格式，以及是否成功
-            if isinstance(payload, dict) and payload.get("status") == "success":
-                # 提取文件路径，转换为附件对象
-                f_path = payload.get("f_path")
-                if isinstance(f_path, str):
-                    attachments = [chat_schema.Attachment(f_path=f_path)]
-
-        return chat_schema.MessageSchema(
-            role="tool",
-            parts=[
-                chat_schema.ToolResultPart(
-                    tool_call_id=message.tool_call_id,
-                    name=message.name or "",
-                    content=str(message.content),
-                )
-            ],
-            attachments=attachments,
-            finish_reason=None,
-            timestamp=timestamp,
-        )
-
+    if isinstance(message, AIMessage):
+        role: chat_schema.MessageRole = "assistant"
+    elif isinstance(message, HumanMessage):
+        role = "user"
+    elif isinstance(message, SystemMessage):
+        role = "system"
+    elif isinstance(message, ChatMessage) and message.role in {
+        "user",
+        "assistant",
+        "tool",
+        "system",
+    }:
+        role = cast(chat_schema.MessageRole, message.role)
     else:
         return None
+
+    parts = _content_to_parts(message.content)
+    if isinstance(message, AIMessage):
+        parts.extend(
+            chat_schema.ToolCallPart(
+                tool_call_id=tool_call.get("id") or "",
+                name=tool_call.get("name") or "",
+                args=tool_call.get("args", {}),
+            )
+            for tool_call in message.tool_calls
+        )
+
+    return chat_schema.MessageSchema(
+        message_id=message.id,
+        role=role,
+        parts=parts,
+        finish_reason=cast(
+            chat_schema.FinishReason | None,
+            message.response_metadata.get("finish_reason"),
+        ),
+    )
 
 
 def agent_chunk_to_schemas(chunk: dict) -> list[chat_schema.MessageSchema]:
@@ -187,7 +157,7 @@ def agent_chunk_to_schemas(chunk: dict) -> list[chat_schema.MessageSchema]:
 
 
 def _build_image_data_url(
-    user_id: int, conversation_id: int, attachment: chat_schema.Attachment
+    user_id: int, conversation_id: UUID, attachment: chat_schema.Attachment
 ) -> str:
     """读取工作区中的图片附件，并转换为 data URL"""
     # 获取工作区目录
@@ -227,7 +197,7 @@ def _process_attachments(
     content_parts: list[dict[str, Any]],
     attachments: list[chat_schema.Attachment],
     user_id: int | None,
-    conversation_id: int | None,
+    conversation_id: UUID | None,
 ) -> None:
     """处理附件：文件追加提示文本，图片转换为 base64 data URL"""
     images: list[chat_schema.Attachment] = []
@@ -279,50 +249,30 @@ def _process_attachments(
             )
 
 
-def schema_to_langchain_message(
+def schema_to_human_message(
     message: chat_schema.MessageSchema,
-    user_id: int | None = None,
-    conversation_id: int | None = None,
-) -> dict[str, Any]:
-    """将 MessageSchema 转换为 LangChain 消息"""
-    # 处理工具消息，返回工具调用结果
-    if message.role == "tool":
-        tool_result = message.parts[0]
-        if not isinstance(tool_result, chat_schema.ToolResultPart):
-            raise ValueError("Tool message missing ToolResultPart")
-        return {
-            "role": "tool",
-            "tool_call_id": tool_result.tool_call_id,
-            "name": tool_result.name,
-            "content": tool_result.content,
-        }
+    user_id: int,
+    conversation_id: UUID,
+) -> HumanMessage:
+    """将用户消息转换为 LangChain 消息"""
+    if message.role != "user":
+        raise ValueError("Only user messages can be submitted to the agent")
 
-    # 处理用户或模型消息
     content_parts: list[dict[str, Any]] = []
-    tool_calls: list[dict[str, Any]] = []
     for part in message.parts:
-        # 处理文本或图片消息
         if isinstance(part, (chat_schema.TextContent, chat_schema.ImageContent)):
             content_parts.append(part.model_dump())
-        # 处理工具调用
-        elif isinstance(part, chat_schema.ToolCallPart):
-            tool_calls.append(
-                {
-                    "type": "tool_call",
-                    "id": part.tool_call_id,
-                    "name": part.name,
-                    "args": part.args,
-                }
-            )
+        else:
+            raise TypeError("User messages only support text and image parts")
 
-    # 处理用户带附件的消息
-    if message.attachments and message.role == "user":
+    if message.attachments:
         _process_attachments(
             content_parts, message.attachments, user_id, conversation_id
         )
 
-    payload: dict[str, Any] = {"role": message.role, "content": content_parts}
-    if tool_calls:
-        payload["tool_calls"] = tool_calls
-
-    return payload
+    metadata = message.model_dump(mode="json", exclude={"message_id"})
+    return HumanMessage(
+        id=str(uuid.uuid4()),
+        content=cast(list[str | dict[Any, Any]], content_parts),
+        additional_kwargs={_MESSAGE_METADATA_KEY: metadata},
+    )
