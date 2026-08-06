@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import logging
@@ -36,6 +37,8 @@ SOURCE_CACHE = Path("source") / "suning_products.jsonl"
 SOURCE_CACHE_METADATA = Path("source") / "suning_products.meta.json"
 SOURCE_CRAWL_STATE = Path("source") / "suning_crawl_state.json"
 SOURCE_VARIANT_STATE = Path("source") / "suning_variant_refresh_state.json"
+SOURCE_REJECTIONS = Path("source") / "suning_rejections.jsonl"
+SOURCE_RAW_DIR = Path("source") / "raw"
 PRICE_REGION_CODE = "025"
 
 USER_AGENT = (
@@ -47,8 +50,33 @@ SEARCH_PAGE_LIMIT = 50
 MAX_SOURCE_SKUS_PER_SPU = 40
 CRAWL_WORKERS = 32
 VARIANT_PARSER_REVISION = 2
+SOURCE_SCHEMA_VERSION = 13
+NORMALIZATION_RULE_VERSION = 1
 VARIANT_REFRESH_CHECKPOINT = 512
 SPU_DISCRIMINATOR_AXES = ("型号", "系列", "段位")
+
+UI_ARTIFACT_PATTERN = re.compile(
+    r"(?:立即购买|加入购物车|加购|收藏|已收藏|到货通知|商品评价|"
+    r"选购|购买数量|服务说明|配送至|请选择|展开全部|收起|查看更多|"
+    r"<[^>]+>|javascript:)",
+    re.IGNORECASE,
+)
+
+CATEGORY_PRICE_RANGES: dict[str, tuple[float, float]] = {
+    "手机数码": (1.0, 200_000.0),
+    "电脑办公": (1.0, 200_000.0),
+    "家用电器": (1.0, 200_000.0),
+    "汽车用品": (1.0, 200_000.0),
+    "家居家装": (0.5, 150_000.0),
+    "医药保健": (0.5, 100_000.0),
+    "运动户外": (0.5, 100_000.0),
+    "母婴玩具": (0.5, 50_000.0),
+    "美妆个护": (0.5, 50_000.0),
+    "食品饮料": (0.5, 50_000.0),
+    "服饰鞋包": (0.5, 50_000.0),
+    "宠物生活": (0.5, 50_000.0),
+    "图书文娱": (0.5, 50_000.0),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -490,6 +518,8 @@ class CatalogSku:
     price_region_code: str | None
     image_url: str | None
     source_url: str
+    origin_specs: dict[str, str] | None = None
+    specs_provenance: str = "observed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,6 +554,9 @@ class CatalogProduct:
     captured_at: str
     selection_group: str
     skus: tuple[CatalogSku, ...]
+    raw_response_path: str | None = None
+    raw_response_sha256: str | None = None
+    parser_revision: int = VARIANT_PARSER_REVISION
 
 
 @dataclass(frozen=True, slots=True)
@@ -538,10 +571,11 @@ class SearchCandidate:
 
 
 class RateLimitedClient:
-    def __init__(self, delay_seconds: float) -> None:
+    def __init__(self, delay_seconds: float, raw_dir: Path | None = None) -> None:
         if delay_seconds < 0:
             raise ValueError("采集间隔不能小于0")
         self.delay_seconds = delay_seconds
+        self.raw_dir = raw_dir
         self._lock = threading.Lock()
         self._source_lock = threading.Lock()
         self._claimed_source_keys: set[str] = set()
@@ -580,6 +614,19 @@ class RateLimitedClient:
 
     def close(self) -> None:
         self._client.close()
+
+    def archive(self, body: bytes) -> tuple[str | None, str]:
+        digest = hashlib.sha256(body).hexdigest()
+        if self.raw_dir is None:
+            return None, digest
+        self.raw_dir.mkdir(parents=True, exist_ok=True)
+        path = self.raw_dir / f"{digest}.html.gz"
+        if not path.exists():
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            with gzip.open(temporary, "wb", compresslevel=6) as target:
+                target.write(body)
+            os.replace(temporary, path)
+        return str(SOURCE_RAW_DIR / path.name), digest
 
     def claim_source(self, source_key: str) -> bool:
         with self._source_lock:
@@ -620,14 +667,36 @@ def _atomic_json(path: Path, payload: Any) -> None:
 
 
 def _target_quotas(target_count: int) -> dict[str, int]:
-    quotas = {
-        group: target_count * weight // 100
-        for group, weight in DISCOVERY_GROUP_WEIGHTS.items()
-    }
-    remainder = target_count - sum(quotas.values())
-    for group in list(DISCOVERY_GROUP_WEIGHTS)[:remainder]:
-        quotas[group] += 1
-    return quotas
+    groups = [
+        group for group, weight in DISCOVERY_GROUP_WEIGHTS.items() if weight > 0
+    ]
+    rng = random.Random(
+        f"supply-profile:{target_count}:{NORMALIZATION_RULE_VERSION}"
+    )
+    sampled = Counter(
+        rng.choices(
+            groups,
+            weights=[DISCOVERY_GROUP_WEIGHTS[group] for group in groups],
+            k=target_count,
+        )
+    )
+    return {group: sampled[group] for group in DISCOVERY_GROUP_WEIGHTS}
+
+
+def _retain_within_quotas(
+    products: list[CatalogProduct],
+    target_count: int,
+) -> list[CatalogProduct]:
+    quotas = _target_quotas(target_count)
+    counts: Counter[str] = Counter()
+    retained: list[CatalogProduct] = []
+    for product in products:
+        group = product.selection_group
+        if counts[group] >= quotas[group]:
+            continue
+        retained.append(product)
+        counts[group] += 1
+    return retained
 
 
 def _group_search_exhausted(group: str, next_pages: dict[str, int]) -> bool:
@@ -1095,12 +1164,14 @@ def _normalize_product(
                     "https://product.suning.com/"
                     f"{candidate.vendor_code}/{sku_code}.html"
                 ),
+                origin_specs=dict(specs),
             )
         )
 
     padded_path = list(source_path)
     while len(padded_path) < 3:
         padded_path.append(padded_path[-1])
+    raw_response_path, raw_response_sha256 = client.archive(body)
     return CatalogProduct(
         source_key=source_key,
         external_product_id=(
@@ -1134,6 +1205,8 @@ def _normalize_product(
         captured_at=datetime.now(UTC).isoformat(),
         selection_group=selection_group,
         skus=tuple(skus),
+        raw_response_path=raw_response_path,
+        raw_response_sha256=raw_response_sha256,
     )
 
 
@@ -1166,6 +1239,146 @@ def _normalize_candidates(
         return list(executor.map(normalize, candidates))
 
 
+def _price_is_valid(product: CatalogProduct, sku: CatalogSku) -> bool:
+    bounds = CATEGORY_PRICE_RANGES.get(product.root_category, (0.5, 200_000.0))
+    try:
+        sale_price = float(sku.sale_price_cny)
+        list_price = (
+            float(sku.list_price_cny) if sku.list_price_cny is not None else None
+        )
+    except (TypeError, ValueError):
+        return False
+    if not bounds[0] <= sale_price <= bounds[1]:
+        return False
+    return list_price is None or (
+        bounds[0] <= list_price <= bounds[1] and list_price >= sale_price
+    )
+
+
+def _clean_specs(sku: CatalogSku) -> tuple[dict[str, str], int]:
+    source_specs = sku.origin_specs if sku.origin_specs is not None else sku.specs
+    cleaned: dict[str, str] = {}
+    removed = 0
+    for raw_key, raw_value in source_specs.items():
+        key = _clean_text(raw_key, 64)
+        value = _clean_text(raw_value, 128)
+        if not key or not value or UI_ARTIFACT_PATTERN.search(f"{key}:{value}"):
+            removed += 1
+            continue
+        cleaned[key] = value
+    return cleaned, removed
+
+
+def _sanitize_product(
+    product: CatalogProduct,
+) -> tuple[CatalogProduct | None, list[dict[str, Any]], int]:
+    rejections: list[dict[str, Any]] = []
+    removed_artifacts = 0
+    clean_skus: list[CatalogSku] = []
+    for sku in product.skus:
+        if not _price_is_valid(product, sku):
+            rejections.append(
+                {
+                    "origin_product_key": product.source_key,
+                    "origin_sku_key": sku.source_key,
+                    "reason": "category_price_out_of_range",
+                    "root_category": product.root_category,
+                    "sale_price_cny": sku.sale_price_cny,
+                    "list_price_cny": sku.list_price_cny,
+                    "source_url": sku.source_url,
+                    "captured_at": product.captured_at,
+                }
+            )
+            continue
+        specs, artifact_count = _clean_specs(sku)
+        removed_artifacts += artifact_count
+        if not specs:
+            if len(product.skus) != 1:
+                rejections.append(
+                    {
+                        "origin_product_key": product.source_key,
+                        "origin_sku_key": sku.source_key,
+                        "reason": "variant_specs_missing",
+                        "root_category": product.root_category,
+                        "source_url": sku.source_url,
+                        "captured_at": product.captured_at,
+                    }
+                )
+                continue
+            specs = {"规格": "单规格"}
+            provenance = "derived_single_sku"
+        else:
+            provenance = "observed"
+        suffix = " ".join(f"{key}:{value}" for key, value in specs.items())
+        sku_title = _clean_text(f"{product.spu_name} {suffix}", 256)
+        if UI_ARTIFACT_PATTERN.search(sku_title):
+            rejections.append(
+                {
+                    "origin_product_key": product.source_key,
+                    "origin_sku_key": sku.source_key,
+                    "reason": "ui_artifact_in_title",
+                    "root_category": product.root_category,
+                    "source_url": sku.source_url,
+                    "captured_at": product.captured_at,
+                }
+            )
+            continue
+        clean_skus.append(
+            replace(
+                sku,
+                title=sku_title,
+                specs=specs,
+                origin_specs=(
+                    dict(sku.origin_specs)
+                    if sku.origin_specs is not None
+                    else dict(sku.specs)
+                ),
+                specs_provenance=provenance,
+            )
+        )
+    if not clean_skus:
+        rejections.append(
+            {
+                "origin_product_key": product.source_key,
+                "origin_sku_key": None,
+                "reason": "no_valid_sku_after_normalization",
+                "root_category": product.root_category,
+                "source_url": product.source_url,
+                "captured_at": product.captured_at,
+            }
+        )
+        return None, rejections, removed_artifacts
+    vendor_code, _ = _cached_product_vendor_sku(product)
+    return (
+        replace(
+            product,
+            source_key=_suning_source_key(
+                vendor_code,
+                product.source_brand_id or product.brand,
+                [sku.external_sku_id for sku in clean_skus],
+            ),
+            skus=tuple(clean_skus),
+        ),
+        rejections,
+        removed_artifacts,
+    )
+
+
+def _sanitize_products(
+    products: list[CatalogProduct],
+) -> tuple[list[CatalogProduct], list[dict[str, Any]], int]:
+    clean_products: list[CatalogProduct] = []
+    rejections: list[dict[str, Any]] = []
+    artifact_count = 0
+    for product in products:
+        clean_product, product_rejections, removed = _sanitize_product(product)
+        rejections.extend(product_rejections)
+        artifact_count += removed
+        if clean_product is not None:
+            clean_products.append(clean_product)
+    return clean_products, rejections, artifact_count
+
+
 def _has_complete_core_fields(product: CatalogProduct) -> bool:
     return bool(
         product.title
@@ -1176,6 +1389,10 @@ def _has_complete_core_fields(product: CatalogProduct) -> bool:
         and product.main_image_url
         and product.source_url
         and product.skus
+        and all(_price_is_valid(product, sku) for sku in product.skus)
+        and all(sku.specs for sku in product.skus)
+        and not UI_ARTIFACT_PATTERN.search(product.title)
+        and not UI_ARTIFACT_PATTERN.search(product.spu_name)
     )
 
 
@@ -1212,12 +1429,15 @@ def _cache_valid(
     except (json.JSONDecodeError, OSError):
         return False
     return (
-        int(metadata.get("schema_version", 0)) == 9
+        int(metadata.get("schema_version", 0)) == SOURCE_SCHEMA_VERSION
         and int(metadata.get("variant_parser_revision", 0)) == VARIANT_PARSER_REVISION
+        and int(metadata.get("normalization_rule_version", 0))
+        == NORMALIZATION_RULE_VERSION
         and int(metadata.get("target_spu_count", 0)) == target_spu_count
         and int(metadata.get("selected_spus", 0)) == target_spu_count
         and int(metadata.get("cached_spus", 0)) == target_spu_count
         and int(metadata.get("selected_skus", 0)) >= target_spu_count
+        and int(metadata.get("raw_response_coverage", 0)) == target_spu_count
         and metadata.get("price_region_code") == PRICE_REGION_CODE
         and metadata.get("sha256") == sha256(cache_path)
     )
@@ -1253,6 +1473,49 @@ def _rewrite_products(path: Path, products: list[CatalogProduct]) -> None:
             )
             target.write("\n")
     os.replace(temporary, path)
+
+
+def _write_rejections(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as target:
+        for row in rows:
+            target.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+            target.write("\n")
+    os.replace(temporary, path)
+
+
+def _read_rejections(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as source:
+        for line_number, line in enumerate(source, start=1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"采集拒绝记录无效: {path}:{line_number}") from error
+            if not isinstance(row, dict):
+                raise ValueError(f"采集拒绝记录不是对象: {path}:{line_number}")
+            rows.append(row)
+    return rows
+
+
+def _deduplicate_rejections(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    selected: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            str(row.get("origin_product_key") or ""),
+            str(row.get("origin_sku_key") or ""),
+            str(row.get("reason") or ""),
+            str(row.get("source_url") or ""),
+        )
+        selected.setdefault(key, row)
+    return list(selected.values())
 
 
 def _cached_product_vendor_sku(product: CatalogProduct) -> tuple[str, str]:
@@ -1403,15 +1666,17 @@ def _refresh_cached_variant_relations(
     products: list[CatalogProduct],
     cache_path: Path,
     state_path: Path,
-) -> list[CatalogProduct]:
+) -> tuple[list[CatalogProduct], list[dict[str, Any]]]:
     refreshed = _load_variant_refresh_state(state_path)
     queue = [
         product
         for product in products
-        if len(product.skus) == 1 and product.source_key not in refreshed
+        if product.raw_response_path is None
+        or (len(product.skus) == 1 and product.source_key not in refreshed)
     ]
     if not queue:
-        return products
+        return products, []
+    rejections: list[dict[str, Any]] = []
     membership: dict[tuple[str, str], str] = {}
     for product in products:
         if len(product.skus) < 2:
@@ -1447,7 +1712,7 @@ def _refresh_cached_variant_relations(
                 client,
                 candidates,
                 selection_group,
-                minimum_sku_count=2,
+                minimum_sku_count=1,
                 ignore_network_errors=True,
             )
             replacements: dict[str, CatalogProduct] = {}
@@ -1474,6 +1739,29 @@ def _refresh_cached_variant_relations(
                 vendor_code, sku_code = _cached_product_vendor_sku(product)
                 if (vendor_code, sku_code) in membership:
                     consolidated_count += 1
+                    rejections.append(
+                        {
+                            "origin_product_key": product.source_key,
+                            "origin_sku_key": None,
+                            "reason": "duplicate_product_relation",
+                            "root_category": product.root_category,
+                            "source_url": product.source_url,
+                            "captured_at": product.captured_at,
+                        }
+                    )
+                    continue
+                if product.raw_response_path is None:
+                    consolidated_count += 1
+                    rejections.append(
+                        {
+                            "origin_product_key": product.source_key,
+                            "origin_sku_key": None,
+                            "reason": "raw_response_refresh_failed",
+                            "root_category": product.root_category,
+                            "source_url": product.source_url,
+                            "captured_at": product.captured_at,
+                        }
+                    )
                     continue
                 client.claim_source(product.source_key)
                 updated_products.append(product)
@@ -1506,7 +1794,7 @@ def _refresh_cached_variant_relations(
                 len(products),
                 sum(len(product.skus) for product in products),
             )
-    return products
+    return products, rejections
 
 
 def _select_products(
@@ -1519,23 +1807,15 @@ def _select_products(
     quotas = _target_quotas(target_spu_count)
     group_counts: Counter[str] = Counter()
     selected: list[CatalogProduct] = []
-    selected_keys: set[str] = set()
     for product in products:
         if group_counts[product.selection_group] >= quotas[product.selection_group]:
             continue
         selected.append(product)
-        selected_keys.add(product.source_key)
         group_counts[product.selection_group] += 1
-    if len(selected) < target_spu_count:
-        for product in products:
-            if product.source_key in selected_keys:
-                continue
-            selected.append(product)
-            if len(selected) == target_spu_count:
-                break
     if len(selected) != target_spu_count:
         raise ValueError(
-            f"苏宁 SPU 选择数量不一致 expected={target_spu_count} actual={len(selected)}"
+            "苏宁 SPU 不能满足目标供给分布 "
+            f"expected={target_spu_count} actual={len(selected)}"
         )
     return selected
 
@@ -1550,23 +1830,49 @@ def _prepare_suning_source(
     cache_path = data_dir / SOURCE_CACHE
     metadata_path = data_dir / SOURCE_CACHE_METADATA
     state_path = data_dir / SOURCE_CRAWL_STATE
+    rejection_path = data_dir / SOURCE_REJECTIONS
     if not force and _cache_valid(metadata_path, cache_path, target_spu_count):
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         cached_products = _read_cache(cache_path)
         return cache_path, metadata, cached_products
     variant_state_path = data_dir / SOURCE_VARIANT_STATE
     if force:
-        for path in (cache_path, metadata_path, state_path, variant_state_path):
+        for path in (
+            cache_path,
+            metadata_path,
+            state_path,
+            variant_state_path,
+            rejection_path,
+        ):
             path.unlink(missing_ok=True)
 
     cached_products = _read_cache(cache_path)
-    products = [
-        product for product in cached_products if _has_complete_core_fields(product)
+    products, current_rejections, cleaned_artifact_count = _sanitize_products(
+        cached_products
+    )
+    rejections = _read_rejections(rejection_path) + current_rejections
+    complete_products = [
+        product for product in products if _has_complete_core_fields(product)
     ]
-    if len(products) != len(cached_products):
+    complete_source_keys = {product.source_key for product in complete_products}
+    for product in products:
+        if product.source_key not in complete_source_keys:
+            rejections.append(
+                {
+                    "origin_product_key": product.source_key,
+                    "origin_sku_key": None,
+                    "reason": "required_product_field_missing",
+                    "root_category": product.root_category,
+                    "source_url": product.source_url,
+                    "captured_at": product.captured_at,
+                }
+            )
+    products = complete_products
+    if len(products) != len(cached_products) or cleaned_artifact_count:
         logger.info(
-            "移除核心字段不完整的来源商品 count=%s",
+            "清洗来源商品 removed_spus=%s removed_artifacts=%s",
             len(cached_products) - len(products),
+            cleaned_artifact_count,
         )
         _rewrite_products(cache_path, products)
     original_spu_count = len(products)
@@ -1581,6 +1887,14 @@ def _prepare_suning_source(
             original_sku_count,
             canonical_sku_count,
         )
+        _rewrite_products(cache_path, products)
+    quota_products = _retain_within_quotas(products, target_spu_count)
+    if len(quota_products) != len(products):
+        logger.info(
+            "按目标平台供给分布移除超额来源商品 count=%s",
+            len(products) - len(quota_products),
+        )
+        products = quota_products
         _rewrite_products(cache_path, products)
     if len(products) > target_spu_count:
         products = _select_products(products, target_spu_count)
@@ -1610,15 +1924,19 @@ def _prepare_suning_source(
     }
     attempted = {str(value) for value in state.get("attempted", [])}
     seen_source_keys = {product.source_key for product in products}
-    client = RateLimitedClient(delay_seconds)
+    client = RateLimitedClient(delay_seconds, data_dir / SOURCE_RAW_DIR)
     client.claim_sources(seen_source_keys)
     robots_sha256 = _assert_robots_allowed(client)
-    products = _refresh_cached_variant_relations(
+    products, variant_rejections = _refresh_cached_variant_relations(
         client,
         products,
         cache_path,
         variant_state_path,
     )
+    rejections.extend(variant_rejections)
+    products, refresh_rejections, refresh_artifacts = _sanitize_products(products)
+    rejections.extend(refresh_rejections)
+    cleaned_artifact_count += refresh_artifacts
     refreshed_spu_count = len(products)
     refreshed_sku_count = sum(len(product.skus) for product in products)
     products = _canonicalize_source_products(products)
@@ -1706,6 +2024,21 @@ def _prepare_suning_source(
                 normalized_products,
                 strict=True,
             ):
+                if product is None:
+                    rejections.append(
+                        {
+                            "origin_product_key": candidate.key,
+                            "origin_sku_key": None,
+                            "reason": "required_product_field_missing",
+                            "root_category": query.group,
+                            "source_url": candidate.source_url,
+                            "captured_at": datetime.now(UTC).isoformat(),
+                        }
+                    )
+                    continue
+                product, product_rejections, removed = _sanitize_product(product)
+                rejections.extend(product_rejections)
+                cleaned_artifact_count += removed
                 if product is None or product.source_key in seen_source_keys:
                     continue
                 if group_counts[query.group] >= quotas[query.group]:
@@ -1779,9 +2112,18 @@ def _prepare_suning_source(
     selected_products = _select_products(products, target_spu_count)
     _rewrite_products(cache_path, selected_products)
     group_counts = Counter(product.selection_group for product in selected_products)
+    rejections = _deduplicate_rejections(rejections)
+    _write_rejections(rejection_path, rejections)
+    rejected_product_keys = {
+        str(row["origin_product_key"])
+        for row in rejections
+        if row.get("origin_product_key")
+    }
+    rejection_reasons = Counter(str(row["reason"]) for row in rejections)
     metadata = {
-        "schema_version": 9,
+        "schema_version": SOURCE_SCHEMA_VERSION,
         "variant_parser_revision": VARIANT_PARSER_REVISION,
+        "normalization_rule_version": NORMALIZATION_RULE_VERSION,
         "dataset": SUNING_DATASET_NAME,
         "dataset_url": SUNING_DATASET_URL,
         "repository_url": SUNING_REPOSITORY_URL,
@@ -1790,6 +2132,20 @@ def _prepare_suning_source(
         "target_spu_count": target_spu_count,
         "selected_spus": len(selected_products),
         "selected_skus": sum(len(product.skus) for product in selected_products),
+        "rejected_products": len(rejected_product_keys),
+        "rejected_records": len(rejections),
+        "rejection_reason_distribution": dict(rejection_reasons),
+        "removed_ui_artifact_specs": cleaned_artifact_count,
+        "derived_single_sku_specs": sum(
+            sku.specs_provenance == "derived_single_sku"
+            for product in selected_products
+            for sku in product.skus
+        ),
+        "raw_response_coverage": sum(
+            product.raw_response_path is not None for product in selected_products
+        ),
+        "rejection_file": str(SOURCE_REJECTIONS),
+        "rejection_file_sha256": sha256(rejection_path),
         "cached_spus": len(selected_products),
         "sha256": sha256(cache_path),
         "selection_group_distribution": dict(group_counts),
@@ -1841,7 +2197,7 @@ def prepare_source(
     return (
         [path],
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "dataset_name": CATALOG_DATASET_NAME,
             "captured_at": datetime.now(UTC).isoformat(),
             "request_delay_seconds": delay_seconds,

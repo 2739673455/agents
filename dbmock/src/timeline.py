@@ -62,6 +62,11 @@ class ScheduledFact:
 class BusinessState:
     inventory: dict[int, InventoryPosition] = field(default_factory=dict)
     user_order_counts: dict[int, int] = field(default_factory=dict)
+    user_session_counts: dict[int, int] = field(default_factory=dict)
+    user_spend_amounts: dict[int, Decimal] = field(default_factory=dict)
+    user_refund_counts: dict[int, int] = field(default_factory=dict)
+    user_category_counts: dict[int, dict[str, int]] = field(default_factory=dict)
+    user_last_active_at: dict[int, datetime] = field(default_factory=dict)
     pending_inventory_events: list[dict[str, Any]] = field(default_factory=list)
     pending_facts: list[ScheduledFact] = field(default_factory=list)
     generated_counts: dict[str, int] = field(default_factory=dict)
@@ -78,6 +83,23 @@ class BusinessState:
             "user_order_counts": {
                 str(user_id): count
                 for user_id, count in self.user_order_counts.items()
+            },
+            "user_session_counts": {
+                str(user_id): count
+                for user_id, count in self.user_session_counts.items()
+            },
+            "user_spend_amounts": {
+                str(user_id): str(amount)
+                for user_id, amount in self.user_spend_amounts.items()
+            },
+            "user_refund_counts": {
+                str(user_id): count
+                for user_id, count in self.user_refund_counts.items()
+            },
+            "user_category_counts": self.user_category_counts,
+            "user_last_active_at": {
+                str(user_id): moment.isoformat()
+                for user_id, moment in self.user_last_active_at.items()
             },
             "pending_inventory_events": [
                 _serialize_value(event) for event in self.pending_inventory_events
@@ -105,6 +127,29 @@ class BusinessState:
             user_order_counts={
                 int(user_id): int(count)
                 for user_id, count in payload.get("user_order_counts", {}).items()
+            },
+            user_session_counts={
+                int(user_id): int(count)
+                for user_id, count in payload.get("user_session_counts", {}).items()
+            },
+            user_spend_amounts={
+                int(user_id): Decimal(str(amount))
+                for user_id, amount in payload.get("user_spend_amounts", {}).items()
+            },
+            user_refund_counts={
+                int(user_id): int(count)
+                for user_id, count in payload.get("user_refund_counts", {}).items()
+            },
+            user_category_counts={
+                int(user_id): {
+                    str(category): int(count)
+                    for category, count in counts.items()
+                }
+                for user_id, counts in payload.get("user_category_counts", {}).items()
+            },
+            user_last_active_at={
+                int(user_id): datetime.fromisoformat(str(moment))
+                for user_id, moment in payload.get("user_last_active_at", {}).items()
             },
             pending_inventory_events=[
                 _mapping(_deserialize_value(event))
@@ -146,9 +191,13 @@ def month_periods(start_date: date, end_date: date) -> list[MonthPeriod]:
 def build_period_targets(
     config: GenerateConfig,
     periods: list[MonthPeriod],
+    cutoff: datetime | None = None,
 ) -> dict[str, PeriodTargets]:
     weights = [
-        sum(_day_weight(day, config.start_date) for day in iter_dates(period.start_date, period.end_date))
+        sum(
+            _day_weight(day, config.start_date, cutoff)
+            for day in iter_dates(period.start_date, period.end_date)
+        )
         for period in periods
     ]
     page_views = _allocate(config.page_view_count, weights)
@@ -164,13 +213,22 @@ def build_period_targets(
     }
 
 
-def day_targets(total: int, period: MonthPeriod, start_date: date) -> dict[date, int]:
+def day_targets(
+    total: int,
+    period: MonthPeriod,
+    start_date: date,
+    cutoff: datetime | None = None,
+) -> dict[date, int]:
     days = list(iter_dates(period.start_date, period.end_date))
-    values = _allocate(total, [_day_weight(day, start_date) for day in days])
+    values = _allocate(total, [_day_weight(day, start_date, cutoff) for day in days])
     return dict(zip(days, values, strict=True))
 
 
-def _day_weight(day: date, start_date: date) -> float:
+def _day_weight(
+    day: date,
+    start_date: date,
+    cutoff: datetime | None = None,
+) -> float:
     elapsed_years = (day - start_date).days / 365.25
     growth = 1.0 + elapsed_years * 0.12
     weekday = 1.12 if day.weekday() >= 5 else 1.0
@@ -183,7 +241,13 @@ def _day_weight(day: date, start_date: date) -> float:
         campaign = 1.8
     elif day.month in {1, 2} and day.day <= 7:
         campaign = 1.25
-    return growth * weekday * campaign
+    observed_fraction = 1.0
+    if cutoff is not None and day == cutoff.date():
+        elapsed_seconds = (
+            cutoff - datetime.combine(day, datetime.min.time())
+        ).total_seconds()
+        observed_fraction = max(0.02, min(1.0, elapsed_seconds / 86400))
+    return growth * weekday * campaign * observed_fraction
 
 
 def _allocate(total: int, weights: list[float]) -> list[int]:

@@ -23,7 +23,6 @@ from ..support import (
     TableWriter,
     date_key,
     dimension_audit,
-    end_of_day,
     fact_audit,
     iter_jsonl_rows,
     load_rows,
@@ -238,50 +237,3 @@ def generate_price_events(
                 batch_id,
             ),
         )
-
-
-def generate_shop_score_snapshot(
-    ctx: RunContext,
-    refs: ReferenceData,
-    writer: TableWriter,
-    day: date,
-    batch_id: str,
-) -> None:
-    snapshot_time = min(end_of_day(day), ctx.data_end_time)
-    for shop_index, shop in enumerate(refs.shops):
-        seed = refs.shop_seeds_by_id[int(shop["shop_id"])]
-        values = (
-            seed.get("service_score"),
-            seed.get("logistics_score"),
-            seed.get("description_score"),
-        )
-        if all(value is None for value in values):
-            continue
-        elapsed_week = (day - ctx.gen.start_date).days // 7
-        drift = Decimal((elapsed_week + shop_index) % 5 - 2) / Decimal("100")
-        seller = refs.sellers_by_id.get(int(shop["seller_id"]))
-        writer.add(
-            "dwd_product_shop_score_daily_snapshot_df",
-            {
-                "snapshot_date_key": date_key(day),
-                "shop_sk": shop["shop_sk"],
-                "shop_id": shop["shop_id"],
-                "seller_sk": seller["seller_sk"] if seller else UNKNOWN_SK,
-                "seller_id": seller["seller_id"] if seller else None,
-                "service_score": _score(values[0], drift),
-                "logistics_score": _score(values[1], drift),
-                "description_score": _score(values[2], drift),
-                "snapshot_time": snapshot_time,
-                "biz_date": day,
-            }
-            | fact_audit(
-                f"shop-score:{shop['shop_id']}:{date_key(day)}",
-                batch_id,
-            ),
-        )
-
-
-def _score(value: Any, drift: Decimal) -> Decimal | None:
-    if value is None:
-        return None
-    return min(Decimal("5.00"), max(Decimal("1.00"), Decimal(str(value)) + drift))

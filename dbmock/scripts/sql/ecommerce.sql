@@ -605,29 +605,6 @@ PROPERTIES (
     'replication_num' = '1'
 );
 
-CREATE TABLE dwd_product_shop_score_daily_snapshot_df (
-    snapshot_date_key INT NOT NULL COMMENT '快照日期键',
-    shop_id BIGINT NOT NULL COMMENT '店铺业务ID',
-    shop_sk BIGINT NOT NULL COMMENT '快照时店铺版本代理键',
-    seller_sk BIGINT NOT NULL DEFAULT -1 COMMENT '快照时商家版本代理键',
-    seller_id BIGINT DEFAULT NULL COMMENT '商家业务ID',
-    service_score DECIMAL(4, 2) DEFAULT NULL COMMENT '服务评分',
-    logistics_score DECIMAL(4, 2) DEFAULT NULL COMMENT '物流评分',
-    description_score DECIMAL(4, 2) DEFAULT NULL COMMENT '描述评分',
-    snapshot_time DATETIME(6) NOT NULL COMMENT '快照时点',
-    biz_date DATE NOT NULL COMMENT '业务日期，取快照日期',
-    source_record_id VARCHAR(512) NOT NULL COMMENT '源记录唯一标识',
-    load_batch_id VARCHAR(256) NOT NULL COMMENT '装载批次ID',
-    dw_load_time DATETIME(6) NOT NULL COMMENT '入仓时间'
-)
-ENGINE = OLAP
-UNIQUE KEY (`snapshot_date_key`, `shop_id`)
-COMMENT '商品域店铺服务评分每日周期快照事实'
-DISTRIBUTED BY HASH (`snapshot_date_key`) BUCKETS AUTO
-PROPERTIES (
-    'replication_num' = '1'
-);
-
 CREATE TABLE dwd_trade_order_detail_di (
     order_detail_id BIGINT NOT NULL COMMENT '订单明细业务ID',
     order_id BIGINT NOT NULL COMMENT '订单业务ID',
@@ -1392,6 +1369,9 @@ CREATE TABLE dwd_inventory_change_di (
     before_reserved_qty INT NOT NULL COMMENT '变更前预占库存',
     reserved_qty_delta INT NOT NULL DEFAULT 0 COMMENT '预占库存变化量',
     after_reserved_qty INT NOT NULL COMMENT '变更后预占库存',
+    before_in_transit_qty INT NOT NULL COMMENT '变更前在途库存',
+    in_transit_qty_delta INT NOT NULL DEFAULT 0 COMMENT '在途库存变化量',
+    after_in_transit_qty INT NOT NULL COMMENT '变更后在途库存',
     unit_cost DECIMAL(18, 4) DEFAULT NULL COMMENT '变更时单位成本',
     total_cost_delta DECIMAL(18, 4) DEFAULT NULL COMMENT '库存成本变化金额',
     currency_code CHAR(3) NOT NULL DEFAULT 'CNY' COMMENT '币种编码',

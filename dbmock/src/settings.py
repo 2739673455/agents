@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ENV_FILE = ROOT_DIR / ".env"
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), "Asia/Shanghai")
-GENERATION_MODEL_VERSION = 2
+GENERATION_MODEL_VERSION = 3
 
 dotenv.load_dotenv(ENV_FILE)
 
@@ -149,7 +149,7 @@ class GenerateConfig:
             (self.data_dir / "manifest.json").read_text(encoding="utf-8")
         )
         if (
-            int(manifest.get("schema_version", 0)) != 6
+            int(manifest.get("schema_version", 0)) != 7
             or manifest.get("source", {}).get("dataset_name") != "苏宁易购公开商品页"
         ):
             raise ValueError(

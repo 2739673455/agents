@@ -46,6 +46,7 @@ class OrderPlan:
 
 
 def _emit_due_facts(
+    refs: ReferenceData,
     state: BusinessState,
     writer: TableWriter,
     cutoff: datetime,
@@ -67,6 +68,15 @@ def _emit_due_facts(
             item.source_record_id,
         ),
     ):
+        user_id = fact.row.get("user_id")
+        if user_id is not None and "user_sk" in fact.row:
+            user = version_at(refs.user_versions, int(user_id), fact.event_time)
+            fact = ScheduledFact(
+                table_name=fact.table_name,
+                source_record_id=fact.source_record_id,
+                event_time=fact.event_time,
+                row=fact.row | {"user_sk": user["user_sk"]},
+            )
         _emit_fact(writer, batch_id, fact)
 
 
@@ -114,7 +124,7 @@ def generate_day(
 ) -> None:
     rng = random.Random(f"{ctx.gen.seed}:{day}:commerce")
     cutoff = min(end_of_day(day), ctx.data_end_time)
-    _emit_due_facts(state, writer, cutoff, batch_id)
+    _emit_due_facts(refs, state, writer, cutoff, batch_id)
     plans = _build_order_plans(refs, day, intents, rng)
     inventory_events = _inventory_opening_events(refs, state, day)
     due_events, future_events = _take_due_inventory_events(
@@ -158,13 +168,17 @@ def _build_order_plans(
     intents: list[ConversionIntent],
     rng: random.Random,
 ) -> list[OrderPlan]:
-    active_by_shop: dict[int, list[ProductProfile]] = defaultdict(list)
+    active_by_shop: dict[tuple[int, int], list[ProductProfile]] = defaultdict(list)
     for profile in refs.active_profiles(day):
-        active_by_shop[int(profile.shop["shop_id"])].append(profile)
+        warehouse_id = int(refs.warehouse_for_profile(profile)["warehouse_id"])
+        active_by_shop[(warehouse_id, int(profile.shop["shop_id"]))].append(profile)
     plans: list[OrderPlan] = []
     for intent in intents:
         primary = refs.profile_by_sku[int(intent.primary_sku_id)]
-        shop_profiles = active_by_shop[int(primary.shop["shop_id"])]
+        warehouse_id = int(refs.warehouse_for_profile(primary)["warehouse_id"])
+        shop_profiles = active_by_shop[
+            (warehouse_id, int(primary.shop["shop_id"]))
+        ]
         if len(shop_profiles) < intent.line_count:
             eligible_shops = [
                 profiles
@@ -252,31 +266,61 @@ def _replenishment_events(
         for line in plan.lines:
             demand[int(line.profile.sku["sku_id"])] += line.quantity
     due_delta: dict[int, int] = defaultdict(int)
+    due_transit_delta: dict[int, int] = defaultdict(int)
     for event in due_events:
         due_delta[int(event["sku_id"])] += int(event["on_hand_delta"])
+        due_transit_delta[int(event["sku_id"])] += int(event["in_transit_delta"])
     events: list[dict[str, Any]] = []
     for sku_id, required in demand.items():
         profile = refs.profile_by_sku[sku_id]
         position = state.inventory[sku_id]
         projected_available = position.available + due_delta[sku_id]
+        projected_supply = (
+            projected_available
+            + position.in_transit
+            + due_transit_delta[sku_id]
+        )
         target = required + profile.warning_stock_qty
-        if projected_available >= target:
+        if projected_supply >= target:
             continue
         receipt = max(
             profile.initial_stock_qty,
             target * 2 - projected_available,
         )
+        supply_factor = Decimal(85 + (sku_id + date_key(day)) % 36) / Decimal(100)
+        receipt = max(target - projected_available, int(receipt * supply_factor))
+        order_time = start_of_day(day) + timedelta(minutes=40)
+        lead_days = 1 + (sku_id + date_key(day)) % 7
+        receipt_time = order_time + timedelta(
+            days=lead_days,
+            hours=2 + sku_id % 8,
+        )
         events.append(
+            _inventory_event(
+                profile,
+                "PURCHASE_ORDER",
+                "REPLENISHMENT",
+                f"PO-{date_key(day)}-{sku_id}",
+                0,
+                0,
+                profile.price_on(day).cost_price,
+                order_time,
+                20,
+                receipt,
+            )
+        )
+        state.pending_inventory_events.append(
             _inventory_event(
                 profile,
                 "PURCHASE_RECEIPT",
                 "REPLENISHMENT",
-                f"PO-{date_key(day)}-{sku_id}",
+                f"GR-{date_key(day)}-{sku_id}",
                 receipt,
                 0,
                 profile.price_on(day).cost_price,
-                start_of_day(day) + timedelta(minutes=40),
+                receipt_time,
                 20,
+                -receipt,
             )
         )
     return events
@@ -327,7 +371,6 @@ def _write_order(
     coupon_allocations = _allocate_money(coupon_total, line_amounts)
     freight_total = MONEY_ZERO if sale_total >= Decimal("99") else money("8")
     freight_allocations = _allocate_money(freight_total, line_amounts)
-    paid_success = rng.random() >= 0.045
     is_first_order = int(state.user_order_counts.get(int(user["user_id"]), 0) == 0)
     details: list[dict[str, Any]] = []
     inventory_events: list[dict[str, Any]] = []
@@ -492,88 +535,113 @@ def _write_order(
         intent.order_time,
         0,
     )
+    if rng.random() < 0.012:
+        cancel_time = intent.order_time + timedelta(minutes=1)
+        _write_order_status(
+            state,
+            writer,
+            cutoff,
+            batch_id,
+            order_id,
+            2,
+            user,
+            shop,
+            "CREATED",
+            "CANCELLED",
+            "INVENTORY_SHORTAGE",
+            cancel_time,
+            1,
+            "OUT_OF_STOCK",
+            "库存分配失败，订单自动关闭",
+        )
+        for detail in details:
+            profile = detail["profile"]
+            inventory_events.append(
+                _inventory_event(
+                    profile,
+                    "SALE_RELEASE",
+                    "STOCKOUT_CANCEL",
+                    order_id,
+                    0,
+                    -int(detail["quantity"]),
+                    profile.price_on(day).cost_price,
+                    cancel_time,
+                    50,
+                )
+            )
+        if coupon is not None and coupon_total:
+            _write_coupon_lifecycle(
+                state,
+                writer,
+                cutoff,
+                batch_id,
+                order_id,
+                user,
+                coupon,
+                details,
+                coupon_allocations,
+                intent.order_time,
+                False,
+            )
+        return inventory_events
     pay_time = intent.order_time + timedelta(minutes=3)
     requested_amount = sum(
         (detail["receivable_amount"] for detail in details),
         MONEY_ZERO,
     )
-    payment = refs.payments[order_index % len(refs.payments)]
-    _schedule_fact(
-        state,
-        writer,
-        cutoff,
-        batch_id,
-        "dwd_trade_pay_detail_di",
-        f"pay-detail:{order_id}",
-        pay_time,
-        {
-            "pay_detail_id": order_id,
-            "pay_order_no": f"P{order_id}",
-            "pay_attempt_no": 1,
-            "pay_date_key": date_key(pay_time),
-            "user_sk": user["user_sk"],
-            "user_id": user["user_id"],
-            "payment_type_sk": payment["payment_type_sk"],
-            "payment_type_code": payment["payment_type_code"],
-            "channel_sk": intent.channel["channel_sk"],
-            "channel_code": intent.channel["channel_code"],
-            "pay_scene": "订单支付",
-            "requested_pay_amount": requested_amount,
-            "payment_fee_amount": MONEY_ZERO,
-            "installment_count": None,
-            "currency_code": "CNY",
-            "pay_request_time": pay_time,
-            "biz_date": pay_time.date(),
-        },
+    payment = _choose_payment(refs, intent.channel, requested_amount, user, rng)
+    first_failure_reason = _payment_failure_reason(
+        payment,
+        requested_amount,
+        rng,
     )
-    for detail in details:
-        detail_id = int(detail["order_detail_id"])
-        _schedule_fact(
+    attempts = [(payment, first_failure_reason)]
+    if first_failure_reason is not None and rng.random() < 0.43:
+        retry_payment = _choose_payment(
+            refs,
+            intent.channel,
+            requested_amount,
+            user,
+            rng,
+        )
+        retry_failure = (
+            None
+            if rng.random() < 0.88
+            else _payment_failure_reason(retry_payment, requested_amount, rng, True)
+        )
+        attempts.append((retry_payment, retry_failure))
+
+    pay_result_time = pay_time
+    successful_payment_detail_id: int | None = None
+    for attempt_no, (attempt_payment, failure_reason) in enumerate(attempts, start=1):
+        attempt_time = pay_time + timedelta(minutes=(attempt_no - 1) * 3)
+        pay_result_time = attempt_time + timedelta(seconds=rng.randint(3, 18))
+        pay_detail_id = order_id * 10 + attempt_no
+        _write_payment_attempt(
+            refs,
             state,
             writer,
             cutoff,
             batch_id,
-            "dwd_trade_pay_order_detail_di",
-            f"pay-allocation:{detail_id}",
-            pay_time,
-            {
-                "pay_order_detail_id": detail_id,
-                "pay_detail_id": order_id,
-                "order_id": order_id,
-                "order_detail_id": detail_id,
-                "shop_sk": shop["shop_sk"],
-                "shop_id": shop["shop_id"],
-                "seller_sk": seller["seller_sk"] if seller else UNKNOWN_SK,
-                "seller_id": seller["seller_id"] if seller else None,
-                "allocated_pay_amount": detail["receivable_amount"],
-                "currency_code": "CNY",
-                "pay_request_time": pay_time,
-                "biz_date": pay_time.date(),
-            },
+            pay_detail_id,
+            attempt_no,
+            order_id,
+            user,
+            shop,
+            seller,
+            intent.channel,
+            attempt_payment,
+            details,
+            requested_amount,
+            attempt_time,
+            pay_result_time,
+            failure_reason,
         )
-    _write_pay_status(
-        state,
-        writer,
-        cutoff,
-        batch_id,
-        order_id,
-        1,
-        None,
-        "REQUESTED",
-        pay_time,
-    )
-    pay_result_time = pay_time + timedelta(seconds=8)
-    _write_pay_status(
-        state,
-        writer,
-        cutoff,
-        batch_id,
-        order_id,
-        2,
-        "REQUESTED",
-        "SUCCESS" if paid_success else "FAILED",
-        pay_result_time,
-    )
+        if failure_reason is None:
+            successful_payment_detail_id = pay_detail_id
+            payment = attempt_payment
+            break
+    paid_success = successful_payment_detail_id is not None
 
     if coupon is not None and coupon_total:
         _write_coupon_lifecycle(
@@ -627,6 +695,10 @@ def _write_order(
     state.user_order_counts[int(user["user_id"])] = (
         state.user_order_counts.get(int(user["user_id"]), 0) + 1
     )
+    state.user_spend_amounts[int(user["user_id"])] = money(
+        state.user_spend_amounts.get(int(user["user_id"]), MONEY_ZERO)
+        + requested_amount
+    )
     _write_order_status(
         state,
         writer,
@@ -649,26 +721,41 @@ def _write_order(
         hours=6 + rng.randrange(24),
     )
     signed_time = ship_time + timedelta(days=1 + rng.randrange(4))
-    warehouse = _warehouse_for_shop(refs, int(shop["shop_id"]))
+    warehouse = refs.warehouse_for_profile(primary)
     logistics = refs.logistics[order_index % len(refs.logistics)]
-    _write_forward_delivery(
-        refs,
-        state,
-        writer,
-        cutoff,
-        batch_id,
-        order_id,
-        user,
-        shop,
-        seller,
-        warehouse,
-        logistics,
-        details,
-        delivery_create_time,
-        ship_time,
-        signed_time,
-        intent.region,
-    )
+    delivery_groups = [details]
+    if len(details) > 1 and rng.random() < 0.14:
+        delivery_groups = [details[:-1], details[-1:]]
+    detail_ship_times: dict[int, datetime] = {}
+    final_signed_time = signed_time
+    for group_index, delivery_details in enumerate(delivery_groups, start=1):
+        group_delay = timedelta(days=(group_index - 1) * rng.randint(1, 3))
+        group_create_time = delivery_create_time + group_delay
+        group_ship_time = ship_time + group_delay
+        group_signed_time = signed_time + group_delay
+        final_signed_time = max(final_signed_time, group_signed_time)
+        delivery_id = order_id * 10 + group_index
+        _write_forward_delivery(
+            refs,
+            state,
+            writer,
+            cutoff,
+            batch_id,
+            delivery_id,
+            order_id,
+            user,
+            shop,
+            seller,
+            warehouse,
+            logistics,
+            delivery_details,
+            group_create_time,
+            group_ship_time,
+            group_signed_time,
+            intent.region,
+        )
+        for detail in delivery_details:
+            detail_ship_times[int(detail["order_detail_id"])] = group_ship_time
     _write_order_status(
         state,
         writer,
@@ -696,7 +783,7 @@ def _write_order(
         "SHIPPED",
         "COMPLETED",
         "SIGN",
-        signed_time,
+        final_signed_time,
         1,
     )
     for detail in details:
@@ -710,7 +797,7 @@ def _write_order(
                 -int(detail["quantity"]),
                 -int(detail["quantity"]),
                 profile.price_on(day).cost_price,
-                ship_time,
+                detail_ship_times[int(detail["order_detail_id"])],
                 60,
             )
         )
@@ -730,11 +817,12 @@ def _write_order(
             shop,
             seller,
             payment,
+            successful_payment_detail_id,
             intent.channel,
             warehouse,
             logistics,
             refund_detail,
-            signed_time,
+            final_signed_time,
             return_goods,
             intent.region,
             rng,
@@ -752,10 +840,174 @@ def _write_order(
             user,
             shop,
             details[0],
-            signed_time,
+            final_signed_time,
             rng,
         )
     return inventory_events
+
+
+def _choose_payment(
+    refs: ReferenceData,
+    channel: dict[str, Any],
+    amount: Decimal,
+    user: dict[str, Any],
+    rng: random.Random,
+) -> dict[str, Any]:
+    channel_code = str(channel["channel_code"])
+    base_weights = {
+        "APP": {"ALIPAY": 38, "WECHAT": 38, "UNIONPAY": 8, "HUABEI": 15, "COD": 1},
+        "MINI_PROGRAM": {"ALIPAY": 14, "WECHAT": 70, "UNIONPAY": 7, "HUABEI": 8, "COD": 1},
+        "H5": {"ALIPAY": 42, "WECHAT": 38, "UNIONPAY": 9, "HUABEI": 10, "COD": 1},
+        "PC": {"ALIPAY": 48, "WECHAT": 20, "UNIONPAY": 23, "HUABEI": 7, "COD": 2},
+        "SEM": {"ALIPAY": 40, "WECHAT": 39, "UNIONPAY": 10, "HUABEI": 10, "COD": 1},
+    }.get(channel_code, {"ALIPAY": 40, "WECHAT": 40, "UNIONPAY": 12, "HUABEI": 7, "COD": 1})
+    birthday = user.get("birthday")
+    age = 35
+    if birthday is not None:
+        age = max(18, user["register_time"].year - birthday.year)
+    weights = []
+    for payment in refs.payments:
+        code = str(payment["payment_type_code"])
+        weight = float(base_weights.get(code, 0))
+        if code == "HUABEI":
+            if amount >= Decimal("1000") and age <= 45:
+                weight *= 1.8
+            elif age >= 55:
+                weight *= 0.25
+        if code == "COD" and amount >= Decimal("500"):
+            weight *= 0.2
+        weights.append(weight)
+    if not any(weights):
+        raise ValueError("没有适用于当前订单的支付方式")
+    return rng.choices(refs.payments, weights=weights, k=1)[0]
+
+
+def _payment_failure_reason(
+    payment: dict[str, Any],
+    amount: Decimal,
+    rng: random.Random,
+    force_failure: bool = False,
+) -> str | None:
+    code = str(payment["payment_type_code"])
+    failure_probability = Decimal("0.032")
+    if amount >= Decimal("2000"):
+        failure_probability += Decimal("0.025")
+    if code in {"HUABEI", "COD"}:
+        failure_probability += Decimal("0.018")
+    if not force_failure and rng.random() >= float(failure_probability):
+        return None
+    reasons = ["USER_CANCELLED", "INSUFFICIENT_FUNDS", "CHANNEL_REJECTED", "TIMEOUT"]
+    weights = [38, 29, 18, 15]
+    if code == "HUABEI":
+        weights = [20, 48, 20, 12]
+    return rng.choices(reasons, weights=weights, k=1)[0]
+
+
+def _write_payment_attempt(
+    refs: ReferenceData,
+    state: BusinessState,
+    writer: TableWriter,
+    cutoff: datetime,
+    batch_id: str,
+    pay_detail_id: int,
+    attempt_no: int,
+    order_id: int,
+    user: dict[str, Any],
+    shop: dict[str, Any],
+    seller: dict[str, Any] | None,
+    channel: dict[str, Any],
+    payment: dict[str, Any],
+    details: list[dict[str, Any]],
+    requested_amount: Decimal,
+    pay_time: datetime,
+    result_time: datetime,
+    failure_reason: str | None,
+) -> None:
+    installment_count = None
+    if payment["payment_type_code"] == "HUABEI":
+        installment_count = 3 if requested_amount < Decimal("3000") else 6
+    _schedule_fact(
+        state,
+        writer,
+        cutoff,
+        batch_id,
+        "dwd_trade_pay_detail_di",
+        f"pay-detail:{pay_detail_id}",
+        pay_time,
+        {
+            "pay_detail_id": pay_detail_id,
+            "pay_order_no": f"P{pay_detail_id}",
+            "pay_attempt_no": attempt_no,
+            "pay_date_key": date_key(pay_time),
+            "user_sk": version_at(
+                refs.user_versions,
+                int(user["user_id"]),
+                pay_time,
+            )["user_sk"],
+            "user_id": user["user_id"],
+            "payment_type_sk": payment["payment_type_sk"],
+            "payment_type_code": payment["payment_type_code"],
+            "channel_sk": channel["channel_sk"],
+            "channel_code": channel["channel_code"],
+            "pay_scene": "订单支付",
+            "requested_pay_amount": requested_amount,
+            "payment_fee_amount": MONEY_ZERO,
+            "installment_count": installment_count,
+            "currency_code": "CNY",
+            "pay_request_time": pay_time,
+            "biz_date": pay_time.date(),
+        },
+    )
+    for line_index, detail in enumerate(details, start=1):
+        detail_id = int(detail["order_detail_id"])
+        allocation_id = pay_detail_id * 10 + line_index
+        _schedule_fact(
+            state,
+            writer,
+            cutoff,
+            batch_id,
+            "dwd_trade_pay_order_detail_di",
+            f"pay-allocation:{allocation_id}",
+            pay_time,
+            {
+                "pay_order_detail_id": allocation_id,
+                "pay_detail_id": pay_detail_id,
+                "order_id": order_id,
+                "order_detail_id": detail_id,
+                "shop_sk": shop["shop_sk"],
+                "shop_id": shop["shop_id"],
+                "seller_sk": seller["seller_sk"] if seller else UNKNOWN_SK,
+                "seller_id": seller["seller_id"] if seller else None,
+                "allocated_pay_amount": detail["receivable_amount"],
+                "currency_code": "CNY",
+                "pay_request_time": pay_time,
+                "biz_date": pay_time.date(),
+            },
+        )
+    _write_pay_status(
+        state,
+        writer,
+        cutoff,
+        batch_id,
+        pay_detail_id,
+        1,
+        None,
+        "REQUESTED",
+        pay_time,
+        None,
+    )
+    _write_pay_status(
+        state,
+        writer,
+        cutoff,
+        batch_id,
+        pay_detail_id,
+        2,
+        "REQUESTED",
+        "FAILED" if failure_reason else "SUCCESS",
+        result_time,
+        failure_reason,
+    )
 
 
 def _write_coupon_lifecycle(
@@ -853,6 +1105,7 @@ def _write_forward_delivery(
     writer: TableWriter,
     cutoff: datetime,
     batch_id: str,
+    delivery_id: int,
     order_id: int,
     user: dict[str, Any],
     shop: dict[str, Any],
@@ -878,12 +1131,12 @@ def _write_forward_delivery(
         cutoff,
         batch_id,
         "dwd_trade_delivery_di",
-        f"delivery:{order_id}",
+        f"delivery:{delivery_id}",
         delivery_create_time,
         {
-            "delivery_id": order_id,
-            "delivery_no": f"D{order_id}",
-            "package_no": f"PKG{order_id}",
+            "delivery_id": delivery_id,
+            "delivery_no": f"D{delivery_id}",
+            "package_no": f"PKG{delivery_id}",
             "delivery_direction": "正向",
             "delivery_date_key": date_key(delivery_create_time),
             "order_id": order_id,
@@ -904,7 +1157,7 @@ def _write_forward_delivery(
             "logistics_company_id": logistics["logistics_company_id"],
             "receiver_region_sk": region["region_sk"] if region else UNKNOWN_SK,
             "receiver_region_code": region["region_code"] if region else None,
-            "tracking_no": f"TRK{order_id}",
+            "tracking_no": f"TRK{delivery_id}",
             "delivery_type": "普通快递",
             "receiver_name": str(user["user_name"]),
             "receiver_phone": user.get("phone"),
@@ -920,7 +1173,7 @@ def _write_forward_delivery(
         zip(details, weights, freight_allocations, strict=True),
         start=1,
     ):
-        delivery_item_id = order_id * 10 + index
+        delivery_item_id = delivery_id * 10 + index
         _schedule_fact(
             state,
             writer,
@@ -931,7 +1184,7 @@ def _write_forward_delivery(
             delivery_create_time,
             {
                 "delivery_item_id": delivery_item_id,
-                "delivery_id": order_id,
+                "delivery_id": delivery_id,
                 "order_id": order_id,
                 "order_detail_id": detail["order_detail_id"],
                 "refund_detail_id": None,
@@ -960,13 +1213,133 @@ def _write_forward_delivery(
             writer,
             cutoff,
             batch_id,
-            order_id,
+            delivery_id,
             seq_no,
             before,
             after,
             code,
             event_time,
             region,
+        )
+
+
+def _refund_reason(
+    root_category: str,
+    rng: random.Random,
+) -> tuple[str, str, int]:
+    common = [
+        ("NOT_EXPECTED", "商品与预期不符", 0, 28),
+        ("LOGISTICS_DAMAGE", "运输过程中商品受损", 0, 13),
+        ("WRONG_ITEM", "收到的商品或规格不符", 0, 10),
+        ("NO_LONGER_NEEDED", "购买后需求发生变化", 0, 18),
+    ]
+    category_specific = {
+        "服饰鞋包": [("SIZE_MISMATCH", "尺码或版型不合适", 0, 34)],
+        "手机数码": [("FUNCTION_ISSUE", "功能异常或无法正常使用", 1, 28)],
+        "电脑办公": [("FUNCTION_ISSUE", "功能异常或无法正常使用", 1, 28)],
+        "家用电器": [("QUALITY_ISSUE", "商品存在质量问题", 1, 30)],
+        "食品饮料": [("PACKAGE_OR_EXPIRY", "包装或保质期不符合预期", 1, 26)],
+        "美妆个护": [("ALLERGY_OR_DISCOMFORT", "使用后不适或不适合", 0, 22)],
+    }.get(root_category, [("QUALITY_ISSUE", "商品存在质量问题", 1, 20)])
+    candidates = common + category_specific
+    selected = rng.choices(
+        candidates,
+        weights=[candidate[3] for candidate in candidates],
+        k=1,
+    )[0]
+    return selected[0], selected[1], selected[2]
+
+
+def _write_refund_payment_attempt(
+    refs: ReferenceData,
+    state: BusinessState,
+    writer: TableWriter,
+    cutoff: datetime,
+    batch_id: str,
+    refund_detail_id: int,
+    attempt_no: int,
+    refund_no: str,
+    original_pay_detail_id: int,
+    order_id: int,
+    user: dict[str, Any],
+    payment: dict[str, Any],
+    channel: dict[str, Any],
+    detail: dict[str, Any],
+    refund_amount: Decimal,
+    request_time: datetime,
+    success: bool,
+) -> None:
+    refund_pay_detail_id = refund_detail_id * 10 + attempt_no
+    _schedule_fact(
+        state,
+        writer,
+        cutoff,
+        batch_id,
+        "dwd_trade_refund_pay_detail_di",
+        f"refund-pay:{refund_pay_detail_id}",
+        request_time,
+        {
+            "refund_pay_detail_id": refund_pay_detail_id,
+            "refund_no": refund_no,
+            "refund_detail_id": refund_detail_id,
+            "refund_pay_attempt_no": attempt_no,
+            "original_pay_detail_id": original_pay_detail_id,
+            "order_id": order_id,
+            "order_detail_id": detail["order_detail_id"],
+            "request_date_key": date_key(request_time),
+            "user_sk": version_at(
+                refs.user_versions,
+                int(user["user_id"]),
+                request_time,
+            )["user_sk"],
+            "user_id": user["user_id"],
+            "payment_type_sk": payment["payment_type_sk"],
+            "payment_type_code": payment["payment_type_code"],
+            "channel_sk": channel["channel_sk"],
+            "channel_code": channel["channel_code"],
+            "refund_goods_amount": refund_amount,
+            "refund_freight_amount": MONEY_ZERO,
+            "refund_tax_amount": MONEY_ZERO,
+            "refund_amount": refund_amount,
+            "refund_account_type": "原路退回",
+            "currency_code": "CNY",
+            "refund_pay_request_time": request_time,
+            "biz_date": request_time.date(),
+        },
+    )
+    result_time = request_time + timedelta(seconds=5 + attempt_no * 4)
+    for seq_no, before, after, event_time in (
+        (1, None, "REQUESTED", request_time),
+        (2, "REQUESTED", "SUCCESS" if success else "FAILED", result_time),
+    ):
+        event_id = refund_pay_detail_id * 10 + seq_no
+        _schedule_fact(
+            state,
+            writer,
+            cutoff,
+            batch_id,
+            "dwd_trade_refund_pay_status_event_di",
+            f"refund-pay-status:{refund_pay_detail_id}:{seq_no}",
+            event_time,
+            {
+                "refund_pay_status_event_id": event_id,
+                "refund_pay_detail_id": refund_pay_detail_id,
+                "event_seq_no": seq_no,
+                "event_date_key": date_key(event_time),
+                "third_party_refund_no": (
+                    f"TR{refund_pay_detail_id}" if after == "SUCCESS" else None
+                ),
+                "before_refund_pay_status": before,
+                "after_refund_pay_status": after,
+                "status_reason_code": (
+                    "CHANNEL_TIMEOUT" if after == "FAILED" else None
+                ),
+                "status_reason_description": (
+                    "退款渠道响应超时" if after == "FAILED" else None
+                ),
+                "event_time": event_time,
+                "biz_date": event_time.date(),
+            },
         )
 
 
@@ -981,6 +1354,7 @@ def _write_refund(
     shop: dict[str, Any],
     seller: dict[str, Any] | None,
     payment: dict[str, Any],
+    original_pay_detail_id: int | None,
     channel: dict[str, Any],
     warehouse: dict[str, Any],
     logistics: dict[str, Any],
@@ -990,10 +1364,29 @@ def _write_refund(
     region: dict[str, Any] | None,
     rng: random.Random,
 ) -> dict[str, Any] | None:
+    if original_pay_detail_id is None:
+        raise ValueError("成功订单缺少原支付尝试")
+    state.user_refund_counts[int(user["user_id"])] = (
+        state.user_refund_counts.get(int(user["user_id"]), 0) + 1
+    )
     refund_detail_id = int(detail["order_detail_id"])
     refund_no = f"R{refund_detail_id}"
     apply_time = signed_time + timedelta(days=1 + rng.randrange(6))
-    refund_amount = money(detail["receivable_amount"])
+    root_category = str(detail["profile"].category["root_category_name"])
+    reason_code, reason_description, is_quality_issue = _refund_reason(
+        root_category,
+        rng,
+    )
+    refund_quantity = int(detail["sku_qty"])
+    if refund_quantity > 1 and rng.random() < 0.36:
+        refund_quantity = 1
+    refund_amount = money(
+        Decimal(detail["receivable_amount"])
+        * Decimal(refund_quantity)
+        / Decimal(detail["sku_qty"])
+    )
+    if not return_goods and rng.random() < 0.18:
+        refund_amount = money(refund_amount * Decimal(str(rng.uniform(0.35, 0.8))))
     _schedule_fact(
         state,
         writer,
@@ -1020,11 +1413,11 @@ def _write_refund(
             "seller_id": seller["seller_id"] if seller else None,
             "sku_sk": detail["sku_sk"],
             "sku_id": detail["sku_id"],
-            "refund_sku_qty": detail["sku_qty"],
+            "refund_sku_qty": refund_quantity,
             "refund_type": "退货退款" if return_goods else "仅退款",
-            "refund_reason_code": "NOT_EXPECTED",
-            "refund_reason_description": "商品未达到预期",
-            "is_quality_issue": 0,
+            "refund_reason_code": reason_code,
+            "refund_reason_description": reason_description,
+            "is_quality_issue": is_quality_issue,
             "need_return_goods": int(return_goods),
             "apply_goods_amount": refund_amount,
             "apply_freight_amount": MONEY_ZERO,
@@ -1035,11 +1428,22 @@ def _write_refund(
             "biz_date": apply_time.date(),
         },
     )
-    approved_time = apply_time + timedelta(hours=6)
-    for seq_no, before, after, delta, event_time in (
+    decision_time = apply_time + timedelta(hours=rng.randint(1, 72))
+    decision = rng.choices(
+        ["APPROVED", "REJECTED", "CANCELLED"],
+        [89, 6, 5],
+        k=1,
+    )[0]
+    for seq_no, before, after, delta, event_time in [
         (1, None, "APPLIED", None, apply_time),
-        (2, "APPLIED", "APPROVED", refund_amount, approved_time),
-    ):
+        (
+            2,
+            "APPLIED",
+            decision,
+            refund_amount if decision == "APPROVED" else None,
+            decision_time,
+        ),
+    ]:
         event_id = refund_detail_id * 10 + seq_no
         _schedule_fact(
             state,
@@ -1058,85 +1462,69 @@ def _write_refund(
                 "before_refund_status": before,
                 "after_refund_status": after,
                 "approved_amount_delta": delta,
-                "status_reason_code": None,
-                "status_reason_description": None,
+                "status_reason_code": (
+                    "EVIDENCE_INSUFFICIENT"
+                    if after == "REJECTED"
+                    else "USER_WITHDREW"
+                    if after == "CANCELLED"
+                    else None
+                ),
+                "status_reason_description": (
+                    "售后凭证不足"
+                    if after == "REJECTED"
+                    else "用户撤销售后申请"
+                    if after == "CANCELLED"
+                    else None
+                ),
                 "operator_id": "SYSTEM",
                 "operator_type": "SYSTEM",
                 "event_time": event_time,
                 "biz_date": event_time.date(),
             },
         )
-    refund_pay_time = approved_time + timedelta(minutes=10)
-    _schedule_fact(
+    if decision != "APPROVED":
+        return None
+    approved_time = decision_time
+    refund_pay_time = approved_time + timedelta(minutes=rng.randint(5, 60))
+    first_pay_success = rng.random() >= 0.045
+    _write_refund_payment_attempt(
+        refs,
         state,
         writer,
         cutoff,
         batch_id,
-        "dwd_trade_refund_pay_detail_di",
-        f"refund-pay:{refund_detail_id}",
+        refund_detail_id,
+        1,
+        refund_no,
+        original_pay_detail_id,
+        order_id,
+        user,
+        payment,
+        channel,
+        detail,
+        refund_amount,
         refund_pay_time,
-        {
-            "refund_pay_detail_id": refund_detail_id,
-            "refund_no": refund_no,
-            "refund_detail_id": refund_detail_id,
-            "refund_pay_attempt_no": 1,
-            "original_pay_detail_id": order_id,
-            "order_id": order_id,
-            "order_detail_id": detail["order_detail_id"],
-            "request_date_key": date_key(refund_pay_time),
-            "user_sk": version_at(
-                refs.user_versions,
-                int(user["user_id"]),
-                refund_pay_time,
-            )["user_sk"],
-            "user_id": user["user_id"],
-            "payment_type_sk": payment["payment_type_sk"],
-            "payment_type_code": payment["payment_type_code"],
-            "channel_sk": channel["channel_sk"],
-            "channel_code": channel["channel_code"],
-            "refund_goods_amount": refund_amount,
-            "refund_freight_amount": MONEY_ZERO,
-            "refund_tax_amount": MONEY_ZERO,
-            "refund_amount": refund_amount,
-            "refund_account_type": "原路退回",
-            "currency_code": "CNY",
-            "refund_pay_request_time": refund_pay_time,
-            "biz_date": refund_pay_time.date(),
-        },
+        first_pay_success,
     )
-    for seq_no, before, after, event_time in (
-        (1, None, "REQUESTED", refund_pay_time),
-        (
-            2,
-            "REQUESTED",
-            "SUCCESS",
-            refund_pay_time + timedelta(seconds=10),
-        ),
-    ):
-        event_id = refund_detail_id * 10 + seq_no
-        _schedule_fact(
+    if not first_pay_success and rng.random() < 0.74:
+        _write_refund_payment_attempt(
+            refs,
             state,
             writer,
             cutoff,
             batch_id,
-            "dwd_trade_refund_pay_status_event_di",
-            f"refund-pay-status:{refund_detail_id}:{seq_no}",
-            event_time,
-            {
-                "refund_pay_status_event_id": event_id,
-                "refund_pay_detail_id": refund_detail_id,
-                "event_seq_no": seq_no,
-                "event_date_key": date_key(event_time),
-                "third_party_refund_no": f"TR{refund_detail_id}"
-                if after == "SUCCESS"
-                else None,
-                "before_refund_pay_status": before,
-                "after_refund_pay_status": after,
-                "status_reason_code": None,
-                "status_reason_description": None,
-                "event_time": event_time,
-                "biz_date": event_time.date(),
-            },
+            refund_detail_id,
+            2,
+            refund_no,
+            original_pay_detail_id,
+            order_id,
+            user,
+            payment,
+            channel,
+            detail,
+            refund_amount,
+            refund_pay_time + timedelta(hours=rng.randint(1, 12)),
+            True,
         )
     if not return_goods:
         return None
@@ -1208,7 +1596,7 @@ def _write_refund(
             "spu_id": detail["spu_id"],
             "category_sk": detail["category_sk"],
             "category_id": detail["category_id"],
-            "delivery_sku_qty": detail["sku_qty"],
+            "delivery_sku_qty": refund_quantity,
             "allocated_weight_kg": weight,
             "allocated_freight_amount": MONEY_ZERO,
             "currency_code": "CNY",
@@ -1262,7 +1650,7 @@ def _write_refund(
         "RETURN_RECEIPT",
         "REFUND",
         refund_detail_id,
-        int(detail["quantity"]),
+        refund_quantity,
         0,
         detail["profile"].price_on(signed_time.date()).cost_price,
         reverse_signed_time,
@@ -1285,17 +1673,25 @@ def _write_comment(
 ) -> None:
     publish_time = signed_time + timedelta(hours=6 + rng.randrange(72))
     comment_id = int(detail["order_detail_id"])
-    level = rng.choices([3, 4, 5], weights=[5, 22, 73], k=1)[0]
+    level = rng.choices([1, 2, 3, 4, 5], weights=[3, 5, 13, 31, 48], k=1)[0]
+    root_category = str(detail["profile"].category["root_category_name"])
+    content = _comment_content(
+        root_category,
+        str(detail["profile"].category["category_name"]),
+        level,
+        rng,
+    )
+    comment_detail_id = comment_id * 10 + 1
     _schedule_fact(
         state,
         writer,
         cutoff,
         batch_id,
         "dwd_service_comment_detail_di",
-        f"comment:{comment_id}",
+        f"comment:{comment_detail_id}",
         publish_time,
         {
-            "comment_detail_id": comment_id,
+            "comment_detail_id": comment_detail_id,
             "comment_id": comment_id,
             "parent_comment_detail_id": None,
             "comment_type": "初评",
@@ -1320,16 +1716,138 @@ def _write_comment(
             "is_anonymous": int(rng.random() < 0.65),
             "image_count": rng.choices([0, 1, 2, 3], weights=[72, 18, 7, 3], k=1)[0],
             "video_count": int(rng.random() < 0.03),
-            "comment_content": "商品符合预期，使用体验良好",
+            "comment_content": content,
             "service_score": level,
             "logistics_score": min(5, level + 1),
             "description_score": level,
             "sensitive_tag": None,
-            "sentiment": "正向" if level >= 4 else "中性",
+            "sentiment": "正向" if level >= 4 else "中性" if level == 3 else "负向",
             "comment_time": publish_time,
             "biz_date": publish_time.date(),
         },
     )
+    if rng.random() >= 0.12:
+        return
+    follow_time = publish_time + timedelta(days=rng.randint(3, 45))
+    follow_detail_id = comment_id * 10 + 2
+    follow_content = rng.choice(
+        [
+            "使用一段时间后表现稳定，补充评价供参考",
+            "后续使用体验与初次评价基本一致",
+            "用了一段时间发现细节还有改进空间",
+            "售后已经联系处理，补充记录处理结果",
+            None,
+        ]
+    )
+    _schedule_fact(
+        state,
+        writer,
+        cutoff,
+        batch_id,
+        "dwd_service_comment_detail_di",
+        f"comment:{follow_detail_id}",
+        follow_time,
+        {
+            "comment_detail_id": follow_detail_id,
+            "comment_id": comment_id,
+            "parent_comment_detail_id": comment_detail_id,
+            "comment_type": "追评",
+            "comment_date_key": date_key(follow_time),
+            "order_id": order_id,
+            "order_detail_id": detail["order_detail_id"],
+            "user_sk": version_at(
+                refs.user_versions,
+                int(user["user_id"]),
+                follow_time,
+            )["user_sk"],
+            "user_id": user["user_id"],
+            "shop_sk": shop["shop_sk"],
+            "shop_id": shop["shop_id"],
+            "sku_sk": detail["sku_sk"],
+            "sku_id": detail["sku_id"],
+            "spu_sk": detail["spu_sk"],
+            "spu_id": detail["spu_id"],
+            "category_sk": detail["category_sk"],
+            "category_id": detail["category_id"],
+            "comment_level": None,
+            "is_anonymous": int(rng.random() < 0.65),
+            "image_count": rng.choices([0, 1, 2], weights=[82, 14, 4], k=1)[0],
+            "video_count": int(rng.random() < 0.02),
+            "comment_content": follow_content,
+            "service_score": None,
+            "logistics_score": None,
+            "description_score": None,
+            "sensitive_tag": None,
+            "sentiment": None,
+            "comment_time": follow_time,
+            "biz_date": follow_time.date(),
+        },
+    )
+
+
+def _comment_content(
+    root_category: str,
+    leaf_category: str,
+    level: int,
+    rng: random.Random,
+) -> str | None:
+    if rng.random() < 0.14:
+        return None
+    positive_attributes = {
+        "手机数码": ["运行流畅", "续航符合预期", "外观质感不错"],
+        "家用电器": ["操作方便", "运行声音可以接受", "功能比较实用"],
+        "服饰鞋包": ["尺码合适", "面料舒适", "颜色与图片接近"],
+        "食品饮料": ["日期新鲜", "包装完整", "口味符合预期"],
+        "家居家装": ["做工扎实", "安装比较顺利", "尺寸合适"],
+    }
+    attribute = rng.choice(
+        positive_attributes.get(
+            root_category,
+            ["包装完整", "与页面描述基本一致", "日常使用方便"],
+        )
+    )
+    templates = {
+        5: [
+            f"{attribute}，配送也很及时",
+            f"收到后检查没有问题，{attribute}",
+            f"整体满意，{attribute}，会继续使用",
+        ],
+        4: [
+            f"整体表现不错，{attribute}",
+            f"基本符合预期，{attribute}，细节还能提升",
+            "使用体验可以，性价比尚可",
+        ],
+        3: [
+            "商品能正常使用，整体表现中规中矩",
+            "与预期有一点差距，但基本功能没有问题",
+            "包装和配送正常，商品体验一般",
+        ],
+        2: [
+            "实际体验不太理想，细节和页面描述有差距",
+            "包装有些破损，商品使用体验一般",
+            "等待时间较长，收到后发现做工不够细致",
+        ],
+        1: [
+            "商品存在明显问题，已经申请售后处理",
+            "收到的规格不符，影响正常使用",
+            "包装破损且商品有瑕疵，体验较差",
+        ],
+    }
+    content = rng.choice(templates[level])
+    if rng.random() < 0.56:
+        content += rng.choice(
+            [
+                f"，这款{leaf_category}的细节可以参考",
+                "，客服回复速度正常",
+                "，外包装保护得比较到位",
+                "，价格波动不大",
+                "，实际感受因人而异",
+                "，配送进度可以正常查询",
+            ]
+        )
+    if rng.random() < 0.38:
+        content += f"，使用{rng.randint(2, 45)}天后评价"
+    return content
 
 
 def _apply_inventory_events(
@@ -1354,20 +1872,27 @@ def _apply_inventory_events(
         position = state.inventory[sku_id]
         before_on_hand = position.on_hand
         before_reserved = position.reserved
+        before_in_transit = position.in_transit
         after_on_hand = before_on_hand + int(event["on_hand_delta"])
         after_reserved = before_reserved + int(event["reserved_delta"])
-        if after_on_hand < 0 or not 0 <= after_reserved <= after_on_hand:
+        after_in_transit = before_in_transit + int(event["in_transit_delta"])
+        if (
+            after_on_hand < 0
+            or not 0 <= after_reserved <= after_on_hand
+            or after_in_transit < 0
+        ):
             raise ValueError(
                 f"库存状态非法 sku_id={sku_id} event={event} "
                 f"before=({before_on_hand},{before_reserved})"
             )
         position.on_hand = after_on_hand
         position.reserved = after_reserved
+        position.in_transit = after_in_transit
         position.unit_cost = price(event["unit_cost"])
         event_day = event["event_time"].date()
         local_by_day[event_day] += 1
         event_id = date_key(event_day) * 1_000_000 + local_by_day[event_day]
-        warehouse = _warehouse_for_shop(refs, int(profile.shop["shop_id"]))
+        warehouse = refs.warehouse_for_profile(profile)
         row = {
             "inventory_change_id": event_id,
             "change_no": f"IC{event_id}",
@@ -1389,6 +1914,9 @@ def _apply_inventory_events(
             "before_reserved_qty": before_reserved,
             "reserved_qty_delta": event["reserved_delta"],
             "after_reserved_qty": after_reserved,
+            "before_in_transit_qty": before_in_transit,
+            "in_transit_qty_delta": event["in_transit_delta"],
+            "after_in_transit_qty": after_in_transit,
             "unit_cost": event["unit_cost"],
             "total_cost_delta": price(
                 Decimal(event["on_hand_delta"]) * event["unit_cost"]
@@ -1413,6 +1941,7 @@ def _inventory_event(
     unit_cost: Decimal,
     event_time: datetime,
     priority: int,
+    in_transit_delta: int = 0,
 ) -> dict[str, Any]:
     return {
         "sku_id": int(profile.sku["sku_id"]),
@@ -1421,6 +1950,7 @@ def _inventory_event(
         "biz_id": str(biz_id),
         "on_hand_delta": on_hand_delta,
         "reserved_delta": reserved_delta,
+        "in_transit_delta": in_transit_delta,
         "unit_cost": price(unit_cost),
         "event_time": event_time,
         "priority": priority,
@@ -1441,6 +1971,8 @@ def _write_order_status(
     event_type: str,
     event_time: datetime,
     terminal: int,
+    reason_code: str | None = None,
+    reason_description: str | None = None,
 ) -> None:
     event_id = order_id * 10 + seq_no
     _schedule_fact(
@@ -1463,8 +1995,8 @@ def _write_order_status(
             "before_order_status": before,
             "after_order_status": after,
             "status_event_type": event_type,
-            "status_reason_code": None,
-            "status_reason_description": None,
+            "status_reason_code": reason_code,
+            "status_reason_description": reason_description,
             "cancel_stage": "待支付" if after == "CANCELLED" else None,
             "is_terminal_status": terminal,
             "operator_id": str(user["user_id"]),
@@ -1485,6 +2017,7 @@ def _write_pay_status(
     before: str | None,
     after: str,
     event_time: datetime,
+    failure_reason: str | None,
 ) -> None:
     event_id = pay_detail_id * 10 + seq_no
     _schedule_fact(
@@ -1504,8 +2037,17 @@ def _write_pay_status(
             "third_party_pay_no": f"TP{pay_detail_id}" if after == "SUCCESS" else None,
             "before_pay_status": before,
             "after_pay_status": after,
-            "status_reason_code": "CHANNEL_REJECTED" if after == "FAILED" else None,
-            "status_reason_description": None,
+            "status_reason_code": failure_reason if after == "FAILED" else None,
+            "status_reason_description": (
+                {
+                    "USER_CANCELLED": "用户取消支付",
+                    "INSUFFICIENT_FUNDS": "账户余额或授信不足",
+                    "CHANNEL_REJECTED": "支付渠道拒绝",
+                    "TIMEOUT": "支付渠道超时",
+                }.get(str(failure_reason))
+                if after == "FAILED"
+                else None
+            ),
             "event_time": event_time,
             "biz_date": event_time.date(),
         },
@@ -1637,7 +2179,3 @@ def _line_weight(detail: dict[str, Any]) -> Decimal:
         WEIGHT_QUANT,
         rounding=ROUND_HALF_UP,
     )
-
-
-def _warehouse_for_shop(refs: ReferenceData, shop_id: int) -> dict[str, Any]:
-    return refs.warehouses[shop_id % len(refs.warehouses)]

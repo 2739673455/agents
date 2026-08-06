@@ -60,6 +60,11 @@ class CheckpointStoreTest(unittest.TestCase):
                     )
                 },
                 user_order_counts={2001: 3},
+                user_session_counts={2001: 12},
+                user_spend_amounts={2001: Decimal("456.78")},
+                user_refund_counts={2001: 1},
+                user_category_counts={2001: {"手机数码": 7}},
+                user_last_active_at={2001: datetime(2026, 7, 31, 21, 10)},
                 pending_facts=[
                     ScheduledFact(
                         table_name="dwd_trade_order_status_event_di",
@@ -99,6 +104,15 @@ class CheckpointStoreTest(unittest.TestCase):
             assert checkpoint is not None
             self.assertEqual(checkpoint.period_key, july.key)
             self.assertEqual(checkpoint.state.inventory[1001].on_hand, 80)
+            self.assertEqual(checkpoint.state.user_session_counts[2001], 12)
+            self.assertEqual(
+                checkpoint.state.user_spend_amounts[2001],
+                Decimal("456.78"),
+            )
+            self.assertEqual(
+                checkpoint.state.user_category_counts[2001]["手机数码"],
+                7,
+            )
             pending_fact = checkpoint.state.pending_facts[0]
             self.assertEqual(
                 pending_fact.table_name,

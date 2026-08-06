@@ -41,6 +41,7 @@ AUDIT_TIME_FIELDS = (
     "rule_effective_start_time",
     "register_time",
     "open_time",
+    "source_update_time",
 )
 DW_UPDATE_TABLES = {
     "dim_brand_info",
@@ -275,7 +276,8 @@ class TableWriter:
             business_time + timedelta(minutes=delay_minutes),
             self.as_of_time,
         )
-        row["dw_load_time"] = load_time
+        if "dw_load_time" not in row:
+            row["dw_load_time"] = load_time
         if table_name in DW_UPDATE_TABLES:
             row["dw_update_time"] = load_time
         if "source_update_time" in row and row["source_update_time"] is None:

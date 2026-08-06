@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -56,6 +57,9 @@ class ProductProfile:
 class ReferenceData:
     user_versions: dict[int, list[dict[str, Any]]]
     current_users: list[dict[str, Any]]
+    user_registration_times: list[datetime]
+    tags_by_code: dict[str, dict[str, Any]]
+    user_tag_relations: dict[int, list[dict[str, Any]]]
     shops: list[dict[str, Any]]
     shop_by_id: dict[int, dict[str, Any]]
     sellers_by_id: dict[int, dict[str, Any]]
@@ -69,7 +73,6 @@ class ReferenceData:
     coupons: list[dict[str, Any]]
     promotion_scopes: dict[int, list[dict[str, Any]]]
     coupon_scopes: dict[int, list[dict[str, Any]]]
-    shop_seeds_by_id: dict[int, dict[str, Any]]
     profiles: list[ProductProfile]
     profile_by_sku: dict[int, ProductProfile]
     profiles_by_listing_date: dict[date, list[ProductProfile]]
@@ -77,6 +80,47 @@ class ReferenceData:
 
     def active_profiles(self, day: date) -> list[ProductProfile]:
         return [profile for profile in self.profiles if profile.listing_date <= day]
+
+    def active_users(self, moment: datetime) -> list[dict[str, Any]]:
+        end = bisect_right(self.user_registration_times, moment)
+        return self.current_users[:end]
+
+    def warehouse_for_profile(
+        self,
+        profile: ProductProfile,
+    ) -> dict[str, Any]:
+        index = _stable_int(f"sku-warehouse:{profile.sku['sku_id']}") % len(
+            self.warehouses
+        )
+        return self.warehouses[index]
+
+    def service_warehouse(
+        self,
+        region: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        province_code = str(region.get("province_code") or "") if region else ""
+        direct = [
+            warehouse
+            for warehouse in self.warehouses
+            if province_code
+            and str(warehouse.get("province_code") or "") == province_code
+        ]
+        if direct:
+            return direct[0]
+        zone = _province_service_zone(province_code)
+        regional = [
+            warehouse
+            for warehouse in self.warehouses
+            if _province_service_zone(
+                str(warehouse.get("province_code") or "")
+            )
+            == zone
+        ]
+        candidates = regional or self.warehouses
+        index = _stable_int(f"service-warehouse:{province_code or 'unknown'}") % len(
+            candidates
+        )
+        return candidates[index]
 
     def active_promotions(self, moment: datetime) -> list[dict[str, Any]]:
         return [
@@ -126,6 +170,23 @@ def warning_stock_qty_for_sku(sku_id: int) -> int:
     return 8 + _stable_int(f"warning:{sku_id}") % 33
 
 
+def _province_service_zone(province_code: str) -> str:
+    prefix = province_code[:2]
+    if prefix in {"11", "12", "13", "14", "15"}:
+        return "NORTH"
+    if prefix in {"21", "22", "23"}:
+        return "NORTHEAST"
+    if prefix in {"31", "32", "33", "34", "35", "36", "37"}:
+        return "EAST"
+    if prefix in {"41", "42", "43", "44", "45", "46"}:
+        return "CENTRAL_SOUTH"
+    if prefix in {"50", "51", "52", "53", "54"}:
+        return "SOUTHWEST"
+    if prefix in {"61", "62", "63", "64", "65"}:
+        return "NORTHWEST"
+    return "UNKNOWN"
+
+
 def load_reference_data(
     ctx: RunContext,
     tables: dict[str, Table],
@@ -135,6 +196,16 @@ def load_reference_data(
             conn,
             tables["dim_user_info_zip"],
             where=tables["dim_user_info_zip"].c.user_id != UNKNOWN_ID,
+        )
+        tags = load_rows(
+            conn,
+            tables["dim_user_tag_info"],
+            where=tables["dim_user_tag_info"].c.tag_code != "UNKNOWN",
+        )
+        tag_relations = load_rows(
+            conn,
+            tables["bridge_user_tag_relation_zip"],
+            where=tables["bridge_user_tag_relation_zip"].c.is_current == 1,
         )
         shops = load_rows(
             conn,
@@ -228,8 +299,12 @@ def load_reference_data(
     ]
     profiles.sort(
         key=lambda profile: (
-            profile.listing_date,
-            _stable_int(f"rank:{profile.sku['sku_id']}"),
+            _stable_int(f"sku-demand:{profile.sku['sku_id']}") % 1_000_003
+            + (_stable_int(f"brand-demand:{profile.sku['brand_id']}") % 1_000_003)
+            * 0.18
+            + (_stable_int(f"shop-demand:{profile.sku['shop_id']}") % 1_000_003)
+            * 0.12,
+            int(profile.sku["sku_id"]),
         )
     )
     by_listing_date: dict[date, list[ProductProfile]] = defaultdict(list)
@@ -246,9 +321,28 @@ def load_reference_data(
     coupon_scopes: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in coupon_scope_rows:
         coupon_scopes[int(row["coupon_template_id"])].append(row)
+    current_users = sorted(
+        (row for row in users if row["is_current"] == 1),
+        key=lambda row: row["register_time"] or datetime(1900, 1, 1),
+    )
+    tag_by_sk = {int(row["user_tag_sk"]): row for row in tags}
+    user_tag_relations: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for relation in tag_relations:
+        tag = tag_by_sk.get(int(relation["user_tag_sk"]))
+        if tag is None:
+            continue
+        user_tag_relations[int(relation["user_id"])].append(
+            relation | {"tag_code": tag["tag_code"]}
+        )
+    warehouses.sort(key=lambda row: int(row["warehouse_id"]))
     return ReferenceData(
         user_versions=build_version_index(users, "user_id"),
-        current_users=[row for row in users if row["is_current"] == 1],
+        current_users=current_users,
+        user_registration_times=[
+            row["register_time"] or datetime(1900, 1, 1) for row in current_users
+        ],
+        tags_by_code={str(row["tag_code"]): row for row in tags},
+        user_tag_relations=dict(user_tag_relations),
         shops=shops,
         shop_by_id=shop_by_id,
         sellers_by_id={int(row["seller_id"]): row for row in sellers},
@@ -266,10 +360,6 @@ def load_reference_data(
         coupons=coupons,
         promotion_scopes=dict(promotion_scopes),
         coupon_scopes=dict(coupon_scopes),
-        shop_seeds_by_id={
-            int(row["shop_id"]): row
-            for row in _load_shop_seeds(ctx)
-        },
         profiles=profiles,
         profile_by_sku={int(profile.sku["sku_id"]): profile for profile in profiles},
         profiles_by_listing_date=dict(by_listing_date),
@@ -283,17 +373,6 @@ def _source_prices(ctx: RunContext) -> dict[int, dict[str, Any]]:
         for sku in product["skus"]:
             result[int(sku["sku_id"])] = sku
     return result
-
-
-def _load_shop_seeds(ctx: RunContext) -> list[dict[str, Any]]:
-    import json
-
-    payload = json.loads(
-        ctx.gen.master_data_path("shops.json").read_text(encoding="utf-8")
-    )
-    if not isinstance(payload, list):
-        raise ValueError("shops.json 必须是数组")
-    return [dict(row) for row in payload]
 
 
 def _build_profile(

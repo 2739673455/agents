@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import os
@@ -16,7 +17,9 @@ from typing import Any
 
 from .source import (
     CATALOG_DATASET_NAME,
+    CATEGORY_PRICE_RANGES,
     SUNING_ORIGIN_PLATFORM,
+    UI_ARTIFACT_PATTERN,
     CatalogProduct,
     CatalogSku,
     prepare_source,
@@ -30,6 +33,298 @@ ARTIFACT_NAMES = (
     "spus.jsonl",
     "skus.jsonl",
     "lineage.jsonl",
+)
+
+CATALOG_SCHEMA_VERSION = 7
+FIELD_LINEAGE = {
+    "categories.json.category_id": {
+        "classification": "derived",
+        "rule": "CATEGORY命名空间与标准类目路径的SHA-256稳定映射",
+    },
+    "categories.json.category_name": {
+        "classification": "normalized",
+        "source": "lineage.origin_category_path",
+        "rule": "苏宁类目路径映射至平台三级类目",
+    },
+    "brands.json.brand_id": {
+        "classification": "derived",
+        "rule": "BRAND命名空间与标准品牌键的SHA-256稳定映射",
+    },
+    "brands.json.brand_name": {
+        "classification": "normalized",
+        "source": "lineage.origin_brand_name",
+        "rule": "NFKC标准化后按同义名称出现频次选取展示名",
+    },
+    "shops.json.shop_id": {
+        "classification": "derived",
+        "rule": "SHOP命名空间与来源店铺键的SHA-256稳定映射",
+    },
+    "shops.json.shop_name": {
+        "classification": "normalized",
+        "source": "lineage.origin_store_name",
+        "rule": "去除来源平台名称并统一平台自营店展示名",
+    },
+    "spus.jsonl.spu_id": {
+        "classification": "derived",
+        "rule": "SPU命名空间与来源商品关系键的SHA-256稳定映射",
+    },
+    "spus.jsonl.spu_name": {
+        "classification": "normalized",
+        "source": "lineage.origin_product_name",
+        "rule": "从来源标题中剔除当前SKU规格并清理空白",
+    },
+    "spus.jsonl.weight_kg": {
+        "classification": "normalized",
+        "source": "lineage.origin_weight",
+        "rule": "仅对来源明确数值执行千克单位标准化，缺失保持null",
+    },
+    "spus.jsonl.volume_m3": {
+        "classification": "observed",
+        "source": "lineage.origin_volume",
+        "rule": "来源未公开时保持null",
+    },
+    "skus.jsonl.sku_id": {
+        "classification": "derived",
+        "rule": "SKU命名空间与来源SKU关系键的SHA-256稳定映射",
+    },
+    "skus.jsonl.sku_name": {
+        "classification": "normalized",
+        "source": "lineage.skus.origin_sku_title",
+        "rule": "标准SPU名称与已清洗真实规格拼接",
+    },
+    "skus.jsonl.sku_specs_json": {
+        "classification": "normalized",
+        "source": "lineage.skus.origin_specs",
+        "rule": "清除页面控件；真实单规格商品显式写为规格=单规格",
+    },
+    "lineage.jsonl.origin_*": {
+        "classification": "observed",
+        "source": "source/suning_products.jsonl及归档页面响应",
+        "rule": "保留来源值、页面URL、抓取时间和解析器版本",
+    },
+}
+
+FIELD_LINEAGE.update(
+    {
+        f"categories.json.{field}": {
+            "classification": "derived",
+            "source": "lineage.origin_category_path",
+            "rule": "由平台三级类目树结构计算",
+        }
+        for field in (
+            "category_level",
+            "parent_category_id",
+            "parent_category_name",
+            "root_category_id",
+            "root_category_name",
+            "is_leaf",
+            "sort_order",
+            "category_path",
+            "status",
+        )
+    }
+)
+FIELD_LINEAGE.update(
+    {
+        f"brands.json.{field}": {
+            "classification": "normalized",
+            "source": "lineage.origin_brand_name",
+            "rule": "来源未公开或无法可靠映射时保持null",
+        }
+        for field in (
+            "brand_name_en",
+            "brand_alias",
+            "brand_logo_url",
+            "brand_story",
+            "country_code",
+            "country_name",
+            "first_letter",
+            "status",
+        )
+    }
+)
+FIELD_LINEAGE.update(
+    {
+        f"shops.json.{field}": {
+            "classification": "normalized",
+            "source": "lineage.origin_store_name",
+            "rule": "公开店铺属性标准化，来源未公开时保持null",
+        }
+        for field in (
+            "shop_type",
+            "seller_id",
+            "seller_name",
+            "industry_type",
+            "service_score",
+            "logistics_score",
+            "description_score",
+            "open_time",
+            "province_code",
+            "city_code",
+            "district_code",
+            "is_self_operated",
+            "is_cross_border",
+            "is_deleted",
+            "shop_status",
+        )
+    }
+)
+FIELD_LINEAGE.update(
+    {
+        "brands.json.status": {
+            "classification": "derived",
+            "rule": "进入有效目录的品牌状态设为启用",
+        },
+    }
+)
+FIELD_LINEAGE.update(
+    {
+        f"spus.jsonl.{field}": {
+            "classification": "derived",
+            "source": "lineage.jsonl",
+            "rule": "由采集商品关系及平台标准维度映射生成",
+        }
+        for field in (
+            "spu_sub_title",
+            "category_id",
+            "brand_id",
+            "shop_id",
+            "is_virtual",
+            "is_presale",
+            "spu_status",
+        )
+    }
+)
+FIELD_LINEAGE.update(
+    {
+        f"skus.jsonl.{field}": {
+            "classification": "derived",
+            "source": "lineage.jsonl",
+            "rule": "由来源SKU关系及平台标准维度映射生成",
+        }
+        for field in (
+            "spu_id",
+            "shop_id",
+            "category_id",
+            "brand_id",
+            "bar_code",
+            "unit",
+            "sku_status",
+        )
+    }
+)
+FIELD_LINEAGE.update(
+    {
+        "spus.jsonl.spu_sub_title": {
+            "classification": "observed",
+            "source": "lineage.origin_product_subtitle",
+            "rule": "来源未公开副标题时保持null",
+        },
+        "spus.jsonl.is_presale": {
+            "classification": "observed",
+            "source": "lineage.origin_attributes",
+            "rule": "来源未明确公开时保持null",
+        },
+        "skus.jsonl.bar_code": {
+            "classification": "observed",
+            "source": "lineage.skus",
+            "rule": "来源未公开时保持null",
+        },
+        "skus.jsonl.unit": {
+            "classification": "observed",
+            "source": "lineage.skus",
+            "rule": "来源未公开时保持null",
+        },
+        "brands.json.brand_name_en": {
+            "classification": "observed",
+            "source": "lineage.origin_brand_name",
+            "rule": "来源未单独公开英文品牌名时保持null",
+        },
+        "brands.json.brand_alias": {
+            "classification": "observed",
+            "source": "lineage.origin_brand_name",
+            "rule": "来源未单独公开品牌别名时保持null",
+        },
+        "brands.json.brand_logo_url": {
+            "classification": "observed",
+            "source": "lineage.origin_attributes",
+            "rule": "来源未公开品牌Logo时保持null",
+        },
+        "brands.json.brand_story": {
+            "classification": "observed",
+            "source": "lineage.origin_attributes",
+            "rule": "来源未公开品牌故事时保持null",
+        },
+        "brands.json.country_code": {
+            "classification": "observed",
+            "source": "lineage.origin_attributes",
+            "rule": "来源未可靠公开品牌国家时保持null",
+        },
+        "brands.json.country_name": {
+            "classification": "observed",
+            "source": "lineage.origin_attributes",
+            "rule": "来源未可靠公开品牌国家时保持null",
+        },
+        "brands.json.first_letter": {
+            "classification": "derived",
+            "source": "brands.json.brand_name",
+            "rule": "ASCII品牌名取首字母，其余写为#",
+        },
+        "shops.json.shop_type": {
+            "classification": "derived",
+            "source": "lineage.origin_is_self_operated",
+            "rule": "按来源自营标记映射为自营店或第三方店铺",
+        },
+        "shops.json.seller_id": {
+            "classification": "derived",
+            "source": "lineage.external_store_id",
+            "rule": "SELLER命名空间与来源店铺键的SHA-256稳定映射",
+        },
+        "shops.json.seller_name": {
+            "classification": "normalized",
+            "source": "lineage.origin_store_name",
+            "rule": "第三方沿用标准店铺名，自营统一为平台自营",
+        },
+        "shops.json.industry_type": {
+            "classification": "derived",
+            "source": "lineage.origin_category_path",
+            "rule": "取店铺商品数最多的平台一级类目",
+        },
+        **{
+            f"shops.json.{field}": {
+                "classification": "observed",
+                "source": "lineage.origin_store_name",
+                "rule": "商品页未公开可验证的店铺属性时保持null",
+            }
+            for field in (
+                "service_score",
+                "logistics_score",
+                "description_score",
+                "open_time",
+                "province_code",
+                "city_code",
+                "district_code",
+            )
+        },
+        "shops.json.is_self_operated": {
+            "classification": "normalized",
+            "source": "lineage.origin_is_self_operated",
+            "rule": "来源布尔值标准化为0或1",
+        },
+        "shops.json.is_cross_border": {
+            "classification": "normalized",
+            "source": "lineage.origin_is_cross_border",
+            "rule": "同一来源店铺存在跨境商品时标准化为1",
+        },
+        "shops.json.is_deleted": {
+            "classification": "derived",
+            "rule": "进入有效目录的店铺设为未删除",
+        },
+        "shops.json.shop_status": {
+            "classification": "derived",
+            "rule": "进入有效目录的店铺设为营业",
+        },
+    }
 )
 
 
@@ -364,6 +659,7 @@ def _lineage_rows(
             "origin_platform": product.origin_platform,
             "external_product_id": product.external_product_id,
             "origin_product_name": product.title,
+            "origin_product_subtitle": product.subtitle,
             "origin_brand_name": product.brand,
             "external_brand_id": product.source_brand_id,
             "origin_store_name": product.store,
@@ -380,11 +676,18 @@ def _lineage_rows(
             "origin_volume": product.source_volume,
             "origin_url": product.source_url,
             "origin_captured_at": product.captured_at,
+            "origin_raw_response_path": product.raw_response_path,
+            "origin_raw_response_sha256": product.raw_response_sha256,
+            "parser_revision": product.parser_revision,
             "skus": [
                 {
                     "sku_id": _sku_id(sku),
                     "external_sku_id": sku.external_sku_id,
                     "origin_sku_key": sku.source_key,
+                    "origin_sku_title": sku.title,
+                    "origin_specs": sku.origin_specs,
+                    "normalized_specs": sku.specs,
+                    "specs_provenance": sku.specs_provenance,
                     "origin_sale_price_cny": sku.sale_price_cny,
                     "origin_list_price_cny": sku.list_price_cny,
                     "origin_price_region_code": sku.price_region_code,
@@ -418,6 +721,9 @@ def prepare_catalog(
     brands, shops, brand_ids, shop_ids = _build_brands_and_shops(products)
     root_distribution = Counter(product.root_category for product in products)
     origin_distribution = Counter(product.origin_platform for product in products)
+    brand_distribution = Counter(product.brand for product in products)
+    store_distribution = Counter(product.store for product in products)
+    self_operated_spus = sum(product.is_self_operated for product in products)
     sku_counts_per_spu = [len(product.skus) for product in products]
     source_entries = []
     for path, metadata in zip(
@@ -457,7 +763,7 @@ def prepare_catalog(
             _lineage_rows(products, category_ids, brand_ids, shop_ids),
         )
         manifest = {
-            "schema_version": 6,
+            "schema_version": CATALOG_SCHEMA_VERSION,
             "generated_at": datetime.now(UTC).isoformat(),
             "catalog_name": "苏宁真实商品综合电商目录",
             "source": {
@@ -466,7 +772,7 @@ def prepare_catalog(
                 "origins": source_entries,
             },
             "selection": {
-                "strategy": "按综合电商类目配额采集苏宁商品，保留每个 SPU 的全部真实 SKU",
+                "strategy": "按目标综合电商画像随机采样苏宁类目供给，保留每个SPU清洗后的真实SKU",
                 "request_delay_seconds": source_metadata["request_delay_seconds"],
                 "eligible_rows": len(products),
                 "source_brand_names": len(
@@ -480,6 +786,42 @@ def prepare_catalog(
                 "selection_group_distribution": source_metadata[
                     "selection_group_distribution"
                 ],
+                "self_operated_spu_share": self_operated_spus / len(products),
+                "largest_brand_spu_share": (
+                    brand_distribution.most_common(1)[0][1] / len(products)
+                ),
+                "largest_store_spu_share": (
+                    store_distribution.most_common(1)[0][1] / len(products)
+                ),
+                "rejected_products": sum(
+                    int(source.get("rejected_products", 0))
+                    for source in source_metadata["sources"]
+                ),
+                "rejected_records": sum(
+                    int(source.get("rejected_records", 0))
+                    for source in source_metadata["sources"]
+                ),
+                "rejection_reason_distribution": dict(
+                    sum(
+                        (
+                            Counter(source.get("rejection_reason_distribution", {}))
+                            for source in source_metadata["sources"]
+                        ),
+                        Counter(),
+                    )
+                ),
+                "cleaning_rule_version": max(
+                    int(source.get("normalization_rule_version", 0))
+                    for source in source_metadata["sources"]
+                ),
+                "removed_ui_artifact_specs": sum(
+                    int(source.get("removed_ui_artifact_specs", 0))
+                    for source in source_metadata["sources"]
+                ),
+                "derived_single_sku_specs": sum(
+                    int(source.get("derived_single_sku_specs", 0))
+                    for source in source_metadata["sources"]
+                ),
             },
             "counts": {
                 "spus": spu_count,
@@ -493,6 +835,7 @@ def prepare_catalog(
                 "shops": len(shops),
             },
             "lineage": {
+                "field_lineage": FIELD_LINEAGE,
                 "origin_fields": [
                     "origin_platform",
                     "external_product_id",
@@ -558,7 +901,7 @@ def validate_catalog(
         raise ValueError(f"真实商品目录尚未准备: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if (
-        int(manifest.get("schema_version", 0)) != 6
+        int(manifest.get("schema_version", 0)) != CATALOG_SCHEMA_VERSION
         or manifest.get("source", {}).get("dataset_name") != CATALOG_DATASET_NAME
     ):
         raise ValueError(
@@ -566,9 +909,35 @@ def validate_catalog(
             "uv run python -m collection"
         )
     expected = manifest["counts"]
+    field_lineage = manifest.get("lineage", {}).get("field_lineage")
+    if field_lineage != FIELD_LINEAGE:
+        raise ValueError("商品目录字段级血缘声明不完整或版本不一致")
+    for field_name, declaration in field_lineage.items():
+        classification = declaration.get("classification")
+        if classification not in {"observed", "normalized", "derived"}:
+            raise ValueError(
+                f"商品目录字段血缘分类无效: {field_name}={classification}"
+            )
     categories = _load_json_array(data_dir / "categories.json")
     brands = _load_json_array(data_dir / "brands.json")
     shops = _load_json_array(data_dir / "shops.json")
+    business_artifacts = {
+        "categories.json": categories[0],
+        "brands.json": brands[0],
+        "shops.json": shops[0],
+        "spus.jsonl": next(iter_jsonl(data_dir / "spus.jsonl")),
+        "skus.jsonl": next(iter_jsonl(data_dir / "skus.jsonl")),
+    }
+    missing_lineage_fields = [
+        f"{artifact}.{field}"
+        for artifact, sample in business_artifacts.items()
+        for field in sample
+        if f"{artifact}.{field}" not in field_lineage
+    ]
+    if missing_lineage_fields:
+        raise ValueError(
+            "业务目录字段缺少机器血缘: " + ", ".join(missing_lineage_fields)
+        )
 
     category_ids = {int(row["category_id"]) for row in categories}
     brand_ids = {int(row["brand_id"]) for row in brands}
@@ -615,6 +984,8 @@ def validate_catalog(
     lineage_sku_refs: dict[int, int] = {}
     origins: Counter[str] = Counter()
     origin_sku_keys: set[str] = set()
+    raw_responses: dict[str, str] = {}
+    self_operated_spus = 0
     for row in iter_jsonl(data_dir / "lineage.jsonl"):
         spu_id = int(row["spu_id"])
         if spu_id in lineage_spu_ids:
@@ -658,6 +1029,25 @@ def validate_catalog(
             raise ValueError(f"商品来源参数缺失: {spu_id}")
         if not str(row["origin_url"]).startswith(("http://", "https://")):
             raise ValueError(f"商品来源链接无效: {spu_id}")
+        parser_revision = row.get("parser_revision")
+        if not isinstance(parser_revision, int) or parser_revision <= 0:
+            raise ValueError(f"商品解析器版本无效: {spu_id}")
+        raw_response_path = _clean_text(row.get("origin_raw_response_path"), 1000)
+        raw_response_sha256 = _clean_text(
+            row.get("origin_raw_response_sha256"),
+            64,
+        )
+        if not raw_response_path or not re.fullmatch(
+            r"[0-9a-f]{64}",
+            raw_response_sha256,
+        ):
+            raise ValueError(f"商品缺少原始响应证据: {spu_id}")
+        existing_digest = raw_responses.setdefault(
+            raw_response_path,
+            raw_response_sha256,
+        )
+        if existing_digest != raw_response_sha256:
+            raise ValueError(f"原始响应路径对应多个哈希: {raw_response_path}")
         source_skus = row.get("skus")
         if not isinstance(source_skus, list) or not source_skus:
             raise ValueError(f"商品血缘没有真实SKU: {spu_id}")
@@ -674,6 +1064,7 @@ def validate_catalog(
                 "origin_main_image_url": source_sku.get("origin_main_image_url"),
                 "origin_url": source_sku.get("origin_url"),
                 "origin_captured_at": source_sku.get("origin_captured_at"),
+                "origin_sku_title": source_sku.get("origin_sku_title"),
             }
             sku_missing_fields = [
                 key
@@ -684,12 +1075,44 @@ def validate_catalog(
                 raise ValueError(f"SKU血缘核心字段缺失: {sku_id} {sku_missing_fields}")
             if origin_sku_key in origin_sku_keys:
                 raise ValueError(f"原始SKU关系键重复: {origin_sku_key}")
+            origin_specs = source_sku.get("origin_specs")
+            normalized_specs = source_sku.get("normalized_specs")
+            provenance = source_sku.get("specs_provenance")
+            if not isinstance(origin_specs, dict) or not isinstance(
+                normalized_specs, dict
+            ):
+                raise ValueError(f"SKU规格血缘无效: {sku_id}")
+            if not normalized_specs:
+                raise ValueError(f"SKU标准规格为空: {sku_id}")
+            if provenance not in {"observed", "derived_single_sku"}:
+                raise ValueError(f"SKU规格来源类型无效: {sku_id}")
+            if provenance == "derived_single_sku" and normalized_specs != {
+                "规格": "单规格"
+            }:
+                raise ValueError(f"单规格SKU标准值无效: {sku_id}")
+            artifact_text = " ".join(
+                [str(source_sku.get("origin_sku_title") or "")]
+                + [f"{key}:{value}" for key, value in normalized_specs.items()]
+            )
+            if UI_ARTIFACT_PATTERN.search(artifact_text):
+                raise ValueError(f"SKU仍包含页面控件文本: {sku_id}")
             try:
                 sale_price = float(source_sku["origin_sale_price_cny"])
             except (KeyError, TypeError, ValueError) as error:
                 raise ValueError(f"SKU来源售价无效: {sku_id}") from error
             if sale_price <= 0:
                 raise ValueError(f"SKU来源售价必须大于0: {sku_id}")
+            root_category = str(
+                category_by_id[int(row["category_id"])]["root_category_name"]
+            )
+            lower, upper = CATEGORY_PRICE_RANGES.get(
+                root_category,
+                (0.5, 200_000.0),
+            )
+            if not lower <= sale_price <= upper:
+                raise ValueError(
+                    f"SKU来源售价超出类目区间: {sku_id} {root_category} {sale_price}"
+                )
             list_price_value = source_sku.get("origin_list_price_cny")
             if list_price_value is not None:
                 try:
@@ -698,6 +1121,8 @@ def validate_catalog(
                     raise ValueError(f"SKU来源划线价无效: {sku_id}") from error
                 if list_price <= 0:
                     raise ValueError(f"SKU来源划线价必须大于0: {sku_id}")
+                if not lower <= list_price <= upper or list_price < sale_price:
+                    raise ValueError(f"SKU来源划线价与售价不一致: {sku_id}")
             lineage_sku_refs[sku_id] = spu_id
             origin_sku_keys.add(origin_sku_key)
         lineage_spu_ids.add(spu_id)
@@ -708,6 +1133,7 @@ def validate_catalog(
         )
         origin_keys.add(origin_key)
         origins[origin_platform] += 1
+        self_operated_spus += int(row["origin_is_self_operated"])
 
     spu_ids: set[int] = set()
     chinese_title_count = 0
@@ -762,6 +1188,17 @@ def validate_catalog(
             raise ValueError(f"SKU缺少匹配的采集血缘: {sku_id}")
         if not isinstance(row.get("sku_specs_json"), dict):
             raise ValueError(f"SKU规格不是对象: {sku_id}")
+        if not row["sku_specs_json"]:
+            raise ValueError(f"SKU规格为空: {sku_id}")
+        sku_text = " ".join(
+            [str(row.get("sku_name") or "")]
+            + [
+                f"{key}:{value}"
+                for key, value in row["sku_specs_json"].items()
+            ]
+        )
+        if UI_ARTIFACT_PATTERN.search(sku_text):
+            raise ValueError(f"SKU业务字段包含页面控件文本: {sku_id}")
         refs = (int(row["category_id"]), int(row["brand_id"]), int(row["shop_id"]))
         if refs != spu_refs[spu_id]:
             raise ValueError(f"SKU与SPU维度引用不一致: {sku_id}")
@@ -810,13 +1247,26 @@ def validate_catalog(
         if len(categories) < 100:
             raise ValueError(f"综合电商类目数量异常: {len(categories)}")
         largest_root, largest_count = root_counts.most_common(1)[0]
-        if largest_count / len(spu_ids) > 0.5:
+        if largest_count / len(spu_ids) > 0.35:
             raise ValueError(f"一级类目分布过度集中: {largest_root}={largest_count}")
         largest_brand_id, largest_brand_count = brand_usage.most_common(1)[0]
-        if largest_brand_count / len(spu_ids) > 0.2:
+        if largest_brand_count / len(spu_ids) > 0.1:
             raise ValueError(
                 f"品牌分布过度集中: {largest_brand_id}={largest_brand_count}"
             )
+        self_operated_share = self_operated_spus / len(spu_ids)
+        if not 0.15 <= self_operated_share <= 0.55:
+            raise ValueError(f"自营商品占比异常: {self_operated_share:.4f}")
+        selection = manifest.get("selection", {})
+        if abs(
+            float(selection.get("self_operated_spu_share", -1))
+            - self_operated_share
+        ) > 1e-12:
+            raise ValueError("清单自营商品占比与商品血缘不一致")
+        if float(selection.get("largest_brand_spu_share", 1)) > 0.1:
+            raise ValueError("清单来源品牌分布过度集中")
+        if float(selection.get("largest_store_spu_share", 1)) > 0.2:
+            raise ValueError("清单来源店铺分布过度集中")
     for name, metadata in manifest["artifacts"].items():
         actual_hash = sha256(data_dir / name)
         if actual_hash != metadata["sha256"]:
@@ -825,6 +1275,19 @@ def validate_catalog(
     if not isinstance(source_entries, list) or len(source_entries) != 1:
         raise ValueError("清单必须只包含一个苏宁采集文件")
     resolved_source_data_dir = (source_data_dir or data_dir).resolve()
+    for relative_path, expected_digest in raw_responses.items():
+        raw_path = (resolved_source_data_dir / relative_path).resolve()
+        if (
+            not raw_path.is_relative_to(resolved_source_data_dir)
+            or not raw_path.is_file()
+        ):
+            raise ValueError(f"原始响应归档不存在: {raw_path}")
+        digest = hashlib.sha256()
+        with gzip.open(raw_path, "rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_digest:
+            raise ValueError(f"原始响应归档哈希不一致: {raw_path.name}")
     for source_entry in source_entries:
         if not isinstance(source_entry, dict):
             raise ValueError("清单采集来源不是对象")

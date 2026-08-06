@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import time
+from datetime import timedelta
 
 from src import quality, support
 from src.batches import behavior, commerce, dimensions, marketing, products, snapshots
@@ -69,7 +70,7 @@ def run(ctx: RunContext, args: argparse.Namespace) -> None:
             ctx.as_of_time,
         )
     periods = month_periods(ctx.gen.start_date, ctx.gen.end_date)
-    targets = build_period_targets(ctx.gen, periods)
+    targets = build_period_targets(ctx.gen, periods, ctx.data_end_time)
     checkpoint = checkpoints.latest_completed()
 
     if checkpoint is None:
@@ -104,16 +105,19 @@ def run(ctx: RunContext, args: argparse.Namespace) -> None:
             period_targets.page_views,
             period,
             ctx.gen.start_date,
+            ctx.data_end_time,
         )
         searches_by_day = day_targets(
             period_targets.searches,
             period,
             ctx.gen.start_date,
+            ctx.data_end_time,
         )
         details_by_day = day_targets(
             period_targets.order_details,
             period,
             ctx.gen.start_date,
+            ctx.data_end_time,
         )
         checkpoints.start_period(period)
         writer = support.TableWriter(
@@ -139,6 +143,7 @@ def run(ctx: RunContext, args: argparse.Namespace) -> None:
                 intents = behavior.generate_day(
                     ctx,
                     refs,
+                    state,
                     writer,
                     current_day,
                     batch_id,
@@ -155,14 +160,21 @@ def run(ctx: RunContext, args: argparse.Namespace) -> None:
                     batch_id,
                     intents,
                 )
-                products.generate_shop_score_snapshot(
-                    ctx,
-                    refs,
-                    writer,
-                    current_day,
-                    batch_id,
-                )
                 current_day = current_day.fromordinal(current_day.toordinal() + 1)
+            lifecycle_updates = dimensions.generate_user_lifecycle_updates(
+                ctx,
+                refs,
+                state,
+                writer,
+                support.start_of_day(period.end_date + timedelta(days=1)),
+                batch_id,
+            )
+            if lifecycle_updates:
+                logger.info(
+                    "用户生命周期版本更新 period=%s users=%s",
+                    period.key,
+                    lifecycle_updates,
+                )
             generation_seconds = time.perf_counter() - period_started
             load_started = time.perf_counter()
             row_counts = writer.flush_all()
@@ -178,6 +190,7 @@ def run(ctx: RunContext, args: argparse.Namespace) -> None:
                     state.generated_counts.get(table_name, 0) + count
                 )
             checkpoints.complete_period(period, state, row_counts)
+            refs = load_reference_data(ctx, tables)
             logger.info(
                 "业务月份生成完成 period=%s rows=%s total=%.2fs "
                 "generate=%.2fs flush=%.2fs snapshot=%.2fs "

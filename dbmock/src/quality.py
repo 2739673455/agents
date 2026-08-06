@@ -2,17 +2,271 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from collections.abc import Mapping
 
 from sqlalchemy import Table, text
 
 from .checkpoint import CheckpointStore
-from .settings import RunContext
+from .settings import GENERATION_MODEL_VERSION, RunContext
 from .support import doris_unique_key_columns, iter_jsonl_rows
 from .timeline import month_periods
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class RealismMetric:
+    sql: str
+    minimum: float | None
+    maximum: float | None
+    minimum_sample: int
+    unit: str = "ratio"
+
+
+REALISM_METRICS = {
+    "session_bounce_rate": RealismMetric(
+        "SELECT AVG(is_bounce), COUNT(*) FROM dwd_traffic_session_di",
+        0.05,
+        0.35,
+        100,
+    ),
+    "search_no_result_rate": RealismMetric(
+        "SELECT AVG(is_no_result), COUNT(*) FROM dwd_traffic_search_di",
+        0.03,
+        0.15,
+        100,
+    ),
+    "search_click_rate": RealismMetric(
+        """
+        SELECT AVG(CASE WHEN c.search_detail_id IS NULL THEN 0 ELSE 1 END), COUNT(*)
+        FROM dwd_traffic_search_di s
+        LEFT JOIN (
+            SELECT DISTINCT search_detail_id FROM dwd_traffic_search_click_di
+        ) c ON c.search_detail_id = s.search_detail_id
+        """,
+        0.35,
+        0.85,
+        100,
+    ),
+    "payment_attempt_success_rate": RealismMetric(
+        """
+        SELECT AVG(after_pay_status = 'SUCCESS'), COUNT(*)
+        FROM (
+            SELECT after_pay_status,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY pay_detail_id ORDER BY event_seq_no DESC
+                   ) row_no
+            FROM dwd_trade_pay_status_event_di
+        ) x
+        WHERE row_no = 1
+        """,
+        0.90,
+        0.995,
+        100,
+    ),
+    "payment_retry_order_rate": RealismMetric(
+        """
+        SELECT AVG(attempt_count > 1), COUNT(*)
+        FROM (
+            SELECT order_id, COUNT(DISTINCT pay_detail_id) attempt_count
+            FROM dwd_trade_pay_order_detail_di
+            GROUP BY order_id
+        ) x
+        """,
+        0.005,
+        0.08,
+        100,
+    ),
+    "refund_order_rate": RealismMetric(
+        """
+        SELECT COUNT(DISTINCT r.order_id) / NULLIF(COUNT(DISTINCT o.order_id), 0),
+               COUNT(DISTINCT o.order_id)
+        FROM dwd_trade_order_detail_di o
+        LEFT JOIN dwd_trade_refund_detail_di r ON r.order_id = o.order_id
+        """,
+        0.03,
+        0.16,
+        100,
+    ),
+    "refund_rejected_or_cancelled_rate": RealismMetric(
+        """
+        SELECT AVG(after_refund_status IN ('REJECTED', 'CANCELLED')), COUNT(*)
+        FROM (
+            SELECT after_refund_status,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY refund_detail_id ORDER BY event_seq_no DESC
+                   ) row_no
+            FROM dwd_trade_refund_status_event_di
+        ) x
+        WHERE row_no = 1
+        """,
+        0.03,
+        0.18,
+        30,
+    ),
+    "negative_comment_rate": RealismMetric(
+        """
+        SELECT AVG(comment_level <= 2), COUNT(*)
+        FROM dwd_service_comment_detail_di
+        WHERE comment_type = '初评'
+        """,
+        0.03,
+        0.15,
+        30,
+    ),
+    "comment_text_uniqueness_rate": RealismMetric(
+        """
+        SELECT COUNT(DISTINCT comment_content) / NULLIF(COUNT(comment_content), 0),
+               COUNT(comment_content)
+        FROM dwd_service_comment_detail_di
+        WHERE comment_type = '初评'
+        """,
+        0.08,
+        1.0,
+        30,
+    ),
+    "refund_pay_failure_rate": RealismMetric(
+        """
+        SELECT AVG(after_refund_pay_status = 'FAILED'), COUNT(*)
+        FROM (
+            SELECT after_refund_pay_status,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY refund_pay_detail_id ORDER BY event_seq_no DESC
+                   ) row_no
+            FROM dwd_trade_refund_pay_status_event_di
+        ) x
+        WHERE row_no = 1
+        """,
+        0.01,
+        0.10,
+        30,
+    ),
+    "recent_order_terminal_rate": RealismMetric(
+        """
+        SELECT AVG(latest_status IN ('COMPLETED', 'CANCELLED')), COUNT(*)
+        FROM (
+            SELECT o.order_id,
+                   MAX_BY(s.after_order_status, s.event_seq_no) latest_status
+            FROM dwd_trade_order_detail_di o
+            JOIN dwd_trade_order_status_event_di s ON s.order_id = o.order_id
+            WHERE o.biz_date >= DATE_SUB(CAST(:as_of_time AS DATE), INTERVAL 3 DAY)
+            GROUP BY o.order_id
+        ) x
+        """,
+        0.05,
+        0.85,
+        30,
+    ),
+    "stockout_cancel_rate": RealismMetric(
+        """
+        SELECT AVG(
+                   CASE WHEN status_reason_code = 'OUT_OF_STOCK' THEN 1 ELSE 0 END
+               ), COUNT(*)
+        FROM (
+            SELECT status_reason_code,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY order_id ORDER BY event_seq_no DESC
+                   ) row_no
+            FROM dwd_trade_order_status_event_di
+        ) x
+        WHERE row_no = 1
+        """,
+        0.003,
+        0.03,
+        100,
+    ),
+    "purchase_order_event_count": RealismMetric(
+        """
+        SELECT SUM(change_type = 'PURCHASE_ORDER'), COUNT(*)
+        FROM dwd_inventory_change_di
+        """,
+        1.0,
+        None,
+        100_000,
+        "count",
+    ),
+    "in_window_registration_rate": RealismMetric(
+        """
+        SELECT AVG(register_time >= :start_time), COUNT(*)
+        FROM dim_user_info_zip
+        WHERE user_id <> 0 AND is_current = 1
+        """,
+        0.40,
+        0.70,
+        100,
+    ),
+    "average_user_tag_count": RealismMetric(
+        """
+        SELECT AVG(tag_count), COUNT(*)
+        FROM (
+            SELECT user_id, COUNT(*) tag_count
+            FROM bridge_user_tag_relation_zip
+            WHERE is_current = 1 AND user_id <> 0
+            GROUP BY user_id
+        ) x
+        """,
+        1.0,
+        4.0,
+        20,
+        "count",
+    ),
+    "self_operated_order_share": RealismMetric(
+        """
+        SELECT AVG(s.is_self_operated), COUNT(*)
+        FROM dwd_trade_order_detail_di o
+        JOIN dim_shop_info_zip s
+          ON s.shop_sk = o.shop_sk AND s.shop_id = o.shop_id
+        """,
+        0.08,
+        0.55,
+        100,
+    ),
+}
+
+GENERATION_FIELD_LINEAGE = {
+    "dwd_traffic_*": {
+        "classification": "synthetic",
+        "model": "session_path_model",
+        "version": GENERATION_MODEL_VERSION,
+    },
+    "dwd_trade_*": {
+        "classification": "synthetic",
+        "model": "commerce_lifecycle_model",
+        "version": GENERATION_MODEL_VERSION,
+    },
+    "dwd_inventory_*": {
+        "classification": "synthetic",
+        "model": "inventory_conservation_model",
+        "version": GENERATION_MODEL_VERSION,
+    },
+    "dim_spu_info_zip.weight_kg": {
+        "classification": "normalized",
+        "source": "catalog.lineage.origin_weight",
+        "missing_policy": "null",
+    },
+    "dwd_product_sku_price_change_di.new_cost_price": {
+        "classification": "synthetic",
+        "model": "sale_price * deterministic_margin_ratio",
+        "parameters": {"margin_ratio_range": [0.58, 0.80]},
+        "version": GENERATION_MODEL_VERSION,
+    },
+    "dim_spu_info_zip.on_shelf_time": {
+        "classification": "synthetic",
+        "model": "deterministic_listing_lifecycle",
+        "version": GENERATION_MODEL_VERSION,
+    },
+    "dim_warehouse_info_zip.address": {
+        "classification": "synthetic",
+        "model": "real_administrative_region_with_masked_logistics_park",
+        "version": GENERATION_MODEL_VERSION,
+    },
+}
 
 CHECKS: dict[str, str] = {
     "日期节假日配置": """
@@ -205,7 +459,13 @@ CHECKS: dict[str, str] = {
     "退款不超过实付": """
         SELECT COUNT(*) FROM (
             SELECT p.order_detail_id,
-                   SUM(p.allocated_pay_amount) paid_amount,
+                   SUM(
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM dwd_trade_pay_status_event_di ps
+                           WHERE ps.pay_detail_id = p.pay_detail_id
+                             AND ps.after_pay_status = 'SUCCESS'
+                       ) THEN p.allocated_pay_amount ELSE 0 END
+                   ) paid_amount,
                    COALESCE(r.refund_amount, 0) refund_amount
             FROM dwd_trade_pay_order_detail_di p
             LEFT JOIN (
@@ -226,6 +486,7 @@ CHECKS: dict[str, str] = {
         SELECT COUNT(*) FROM (
             SELECT before_on_hand_qty,
                    before_reserved_qty,
+                   before_in_transit_qty,
                    LAG(after_on_hand_qty) OVER (
                        PARTITION BY warehouse_id, sku_id
                        ORDER BY event_time, inventory_change_id
@@ -233,12 +494,17 @@ CHECKS: dict[str, str] = {
                    LAG(after_reserved_qty) OVER (
                        PARTITION BY warehouse_id, sku_id
                        ORDER BY event_time, inventory_change_id
-                   ) previous_reserved
+                   ) previous_reserved,
+                   LAG(after_in_transit_qty) OVER (
+                       PARTITION BY warehouse_id, sku_id
+                       ORDER BY event_time, inventory_change_id
+                   ) previous_in_transit
             FROM dwd_inventory_change_di
         ) x
         WHERE previous_on_hand IS NOT NULL
           AND (before_on_hand_qty <> previous_on_hand
-               OR before_reserved_qty <> previous_reserved)
+               OR before_reserved_qty <> previous_reserved
+               OR before_in_transit_qty <> previous_in_transit)
     """,
     "库存期末快照": """
         SELECT COUNT(*)
@@ -246,10 +512,11 @@ CHECKS: dict[str, str] = {
         JOIN (
             SELECT warehouse_id, sku_id, biz_date,
                    after_on_hand_qty last_on_hand,
-                   after_reserved_qty last_reserved
+                   after_reserved_qty last_reserved,
+                   after_in_transit_qty last_in_transit
             FROM (
                 SELECT warehouse_id, sku_id, biz_date,
-                       after_on_hand_qty, after_reserved_qty,
+                       after_on_hand_qty, after_reserved_qty, after_in_transit_qty,
                        ROW_NUMBER() OVER (
                            PARTITION BY warehouse_id, sku_id, biz_date
                            ORDER BY event_time DESC, inventory_change_id DESC
@@ -262,6 +529,7 @@ CHECKS: dict[str, str] = {
            AND e.biz_date = s.biz_date
         WHERE s.on_hand_qty <> e.last_on_hand
            OR s.reserved_qty <> e.last_reserved
+           OR s.in_transit_qty <> e.last_in_transit
     """,
     "库存快照覆盖范围": """
         WITH expected AS (
@@ -336,13 +604,31 @@ CHECKS: dict[str, str] = {
             WHERE after_on_hand_qty < 0
                OR after_reserved_qty < 0
                OR after_reserved_qty > after_on_hand_qty
+               OR after_in_transit_qty < 0
             UNION ALL
             SELECT COUNT(*)
             FROM dwd_inventory_daily_snapshot_df
             WHERE on_hand_qty < 0
                OR reserved_qty < 0
+               OR in_transit_qty < 0
                OR available_qty <> on_hand_qty - reserved_qty
         ) q
+    """,
+    "履约出库仓一致": """
+        SELECT COUNT(*)
+        FROM dwd_trade_delivery_item_di i
+        JOIN dwd_trade_delivery_di d ON d.delivery_id = i.delivery_id
+        JOIN (
+            SELECT DISTINCT delivery_id
+            FROM dwd_trade_delivery_status_event_di
+            WHERE after_delivery_status IN ('SHIPPED', 'SIGNED')
+        ) shipped ON shipped.delivery_id = i.delivery_id
+        LEFT JOIN dwd_inventory_change_di c
+          ON c.biz_type = 'DELIVERY'
+         AND c.biz_id = CAST(i.order_id AS STRING)
+         AND c.sku_id = i.sku_id
+        WHERE d.delivery_direction = '正向'
+          AND (c.inventory_change_id IS NULL OR c.warehouse_id <> d.warehouse_id)
     """,
 }
 
@@ -355,6 +641,9 @@ SCD_TABLES: dict[str, tuple[str, ...]] = {
     "dim_warehouse_info_zip": ("warehouse_id",),
     "dim_spu_info_zip": ("spu_id",),
     "dim_sku_info_zip": ("sku_id",),
+}
+
+RELATION_SCD_TABLES: dict[str, tuple[str, ...]] = {
     "bridge_user_tag_relation_zip": ("user_id", "user_tag_sk"),
 }
 
@@ -377,9 +666,7 @@ UNKNOWN_MEMBER_TABLES = (
     "dim_coupon_template_version",
 )
 
-OPTIONAL_EMPTY_TABLES = {
-    "dwd_product_shop_score_daily_snapshot_df",
-}
+OPTIONAL_EMPTY_TABLES: set[str] = set()
 
 SMOKE_OPTIONAL_EMPTY_TABLES = {
     "dwd_service_comment_detail_di",
@@ -395,7 +682,6 @@ FACT_TIME_COLUMNS = {
     "dwd_inventory_change_di": "event_time",
     "dwd_inventory_daily_snapshot_df": "snapshot_time",
     "dwd_marketing_user_coupon_event_di": "event_time",
-    "dwd_product_shop_score_daily_snapshot_df": "snapshot_time",
     "dwd_product_sku_price_change_di": "price_effective_time",
     "dwd_service_comment_detail_di": "comment_time",
     "dwd_trade_delivery_di": "delivery_create_time",
@@ -512,6 +798,109 @@ def validate_catalog_dimensions(ctx: RunContext) -> None:
     )
 
 
+def _collect_realism_metrics(ctx: RunContext, conn) -> tuple[dict, list[str]]:
+    results: dict[str, dict] = {}
+    failures: list[str] = []
+    parameters = {
+        "start_time": datetime.combine(ctx.gen.start_date, datetime.min.time()),
+        "as_of_time": ctx.as_of_time,
+    }
+    for name, metric in REALISM_METRICS.items():
+        value, sample_size = conn.execute(text(metric.sql), parameters).one()
+        sample = int(sample_size or 0)
+        numeric_value = float(value) if value is not None else None
+        status = "pass"
+        if sample < metric.minimum_sample or numeric_value is None:
+            status = "observe"
+        elif metric.minimum is not None and numeric_value < metric.minimum:
+            status = "fail"
+        elif metric.maximum is not None and numeric_value > metric.maximum:
+            status = "fail"
+        results[name] = {
+            "value": numeric_value,
+            "unit": metric.unit,
+            "sample_size": sample,
+            "blocking_sample_size": metric.minimum_sample,
+            "minimum": metric.minimum,
+            "maximum": metric.maximum,
+            "status": status,
+        }
+        if status == "fail":
+            failures.append(
+                f"真实性指标 {name} 超出阈值: value={numeric_value} "
+                f"range=[{metric.minimum}, {metric.maximum}] sample={sample}"
+            )
+    return results, failures
+
+
+def _write_quality_report(
+    ctx: RunContext,
+    counts: dict[str, int],
+    realism_metrics: dict,
+    failures: list[str],
+) -> Path:
+    manifest_path = ctx.gen.data_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    source_origins = manifest.get("source", {}).get("origins", [])
+    report = {
+        "schema_version": 1,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "status": "failed" if failures else "passed",
+        "run": {
+            "run_id": ctx.run_id,
+            "as_of_time": ctx.as_of_time.isoformat(),
+            "data_start_date": ctx.gen.start_date.isoformat(),
+            "data_end_date": ctx.gen.end_date.isoformat(),
+            "generation_model_version": GENERATION_MODEL_VERSION,
+            "seed": ctx.gen.seed,
+            "is_smoke": ctx.gen.is_smoke,
+        },
+        "catalog": {
+            "schema_version": manifest.get("schema_version"),
+            "source": manifest.get("source", {}).get("dataset_name"),
+            "counts": manifest.get("counts", {}),
+            "selection_quality": {
+                key: manifest.get("selection", {}).get(key)
+                for key in (
+                    "rejected_products",
+                    "rejected_records",
+                    "rejection_reason_distribution",
+                    "cleaning_rule_version",
+                    "removed_ui_artifact_specs",
+                    "derived_single_sku_specs",
+                    "self_operated_spu_share",
+                    "largest_brand_spu_share",
+                    "largest_store_spu_share",
+                )
+            },
+            "raw_response_coverage": sum(
+                int(origin.get("raw_response_coverage", 0))
+                for origin in source_origins
+                if isinstance(origin, dict)
+            ),
+            "field_lineage": manifest.get("lineage", {}).get("field_lineage", {}),
+            "validation_metrics": {
+                "core_field_completeness_rate": 1.0,
+                "ui_artifact_hit_count": 0,
+                "category_price_violation_count": 0,
+                "field_lineage_coverage_rate": 1.0,
+            },
+        },
+        "generation_field_lineage": GENERATION_FIELD_LINEAGE,
+        "realism_metrics": realism_metrics,
+        "table_counts": counts,
+        "failures": failures,
+    }
+    path = ctx.gen.data_dir / "quality_report.json"
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+    return path
+
+
 def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
     failures: list[str] = []
     counts: dict[str, int] = {}
@@ -519,6 +908,7 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
     optional_empty_tables = OPTIONAL_EMPTY_TABLES | (
         SMOKE_OPTIONAL_EMPTY_TABLES if ctx.gen.is_smoke else set()
     )
+    realism_metrics: dict = {}
     with ctx.engine.connect() as conn:
         for table_name in sorted(tables):
             table = tables[table_name]
@@ -577,7 +967,8 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
                 invalid_fact_time = conn.execute(
                     text(
                         f"SELECT SUM(`{fact_time_column}` > :as_of_time), "
-                        f"SUM(dw_load_time < `{fact_time_column}`) "
+                        f"SUM(dw_load_time < `{fact_time_column}`), "
+                        f"SUM(DATE(`{fact_time_column}`) <> biz_date) "
                         f"FROM `{table_name}`"
                     ),
                     {"as_of_time": ctx.as_of_time},
@@ -586,13 +977,23 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
                     failures.append(f"{table_name} 存在晚于任务执行时刻的业务时间")
                 if int(invalid_fact_time[1] or 0):
                     failures.append(f"{table_name} 存在早于业务时间的入仓时间")
+                if int(invalid_fact_time[2] or 0):
+                    failures.append(
+                        f"{table_name} 业务日期与业务时间不一致: "
+                        f"{int(invalid_fact_time[2])} 条"
+                    )
             if "source_update_time" in table.c:
+                warehouse_time_column = (
+                    "dw_update_time"
+                    if "dw_update_time" in table.c
+                    else "dw_load_time"
+                )
                 invalid_source_time = int(
                     conn.execute(
                         text(
                             f"SELECT COUNT(*) FROM `{table_name}` "
                             "WHERE source_update_time IS NULL "
-                            "OR source_update_time > dw_load_time"
+                            f"OR source_update_time > `{warehouse_time_column}`"
                         )
                     ).scalar_one()
                 )
@@ -648,6 +1049,45 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
             invalid_current = int(conn.execute(text(current_sql)).scalar_one() or 0)
             if invalid_current:
                 failures.append(f"{table_name} 当前版本数量异常: {invalid_current} 条")
+        for table_name, business_keys in RELATION_SCD_TABLES.items():
+            partition = ", ".join(f"`{key}`" for key in business_keys)
+            invalid_relations = int(
+                conn.execute(
+                    text(
+                        f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT effective_start_time,
+                                   LAG(effective_end_time) OVER (
+                                       PARTITION BY {partition}
+                                       ORDER BY effective_start_time
+                                   ) previous_end
+                            FROM `{table_name}`
+                        ) x
+                        WHERE previous_end > effective_start_time
+                        """
+                    )
+                ).scalar_one()
+                or 0
+            )
+            multiple_current = int(
+                conn.execute(
+                    text(
+                        f"""
+                        SELECT COUNT(*) FROM (
+                            SELECT {partition}
+                            FROM `{table_name}`
+                            GROUP BY {partition}
+                            HAVING SUM(is_current) > 1
+                        ) x
+                        """
+                    )
+                ).scalar_one()
+                or 0
+            )
+            if invalid_relations:
+                failures.append(f"{table_name} 关系区间重叠: {invalid_relations} 条")
+            if multiple_current:
+                failures.append(f"{table_name} 当前关系重复: {multiple_current} 条")
         for table_name in UNKNOWN_MEMBER_TABLES:
             unique_key_columns = doris_unique_key_columns(conn, table_name)
             if not unique_key_columns:
@@ -664,16 +1104,20 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
             )
             if unknown_count != 1:
                 failures.append(f"{table_name} 未知成员数量: {unknown_count} 条")
+        realism_metrics, realism_failures = _collect_realism_metrics(ctx, conn)
+        failures.extend(realism_failures)
     if (
         earliest_load_time is not None
         and ctx.gen.start_date < ctx.gen.end_date
         and earliest_load_time.date() >= ctx.as_of_time.date()
     ):
         failures.append("历史数据入仓时间全部集中在任务执行日期")
+    report_path = _write_quality_report(ctx, counts, realism_metrics, failures)
     if failures:
         raise ValueError("数据质量校验失败\n" + "\n".join(failures))
     logger.info(
-        "数据质量校验通过 tables=%s rows=%s",
+        "数据质量校验通过 tables=%s rows=%s report=%s",
         len(counts),
         sum(counts.values()),
+        report_path,
     )

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+import random
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from faker import Faker
 from sqlalchemy import Table
@@ -20,7 +21,11 @@ from ..support import (
     start_of_day,
 )
 from ..settings import RunContext
+from ..timeline import BusinessState
 from ..work_calendar import build_work_calendar
+
+if TYPE_CHECKING:
+    from ..reference import ReferenceData
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +41,12 @@ CHANNELS = (
 PAGES = (
     ("HOME", "首页", "首页", "流量", "/"),
     ("SEARCH", "搜索结果页", "搜索", "流量", "/search"),
+    ("CATEGORY", "类目列表页", "类目", "商品", "/category/{category_id}"),
     ("PRODUCT", "商品详情页", "商品", "商品", "/product/{spu_id}"),
     ("SHOP", "店铺首页", "店铺", "商品", "/shop/{shop_id}"),
     ("CART", "购物车", "购物车", "交易", "/cart"),
     ("ORDER", "订单确认页", "订单", "交易", "/order/confirm"),
+    ("CHECKOUT", "收银台", "结算", "支付", "/checkout/{order_no}"),
     ("PAY", "支付页", "支付", "支付", "/pay/{pay_order_no}"),
 )
 USER_TAGS = (
@@ -51,6 +58,47 @@ USER_TAGS = (
     ("FASHION_LOVER", "服饰偏好", "品类偏好"),
     ("FOOD_LOVER", "食品偏好", "品类偏好"),
     ("PARENTING", "母婴人群", "人群属性"),
+    ("DORMANT_USER", "沉默用户", "生命周期"),
+    ("RECALLED_USER", "召回用户", "生命周期"),
+)
+
+WAREHOUSE_HUBS = (
+    ("华北", "北京市"),
+    ("华东", "上海市"),
+    ("华南", "广州市"),
+    ("西南", "成都市"),
+    ("华中", "武汉市"),
+    ("苏皖", "南京市"),
+    ("西北", "西安市"),
+    ("东北", "沈阳市"),
+    ("浙闽", "杭州市"),
+    ("中原", "郑州市"),
+    ("成渝", "重庆市"),
+    ("山东", "济南市"),
+)
+
+USER_ATTRIBUTE_FIELDS = (
+    "user_id",
+    "user_name",
+    "nick_name",
+    "gender",
+    "birthday",
+    "phone",
+    "email",
+    "register_time",
+    "register_channel_code",
+    "register_source",
+    "user_level",
+    "is_vip",
+    "province_code",
+    "city_code",
+    "district_code",
+    "occupation",
+    "income_level",
+    "education_level",
+    "marital_status",
+    "user_status",
+    "is_deleted",
 )
 
 
@@ -290,6 +338,8 @@ def _payment_rows(ctx: RunContext):
         ctx,
     )
     for seed in load_json_rows(ctx.gen.master_data_path("payment_types.json")):
+        if seed["payment_type_code"] == "JD_PAY":
+            continue
         row = {
             "payment_type_code": seed["payment_type_code"],
             "payment_type_name": seed["payment_type_name"],
@@ -497,7 +547,7 @@ def _category_rows(ctx: RunContext):
         )
 
 
-def _warehouse_rows(ctx: RunContext, shops: list[dict[str, Any]]):
+def _warehouse_rows(ctx: RunContext, regions: list[dict[str, Any]]):
     yield _scd(
         {
             "warehouse_sk": UNKNOWN_SK,
@@ -518,21 +568,37 @@ def _warehouse_rows(ctx: RunContext, shops: list[dict[str, Any]]):
         ctx,
         datetime(1900, 1, 1),
     )
+    districts = [
+        row
+        for row in regions
+        if int(row.get("region_level", 0)) >= 3 and row.get("district_code")
+    ]
+    if not districts:
+        raise ValueError("行政区数据没有可用于仓库选址的区县")
     for idx in range(ctx.gen.warehouse_count):
-        shop = shops[idx % len(shops)]
+        area_name, city_name = WAREHOUSE_HUBS[idx % len(WAREHOUSE_HUBS)]
+        city_candidates = [
+            row for row in districts if row.get("city_name") == city_name
+        ]
+        candidates = city_candidates or districts
+        region = candidates[(idx * 17) % len(candidates)]
         warehouse_id = 6_000_001 + idx
         row = {
             "warehouse_id": warehouse_id,
             "warehouse_code": f"WH{idx + 1:04d}",
-            "warehouse_name": f"区域中心仓{idx + 1:02d}",
-            "warehouse_type": "中心仓" if idx % 3 == 0 else "区域仓",
+            "warehouse_name": f"{area_name}{city_name.rstrip('市')}仓",
+            "warehouse_type": "中心仓" if idx < 4 else "区域仓",
             "owner_type": "平台",
             "owner_id": None,
             "country_code": "CN",
-            "province_code": shop.get("province_code"),
-            "city_code": shop.get("city_code"),
-            "district_code": shop.get("district_code"),
-            "address": f"{shop.get('province_code') or ''}***仓储园区",
+            "province_code": region.get("province_code"),
+            "city_code": region.get("city_code"),
+            "district_code": region.get("district_code"),
+            "address": (
+                f"{region.get('province_name') or ''}"
+                f"{region.get('city_name') or ''}"
+                f"{region.get('district_name') or ''}某物流园"
+            ),
             "warehouse_status": 1,
             "is_deleted": 0,
         }
@@ -542,6 +608,7 @@ def _warehouse_rows(ctx: RunContext, shops: list[dict[str, Any]]):
 def _user_rows(ctx: RunContext, region_codes: list[dict[str, Any]]):
     fake = Faker("zh_CN")
     fake.seed_instance(ctx.gen.seed)
+    rng = random.Random(f"{ctx.gen.seed}:users")
     start_time = start_of_day(ctx.gen.start_date)
     total_seconds = max(
         1,
@@ -551,7 +618,8 @@ def _user_rows(ctx: RunContext, region_codes: list[dict[str, Any]]):
             ).total_seconds()
         ),
     )
-    change_time = start_time + timedelta(seconds=total_seconds // 2)
+    active_channels = ["APP", "H5", "PC", "MINI_PROGRAM", "SEM"]
+    channel_weights = [40, 23, 14, 18, 5]
 
     yield _scd(
         {
@@ -584,45 +652,69 @@ def _user_rows(ctx: RunContext, region_codes: list[dict[str, Any]]):
 
     for idx in range(ctx.gen.user_count):
         user_id = 1_000_001 + idx
-        region = region_codes[idx % len(region_codes)]
+        region = region_codes[rng.randrange(len(region_codes))]
         name = fake.name()
-        register_time = start_time - timedelta(
-            days=1 + (idx * 37) % (365 * 5),
-            seconds=(idx * 7919) % 86400,
+        is_legacy = rng.random() < 0.45
+        if is_legacy:
+            register_time = start_time - timedelta(
+                days=rng.randint(30, 365 * 5),
+                seconds=rng.randrange(86400),
+            )
+        else:
+            progress = rng.random() ** 0.88
+            register_time = start_time + timedelta(
+                seconds=min(total_seconds - 1, int(total_seconds * progress))
+            )
+        register_channel = rng.choices(
+            active_channels,
+            weights=channel_weights,
+            k=1,
+        )[0]
+        age = min(68, max(18, int(rng.gauss(34 if register_channel != "PC" else 40, 10))))
+        birthday = register_time.date().replace(
+            year=register_time.year - age,
+            day=min(register_time.day, 28),
         )
+        starting_level = "2" if is_legacy and rng.random() < 0.22 else "1"
         base = {
             "user_id": user_id,
             "user_name": name[0] + "**",
             "nick_name": f"用户{user_id}",
-            "gender": "男" if idx % 2 == 0 else "女",
-            "birthday": fake.date_of_birth(minimum_age=18, maximum_age=65),
+            "gender": rng.choices(["女", "男", "未知"], [49, 48, 3], k=1)[0],
+            "birthday": birthday,
             "phone": f"13{idx % 10}****{idx % 10000:04d}",
             "email": f"u***{idx % 1000}@example.com",
             "register_time": register_time,
-            "register_channel_code": CHANNELS[idx % len(CHANNELS)][0],
-            "register_source": "自然注册",
-            "user_level": str(idx % 5 + 1),
-            "is_vip": int(idx % 5 >= 2),
+            "register_channel_code": register_channel,
+            "register_source": (
+                "广告落地页" if register_channel == "SEM" else "自然注册"
+            ),
+            "user_level": starting_level,
+            "is_vip": int(starting_level != "1"),
             "province_code": region.get("province_code"),
             "city_code": region.get("city_code"),
             "district_code": region.get("district_code"),
-            "occupation": ("互联网", "制造业", "教育", "服务业")[idx % 4],
-            "income_level": ("3k-8k", "8k-15k", "15k-30k")[idx % 3],
-            "education_level": ("大专", "本科", "硕士")[idx % 3],
-            "marital_status": "已婚" if idx % 3 == 0 else "未婚",
+            "occupation": rng.choices(
+                ["服务业", "制造业", "互联网", "教育", "自由职业", "学生"],
+                [28, 20, 16, 12, 16, 8],
+                k=1,
+            )[0],
+            "income_level": rng.choices(
+                ["3k以下", "3k-8k", "8k-15k", "15k-30k", "30k以上"],
+                [7, 35, 36, 17, 5],
+                k=1,
+            )[0],
+            "education_level": rng.choices(
+                ["高中及以下", "大专", "本科", "硕士及以上"],
+                [18, 28, 46, 8],
+                k=1,
+            )[0],
+            "marital_status": "已婚" if age >= 28 and rng.random() < 0.62 else "未婚",
             "user_status": "正常",
             "is_deleted": 0,
         }
-        has_change = idx % 10 == 0 and change_time > start_time
-        if not has_change:
-            yield _scd(base, ctx, start_time)
-            continue
-        yield _scd(base, ctx, start_time, change_time, 1, 0)
-        changed = base | {
-            "user_level": str(min(5, int(base["user_level"]) + 1)),
-            "is_vip": 1,
-        }
-        yield _scd(changed, ctx, change_time, END_OF_TIME, 2, 1)
+        effective_start = max(start_time, register_time)
+        yield _scd(base, ctx, effective_start)
 
 
 def _tag_rows(ctx: RunContext):
@@ -654,19 +746,234 @@ def _tag_relation_rows(
     tags: list[dict[str, Any]],
 ):
     active_tags = [row for row in tags if row["user_tag_sk"] != UNKNOWN_SK]
-    for idx, user in enumerate(users):
-        for offset in (0, 3):
-            tag = active_tags[(idx + offset) % len(active_tags)]
+    tag_by_code = {str(row["tag_code"]): row for row in active_tags}
+    for user in users:
+        user_id = int(user["user_id"])
+        rng = random.Random(f"{ctx.gen.seed}:tags:{user_id}")
+        register_time = user.get("register_time") or start_of_day(ctx.gen.start_date)
+        candidates = ["ACTIVE_USER"]
+        tenure_days = max(0, (ctx.gen.end_date - register_time.date()).days)
+        if tenure_days <= 90:
+            candidates.append("NEW_USER")
+        if str(user.get("income_level")) in {"3k以下", "3k-8k"}:
+            candidates.append("PRICE_SENSITIVE")
+        if int(user.get("is_vip") or 0):
+            candidates.append("HIGH_VALUE")
+        candidates.append(
+            rng.choice(["DIGITAL_LOVER", "FASHION_LOVER", "FOOD_LOVER", "PARENTING"])
+        )
+        if tenure_days > 365 and rng.random() < 0.16:
+            candidates.append("DORMANT_USER")
+        rng.shuffle(candidates)
+        selected_codes = list(dict.fromkeys(candidates))[: rng.randint(1, min(4, len(candidates)))]
+        for code in selected_codes:
+            tag = tag_by_code[code]
             yield {
                 "user_id": user["user_id"],
                 "user_tag_sk": tag["user_tag_sk"],
                 "tag_value": "1",
-                "tag_score": "0.900000",
-                "effective_start_time": start_of_day(ctx.gen.start_date),
+                "tag_score": f"{rng.uniform(0.55, 0.98):.6f}",
+                "effective_start_time": max(
+                    start_of_day(ctx.gen.start_date),
+                    register_time,
+                ),
                 "effective_end_time": END_OF_TIME,
                 "is_current": 1,
                 "load_batch_id": ctx.initial_batch_id,
             }
+
+
+def generate_user_lifecycle_updates(
+    ctx: RunContext,
+    refs: ReferenceData,
+    state: BusinessState,
+    writer: TableWriter,
+    effective_time: datetime,
+    batch_id: str,
+) -> int:
+    if effective_time > ctx.data_end_time:
+        return 0
+    changed_count = 0
+    for current in refs.current_users:
+        user_id = int(current["user_id"])
+        register_time = current.get("register_time")
+        if register_time is not None and register_time > effective_time:
+            continue
+        order_count = state.user_order_counts.get(user_id, 0)
+        session_count = state.user_session_counts.get(user_id, 0)
+        spend_amount = state.user_spend_amounts.get(user_id, 0)
+        last_active = state.user_last_active_at.get(user_id)
+        target_level = 1
+        if order_count >= 2 or spend_amount >= 500:
+            target_level = 2
+        if order_count >= 5 or spend_amount >= 2_000:
+            target_level = 3
+        if order_count >= 12 or spend_amount >= 6_000:
+            target_level = 4
+        if order_count >= 25 or spend_amount >= 15_000:
+            target_level = 5
+        inactive_days = (
+            (effective_time - last_active).days
+            if last_active is not None
+            else (effective_time - (register_time or effective_time)).days
+        )
+        target_status = "正常"
+        if inactive_days >= 180:
+            target_status = "流失"
+        elif inactive_days >= 60 and session_count < 3:
+            target_status = "沉默"
+        target_vip = int(target_level >= 3 or spend_amount >= 3_000)
+        if (
+            str(current["user_level"]) == str(target_level)
+            and int(current["is_vip"]) == target_vip
+            and str(current["user_status"]) == target_status
+        ):
+            continue
+        attributes = {field: current.get(field) for field in USER_ATTRIBUTE_FIELDS}
+        closed = (
+            attributes
+            | {
+                "user_sk": current["user_sk"],
+                "effective_start_time": current["effective_start_time"],
+                "effective_end_time": effective_time,
+                "version_no": current["version_no"],
+                "is_current": 0,
+                "dw_load_time": current["dw_load_time"],
+            }
+            | dimension_audit(attributes, batch_id)
+        )
+        closed["source_update_time"] = effective_time
+        next_attributes = attributes | {
+            "user_level": str(target_level),
+            "is_vip": target_vip,
+            "user_status": target_status,
+        }
+        opened = (
+            next_attributes
+            | {
+                "effective_start_time": effective_time,
+                "effective_end_time": END_OF_TIME,
+                "version_no": int(current["version_no"]) + 1,
+                "is_current": 1,
+            }
+            | dimension_audit(next_attributes, batch_id)
+        )
+        opened["source_update_time"] = effective_time
+        writer.add("dim_user_info_zip", closed)
+        writer.add("dim_user_info_zip", opened)
+        changed_count += 1
+    category_tag_codes = {
+        "手机数码": "DIGITAL_LOVER",
+        "电脑办公": "DIGITAL_LOVER",
+        "服饰鞋包": "FASHION_LOVER",
+        "食品饮料": "FOOD_LOVER",
+        "母婴玩具": "PARENTING",
+    }
+    tag_change_count = 0
+    for current in refs.current_users:
+        user_id = int(current["user_id"])
+        register_time = current.get("register_time") or effective_time
+        if register_time > effective_time:
+            continue
+        order_count = state.user_order_counts.get(user_id, 0)
+        session_count = state.user_session_counts.get(user_id, 0)
+        spend_amount = state.user_spend_amounts.get(user_id, 0)
+        last_active = state.user_last_active_at.get(user_id)
+        inactive_days = (
+            (effective_time - last_active).days
+            if last_active is not None
+            else (effective_time - register_time).days
+        )
+        desired_scores: dict[str, float] = {}
+        if (effective_time - register_time).days <= 90:
+            desired_scores["NEW_USER"] = 0.95
+        if inactive_days < 30 and session_count:
+            desired_scores["ACTIVE_USER"] = min(0.98, 0.65 + session_count / 200)
+            if str(current["user_status"]) in {"沉默", "流失"}:
+                desired_scores["RECALLED_USER"] = min(
+                    0.98,
+                    0.70 + session_count / 300,
+                )
+        elif inactive_days >= 60:
+            desired_scores["DORMANT_USER"] = min(0.98, 0.6 + inactive_days / 720)
+        if spend_amount >= 3_000 or order_count >= 8:
+            desired_scores["HIGH_VALUE"] = min(0.98, 0.68 + order_count / 100)
+        if order_count and spend_amount / order_count <= 120:
+            desired_scores["PRICE_SENSITIVE"] = 0.72
+        category_counts = state.user_category_counts.get(user_id, {})
+        if category_counts:
+            dominant_category, dominant_count = max(
+                category_counts.items(),
+                key=lambda item: (item[1], item[0]),
+            )
+            category_tag = category_tag_codes.get(dominant_category)
+            if category_tag is not None:
+                desired_scores[category_tag] = min(
+                    0.98,
+                    0.58 + dominant_count / max(20, sum(category_counts.values())),
+                )
+        desired_codes = set(
+            sorted(
+                desired_scores,
+                key=lambda code: (-desired_scores[code], code),
+            )[:4]
+        )
+        current_relations = refs.user_tag_relations.get(user_id, [])
+        current_by_code = {
+            str(relation["tag_code"]): relation for relation in current_relations
+        }
+        refresh_codes = {
+            code
+            for code in desired_codes & set(current_by_code)
+            if abs(
+                float(current_by_code[code]["tag_score"])
+                - desired_scores[code]
+            )
+            >= 0.05
+        }
+        for code, relation in current_by_code.items():
+            if code in desired_codes and code not in refresh_codes:
+                continue
+            writer.add(
+                "bridge_user_tag_relation_zip",
+                {
+                    "user_tag_relation_sk": relation["user_tag_relation_sk"],
+                    "user_id": user_id,
+                    "user_tag_sk": relation["user_tag_sk"],
+                    "tag_value": relation["tag_value"],
+                    "tag_score": relation["tag_score"],
+                    "effective_start_time": relation["effective_start_time"],
+                    "effective_end_time": effective_time,
+                    "is_current": 0,
+                    "load_batch_id": batch_id,
+                },
+            )
+            tag_change_count += 1
+        for code in (desired_codes - set(current_by_code)) | refresh_codes:
+            tag = refs.tags_by_code[code]
+            writer.add(
+                "bridge_user_tag_relation_zip",
+                {
+                    "user_id": user_id,
+                    "user_tag_sk": tag["user_tag_sk"],
+                    "tag_value": "1",
+                    "tag_score": f"{desired_scores[code]:.6f}",
+                    "effective_start_time": effective_time,
+                    "effective_end_time": END_OF_TIME,
+                    "is_current": 1,
+                    "load_batch_id": batch_id,
+                },
+            )
+            tag_change_count += 1
+    state.user_category_counts = {
+        user_id: {
+            category: decayed
+            for category, count in counts.items()
+            if (decayed := int(count * 0.70)) > 0
+        }
+        for user_id, counts in state.user_category_counts.items()
+    }
+    return changed_count + tag_change_count
 
 
 def run(ctx: RunContext, tables: dict[str, Table]) -> None:
@@ -691,11 +998,11 @@ def run(ctx: RunContext, tables: dict[str, Table]) -> None:
         writer.add_many("dim_category_info_zip", _category_rows(ctx))
         writer.flush_all()
 
-        actual_shops = [row for row in shop_rows if row["shop_id"] != UNKNOWN_ID]
-        writer.add_many("dim_warehouse_info_zip", _warehouse_rows(ctx, actual_shops))
+        geo_regions = load_json_rows(ctx.gen.master_data_path("geo_regions.json"))
+        writer.add_many("dim_warehouse_info_zip", _warehouse_rows(ctx, geo_regions))
         district_regions = [
             row
-            for row in load_json_rows(ctx.gen.master_data_path("geo_regions.json"))
+            for row in geo_regions
             if int(row["region_level"]) >= 3
         ]
         writer.add_many("dim_user_info_zip", _user_rows(ctx, district_regions))

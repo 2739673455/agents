@@ -67,6 +67,7 @@ class TimelineTest(unittest.TestCase):
         intents = behavior.generate_day(
             cast(RunContext, ctx),
             refs,
+            state,
             writer,
             day,
             "TEST-2026-08",
@@ -82,13 +83,6 @@ class TimelineTest(unittest.TestCase):
             day,
             "TEST-2026-08",
             intents,
-        )
-        products.generate_shop_score_snapshot(
-            cast(RunContext, ctx),
-            refs,
-            writer,
-            day,
-            "TEST-2026-08",
         )
         writer.flush_all()
 
@@ -119,10 +113,47 @@ class TimelineTest(unittest.TestCase):
             len(rows["dwd_inventory_change_di"]),
             len(refs.profiles),
         )
-        self.assertEqual(
-            len(rows["dwd_product_shop_score_daily_snapshot_df"]),
-            len(refs.shops),
+
+    def test_behavior_events_stay_within_the_business_day(self) -> None:
+        day = date(2026, 7, 31)
+        ctx = _context(day)
+        refs = _references(day)
+        state = BusinessState()
+        loader = FakeLoader()
+        writer = TableWriter(
+            cast(Any, loader),
+            20_000,
+            1,
+            day,
+            cast(Any, ctx).as_of_time,
         )
+
+        intents = behavior.generate_day(
+            cast(RunContext, ctx),
+            refs,
+            state,
+            writer,
+            day,
+            "TEST-2026-07",
+            10_000,
+            500,
+            300,
+        )
+        writer.flush_all()
+
+        self.assertTrue(intents)
+        self.assertTrue(all(intent.order_time.date() == day for intent in intents))
+        for table_name in (
+            "dwd_traffic_session_di",
+            "dwd_traffic_page_view_di",
+            "dwd_traffic_search_di",
+            "dwd_traffic_search_click_di",
+            "dwd_interaction_cart_event_di",
+            "dwd_interaction_favor_event_di",
+        ):
+            for row in loader.rows[table_name]:
+                event_time = row.get("event_time") or row["session_end_time"]
+                self.assertEqual(event_time.date(), row["biz_date"])
 
     def test_cross_month_facts_are_loaded_when_the_event_becomes_due(self) -> None:
         july_day = date(2026, 7, 31)
@@ -279,6 +310,8 @@ def _references(day: date) -> ReferenceData:
         "user_id": 1,
         "user_name": "用**",
         "phone": "138****0000",
+        "birthday": date(1990, 1, 1),
+        "register_time": datetime(2020, 1, 1),
         "district_code": "110101",
         "effective_start_time": datetime(2020, 1, 1),
         "effective_end_time": END_OF_TIME,
@@ -289,10 +322,17 @@ def _references(day: date) -> ReferenceData:
         "shop_id": 1,
         "seller_id": 1,
         "is_cross_border": 0,
+        "is_self_operated": 0,
+        "province_code": "110000",
     }
     seller = {"seller_sk": 1, "seller_id": 1}
-    category = {"category_sk": 1, "category_id": 1}
-    brand = {"brand_sk": 1, "brand_id": 1}
+    category = {
+        "category_sk": 1,
+        "category_id": 1,
+        "category_name": "测试类目",
+        "root_category_name": "手机数码",
+    }
+    brand = {"brand_sk": 1, "brand_id": 1, "brand_name": "测试品牌"}
     profiles = []
     for index in range(3):
         sku_id = index + 1
@@ -326,7 +366,16 @@ def _references(day: date) -> ReferenceData:
     pages = {
         page_id: {"page_sk": index + 1, "page_id": page_id}
         for index, page_id in enumerate(
-            ("HOME", "SEARCH", "PRODUCT", "SHOP", "CART", "ORDER")
+            (
+                "HOME",
+                "SEARCH",
+                "CATEGORY",
+                "PRODUCT",
+                "SHOP",
+                "CART",
+                "ORDER",
+                "CHECKOUT",
+            )
         )
     }
     promotion = {
@@ -360,6 +409,9 @@ def _references(day: date) -> ReferenceData:
     return ReferenceData(
         user_versions={1: [user]},
         current_users=[user],
+        user_registration_times=[user["register_time"]],
+        tags_by_code={},
+        user_tag_relations={},
         shops=[shop],
         shop_by_id={1: shop},
         sellers_by_id={1: seller},
@@ -409,14 +461,6 @@ def _references(day: date) -> ReferenceData:
                     "is_excluded": 0,
                 }
             ]
-        },
-        shop_seeds_by_id={
-            1: {
-                "shop_id": 1,
-                "service_score": Decimal("4.8"),
-                "logistics_score": Decimal("4.7"),
-                "description_score": Decimal("4.9"),
-            }
         },
         profiles=profiles,
         profile_by_sku={int(row.sku["sku_id"]): row for row in profiles},

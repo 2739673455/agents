@@ -95,6 +95,7 @@ daily_ending AS (
            biz_date,
            MAX_BY(after_on_hand_qty, inventory_change_id) AS on_hand_qty,
            MAX_BY(after_reserved_qty, inventory_change_id) AS reserved_qty,
+           MAX_BY(after_in_transit_qty, inventory_change_id) AS in_transit_qty,
            MAX_BY(unit_cost, inventory_change_id) AS unit_cost
     FROM dwd_inventory_change_di
     WHERE biz_date BETWEEN :period_start AND :period_end
@@ -105,6 +106,7 @@ opening AS (
            sku_id,
            MAX_BY(after_on_hand_qty, inventory_change_id) AS on_hand_qty,
            MAX_BY(after_reserved_qty, inventory_change_id) AS reserved_qty,
+           MAX_BY(after_in_transit_qty, inventory_change_id) AS in_transit_qty,
            MAX_BY(unit_cost, inventory_change_id) AS unit_cost
     FROM dwd_inventory_change_di
     WHERE biz_date < :period_start
@@ -135,7 +137,11 @@ seeded AS (
            CASE
                WHEN e.biz_date IS NOT NULL THEN e.unit_cost
                WHEN c.full_date = c.first_date THEN o.unit_cost
-           END AS unit_cost_seed
+           END AS unit_cost_seed,
+           CASE
+               WHEN e.biz_date IS NOT NULL THEN e.in_transit_qty
+               WHEN c.full_date = c.first_date THEN o.in_transit_qty
+           END AS in_transit_seed
     FROM calendar c
     LEFT JOIN daily_ending e
       ON e.warehouse_id = c.warehouse_id
@@ -161,7 +167,12 @@ computed AS (
                PARTITION BY warehouse_id, sku_id
                ORDER BY full_date
                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-           ) AS unit_cost
+           ) AS unit_cost,
+           LAST_VALUE(in_transit_seed, TRUE) OVER (
+               PARTITION BY warehouse_id, sku_id
+               ORDER BY full_date
+               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+           ) AS in_transit_qty
     FROM seeded
 ),
 snapshot_rows AS (
@@ -177,7 +188,7 @@ snapshot_rows AS (
            on_hand_qty,
            reserved_qty,
            on_hand_qty - reserved_qty AS available_qty,
-           0 AS in_transit_qty,
+           in_transit_qty,
            unit_cost,
            ROUND(unit_cost * on_hand_qty, 4) AS inventory_cost_amount,
            'CNY' AS currency_code,
