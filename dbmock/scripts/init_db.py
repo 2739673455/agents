@@ -1,13 +1,12 @@
-"""初始化模拟业务数据库"""
+"""初始化 Doris 业务数据库"""
 
 import logging
 import os
+import re
 from pathlib import Path
 
 import dotenv
 import pymysql
-from sqlacodegen.generators import DeclarativeGenerator
-from sqlalchemy import MetaData, create_engine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,111 +14,81 @@ logger = logging.getLogger(__name__)
 ROOT_DIR = Path(__file__).parents[1]
 ENV_FILE = ROOT_DIR / ".env"
 SQL_DIR = ROOT_DIR / "scripts" / "sql"
-ENTITIES_DIR = ROOT_DIR / "src" / "entities"
 
 
-class MySQLInitializer:
-    """MySQL 数据库初始化器"""
+class DorisInitializer:
+    """Doris 数据库初始化器"""
 
     def __init__(self, host: str, port: int, user: str, password: str) -> None:
-        """初始化 MySQL 连接配置"""
-        self._sync_db_url = f"mysql+pymysql://{user}:{password}@{host}:{port}"
         self._conn_conf = {
             "host": host,
             "port": port,
             "user": user,
             "password": password,
+            "autocommit": True,
+            "charset": "utf8mb4",
         }
 
+    @staticmethod
+    def _identifier(database: str) -> str:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", database):
+            raise ValueError(f"Doris 数据库名无效: {database}")
+        return f"`{database}`"
+
     def delete_db(self, db_name: str) -> None:
-        """删除数据库"""
-        conn = None
+        identifier = self._identifier(db_name)
         try:
-            conn = pymysql.connect(**self._conn_conf, autocommit=True)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA "
-                    "WHERE SCHEMA_NAME = %s",
-                    (db_name,),
-                )
-                if cur.fetchone() is None:
-                    logger.info("数据库 %s 不存在，无需删除", db_name)
-                    return
-                cur.execute(f"DROP DATABASE `{db_name}`")
-                logger.info("数据库 %s 删除成功", db_name)
+            with (
+                pymysql.connect(**self._conn_conf) as connection,
+                connection.cursor() as cursor,
+            ):
+                cursor.execute(f"DROP DATABASE IF EXISTS {identifier}")
+            logger.info("数据库 %s 删除成功", db_name)
         except pymysql.MySQLError:
             logger.exception("数据库 %s 删除失败", db_name)
             raise
-        finally:
-            if conn is not None:
-                conn.close()
 
     def create_db(self, db_name: str) -> None:
-        """创建数据库"""
-        conn = None
+        identifier = self._identifier(db_name)
         try:
-            conn = pymysql.connect(**self._conn_conf, autocommit=True)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA "
-                    "WHERE SCHEMA_NAME = %s",
-                    (db_name,),
-                )
-                if cur.fetchone() is not None:
-                    logger.info("数据库 %s 已存在，无需创建", db_name)
-                    return
-                cur.execute(f"CREATE DATABASE `{db_name}` CHARACTER SET utf8mb4")
-                logger.info("数据库 %s 创建成功", db_name)
+            with (
+                pymysql.connect(**self._conn_conf) as connection,
+                connection.cursor() as cursor,
+            ):
+                cursor.execute(f"CREATE DATABASE {identifier}")
+            logger.info("数据库 %s 创建成功", db_name)
         except pymysql.MySQLError:
             logger.exception("数据库 %s 创建失败", db_name)
             raise
-        finally:
-            if conn is not None:
-                conn.close()
 
     def exec_sql_file(self, db_name: str, sql_file_path: Path) -> None:
-        """执行 SQL 文件"""
-        sql = sql_file_path.read_text(encoding="utf-8")
         statements = [
-            statement.strip() for statement in sql.split(";") if statement.strip()
+            statement.strip()
+            for statement in sql_file_path.read_text(encoding="utf-8").split(";")
+            if statement.strip()
         ]
-        conn = None
+        if not statements:
+            raise ValueError(f"Doris 建表脚本为空: {sql_file_path}")
         try:
-            conn = pymysql.connect(**self._conn_conf, database=db_name)
-            conn.begin()
-            with conn.cursor() as cur:
+            with (
+                pymysql.connect(
+                    **self._conn_conf,
+                    database=db_name,
+                ) as connection,
+                connection.cursor() as cursor,
+            ):
                 for statement in statements:
-                    cur.execute(statement)
-            conn.commit()
+                    cursor.execute(statement)
             logger.info("%s 执行成功", sql_file_path.name)
         except pymysql.MySQLError:
-            if conn is not None:
-                conn.rollback()
             logger.exception("%s 执行失败", sql_file_path.name)
             raise
-        finally:
-            if conn is not None:
-                conn.close()
-
-    def gen_tb_model(self, db_name: str, output_path: Path) -> None:
-        """通过反射数据库结构自动生成 SQLAlchemy ORM 模型代码"""
-        engine = create_engine(f"{self._sync_db_url}/{db_name}")
-        try:
-            metadata = MetaData()
-            metadata.reflect(engine)
-            generator = DeclarativeGenerator(metadata, engine, [])
-            code = generator.generate()
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(code, encoding="utf-8")
-            logger.info("SQLAlchemy ORM 模型代码已生成到 %s", output_path)
-        finally:
-            engine.dispose()
 
 
 if __name__ == "__main__":
     dotenv.load_dotenv(ENV_FILE)
     db_name = os.environ["DB_NAME"]
-    db_initializer = MySQLInitializer(
+    db_initializer = DorisInitializer(
         host=os.environ["DB_HOST"],
         port=int(os.environ["DB_PORT"]),
         user=os.environ["DB_USER"],
@@ -128,4 +97,3 @@ if __name__ == "__main__":
     db_initializer.delete_db(db_name)
     db_initializer.create_db(db_name)
     db_initializer.exec_sql_file(db_name, SQL_DIR / "ecommerce.sql")
-    db_initializer.gen_tb_model(db_name, ENTITIES_DIR / "ecommerce.py")

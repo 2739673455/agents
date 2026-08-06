@@ -47,14 +47,14 @@ lm_config:
   active: deepseek-v4-flash-openrouter
   models:
     deepseek-v4-flash-openrouter:
-      model: deepseek/deepseek-v4-flash
+      model: deepseek/deepseek-v4-flash-0731
       base_url: https://openrouter.ai/api/v1
       api_key: ${oc.env:OPENROUTER_API_KEY}
       params: {}
       profile:
         max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值
     qwen3.6-plus-openrouter:
-      model: qwen/qwen3.6-plus
+      model: qwen/qwen3.7-flash
       base_url: https://openrouter.ai/api/v1
       api_key: ${oc.env:OPENROUTER_API_KEY}
       params: {}

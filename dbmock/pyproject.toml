@@ -1,9 +1,10 @@
 [project]
 dependencies = [
   "faker>=37.0.0",
+  "httpx>=0.28.1",
   "pymysql>=1.1.2",
   "python-dotenv>=1.2.2",
-  "sqlacodegen>=4.0.2",
+  "scrapling>=0.4.12",
   "sqlalchemy>=2.0.48",
 ]
 description = "造业务数据"
