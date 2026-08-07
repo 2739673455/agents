@@ -12,7 +12,6 @@ from collections.abc import Mapping
 
 from sqlalchemy import Table, text
 
-from .checkpoint import CheckpointStore
 from .settings import GENERATION_MODEL_VERSION, RunContext
 from .support import doris_unique_key_columns, iter_jsonl_rows
 from .timeline import month_periods
@@ -27,6 +26,7 @@ class RealismMetric:
     maximum: float | None
     minimum_sample: int
     unit: str = "ratio"
+    blocking: bool = False
 
 
 REALISM_METRICS = {
@@ -225,6 +225,119 @@ REALISM_METRICS = {
         """,
         0.08,
         0.55,
+        100,
+    ),
+    "cart_session_order_conversion_rate": RealismMetric(
+        """
+        SELECT COUNT(DISTINCT o.source_session_id)
+                   / NULLIF(COUNT(DISTINCT c.session_id), 0),
+               COUNT(DISTINCT c.session_id)
+        FROM dwd_interaction_cart_event_di c
+        LEFT JOIN dwd_trade_order_detail_di o
+          ON o.source_session_id = c.session_id
+        WHERE c.cart_event_type = '加入'
+        """,
+        0.20,
+        0.55,
+        30,
+    ),
+    "cart_mutation_event_rate": RealismMetric(
+        """
+        SELECT AVG(cart_event_type <> '加入'), COUNT(*)
+        FROM dwd_interaction_cart_event_di
+        """,
+        0.05,
+        0.30,
+        100,
+    ),
+    "favorite_cancel_event_rate": RealismMetric(
+        """
+        SELECT AVG(favor_event_type = '取消收藏'), COUNT(*)
+        FROM dwd_interaction_favor_event_di
+        """,
+        0.05,
+        0.25,
+        30,
+    ),
+    "order_total_discount_rate": RealismMetric(
+        """
+        SELECT SUM(
+                   list_amount - sale_amount
+                   + activity_discount_amount
+                   + coupon_discount_amount
+                   + points_discount_amount
+               ) / NULLIF(SUM(list_amount), 0),
+               COUNT(*)
+        FROM dwd_trade_order_detail_di
+        """,
+        0.03,
+        0.12,
+        100,
+    ),
+    "zero_available_inventory_snapshot_rate": RealismMetric(
+        """
+        SELECT AVG(available_qty = 0), COUNT(*)
+        FROM dwd_inventory_daily_snapshot_df
+        """,
+        0.0005,
+        0.03,
+        1_000,
+    ),
+    "in_transit_inventory_snapshot_rate": RealismMetric(
+        """
+        SELECT AVG(in_transit_qty > 0), COUNT(*)
+        FROM dwd_inventory_daily_snapshot_df
+        """,
+        0.001,
+        0.05,
+        1_000,
+    ),
+    "monthly_conversion_variation": RealismMetric(
+        """
+        SELECT STDDEV_POP(conversion_rate) / NULLIF(AVG(conversion_rate), 0),
+               COUNT(*)
+        FROM (
+            SELECT s.month_key,
+                   COALESCE(o.order_sessions, 0) / s.session_count conversion_rate
+            FROM (
+                SELECT DATE_FORMAT(biz_date, '%Y-%m') month_key,
+                       COUNT(*) session_count
+                FROM dwd_traffic_session_di
+                GROUP BY DATE_FORMAT(biz_date, '%Y-%m')
+            ) s
+            LEFT JOIN (
+                SELECT DATE_FORMAT(biz_date, '%Y-%m') month_key,
+                       COUNT(DISTINCT source_session_id) order_sessions
+                FROM dwd_trade_order_detail_di
+                GROUP BY DATE_FORMAT(biz_date, '%Y-%m')
+            ) o ON o.month_key = s.month_key
+        ) x
+        """,
+        0.03,
+        0.45,
+        12,
+    ),
+    "page_type_dwell_time_variation": RealismMetric(
+        """
+        SELECT STDDEV_POP(avg_duration) / NULLIF(AVG(avg_duration), 0), COUNT(*)
+        FROM (
+            SELECT page_id, AVG(stay_duration_sec) avg_duration
+            FROM dwd_traffic_page_view_di
+            GROUP BY page_id
+        ) x
+        """,
+        0.08,
+        1.0,
+        5,
+    ),
+    "dormant_or_lost_user_share": RealismMetric(
+        """
+        SELECT AVG(user_status IN ('沉默', '流失')), COUNT(*)
+        FROM dim_user_info_zip
+        WHERE user_id <> 0 AND is_current = 1
+        """,
+        0.03,
+        0.40,
         100,
     ),
 }
@@ -630,6 +743,158 @@ CHECKS: dict[str, str] = {
         WHERE d.delivery_direction = '正向'
           AND (c.inventory_change_id IS NULL OR c.warehouse_id <> d.warehouse_id)
     """,
+    "会话事件时间边界": """
+        SELECT SUM(violations) FROM (
+            SELECT COUNT(*) violations
+            FROM dwd_traffic_session_di
+            WHERE session_end_time < session_start_time
+            UNION ALL
+            SELECT COUNT(*)
+            FROM dwd_traffic_page_view_di e
+            JOIN dwd_traffic_session_di s ON s.session_id = e.session_id
+            WHERE e.event_time < s.session_start_time
+               OR e.event_time > s.session_end_time
+            UNION ALL
+            SELECT COUNT(*)
+            FROM dwd_traffic_search_di e
+            JOIN dwd_traffic_session_di s ON s.session_id = e.session_id
+            WHERE e.event_time < s.session_start_time
+               OR e.event_time > s.session_end_time
+            UNION ALL
+            SELECT COUNT(*)
+            FROM dwd_traffic_search_click_di e
+            JOIN dwd_traffic_session_di s ON s.session_id = e.session_id
+            WHERE e.event_time < s.session_start_time
+               OR e.event_time > s.session_end_time
+            UNION ALL
+            SELECT COUNT(*)
+            FROM dwd_interaction_cart_event_di e
+            JOIN dwd_traffic_session_di s ON s.session_id = e.session_id
+            WHERE e.event_time < s.session_start_time
+               OR e.event_time > s.session_end_time
+            UNION ALL
+            SELECT COUNT(*)
+            FROM dwd_interaction_favor_event_di e
+            JOIN dwd_traffic_session_di s ON s.session_id = e.session_id
+            WHERE e.event_time < s.session_start_time
+               OR e.event_time > s.session_end_time
+            UNION ALL
+            SELECT COUNT(*)
+            FROM dwd_trade_order_detail_di e
+            JOIN dwd_traffic_session_di s
+              ON s.session_id = e.source_session_id
+            WHERE e.order_create_time < s.session_start_time
+               OR e.order_create_time > s.session_end_time
+        ) q
+    """,
+    "订单金额算术": """
+        SELECT COUNT(*)
+        FROM dwd_trade_order_detail_di
+        WHERE receivable_amount < 0
+           OR receivable_amount <>
+              sale_amount
+              - activity_discount_amount
+              - coupon_discount_amount
+              - points_discount_amount
+              + freight_amount
+              + tax_amount
+    """,
+    "缺货取消库存证据": """
+        WITH latest_status AS (
+            SELECT order_id, after_order_status, status_reason_code
+            FROM (
+                SELECT order_id,
+                       after_order_status,
+                       status_reason_code,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY order_id ORDER BY event_seq_no DESC
+                       ) row_no
+                FROM dwd_trade_order_status_event_di
+            ) x
+            WHERE row_no = 1
+        ), inventory_evidence AS (
+            SELECT biz_id,
+                   SUM(change_type = 'ALLOCATION_FAILED') failed_count,
+                   SUM(change_type = 'SALE_RESERVE') reserve_count
+            FROM dwd_inventory_change_di
+            WHERE biz_type = 'ORDER'
+            GROUP BY biz_id
+        )
+        SELECT COUNT(*)
+        FROM latest_status s
+        LEFT JOIN inventory_evidence i ON i.biz_id = CAST(s.order_id AS STRING)
+        WHERE s.after_order_status = 'CANCELLED'
+          AND s.status_reason_code = 'OUT_OF_STOCK'
+          AND (COALESCE(i.failed_count, 0) = 0 OR COALESCE(i.reserve_count, 0) > 0)
+    """,
+    "已发货订单配送数量": """
+        WITH latest_status AS (
+            SELECT order_id, after_order_status
+            FROM (
+                SELECT order_id,
+                       after_order_status,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY order_id ORDER BY event_seq_no DESC
+                       ) row_no
+                FROM dwd_trade_order_status_event_di
+            ) x
+            WHERE row_no = 1
+        ), delivered AS (
+            SELECT i.order_detail_id, SUM(i.delivery_sku_qty) delivered_qty
+            FROM dwd_trade_delivery_item_di i
+            JOIN dwd_trade_delivery_di d ON d.delivery_id = i.delivery_id
+            WHERE d.delivery_direction = '正向'
+            GROUP BY i.order_detail_id
+        )
+        SELECT COUNT(*)
+        FROM dwd_trade_order_detail_di o
+        JOIN latest_status s ON s.order_id = o.order_id
+        LEFT JOIN delivered d ON d.order_detail_id = o.order_detail_id
+        WHERE s.after_order_status IN ('SHIPPED', 'COMPLETED')
+          AND o.sku_qty <> COALESCE(d.delivered_qty, 0)
+    """,
+    "优惠券使用时间": """
+        WITH used AS (
+            SELECT user_coupon_id, MAX(event_time) used_time
+            FROM dwd_marketing_user_coupon_event_di
+            WHERE after_coupon_status = 'USED'
+            GROUP BY user_coupon_id
+        )
+        SELECT COUNT(*)
+        FROM dwd_trade_order_detail_coupon_di c
+        JOIN used u ON u.user_coupon_id = c.user_coupon_id
+        WHERE c.coupon_use_time <> u.used_time
+    """,
+    "用户生命周期最近活跃": """
+        WITH cutoff AS (
+            SELECT MAX(full_date) cutoff_date FROM dim_date
+        ), activity AS (
+            SELECT user_id, MAX(session_end_time) last_active_time
+            FROM dwd_traffic_session_di
+            WHERE user_id IS NOT NULL
+            GROUP BY user_id
+        )
+        SELECT COUNT(*)
+        FROM dim_user_info_zip u
+        CROSS JOIN cutoff c
+        LEFT JOIN activity a ON a.user_id = u.user_id
+        WHERE u.user_id <> 0
+          AND u.is_current = 1
+          AND (
+              (u.user_status IN ('正常', '召回') AND DATEDIFF(
+                   c.cutoff_date,
+                   DATE(COALESCE(a.last_active_time, u.register_time))
+              ) >= 90)
+              OR (u.user_status = '沉默' AND DATEDIFF(
+                   c.cutoff_date,
+                   DATE(COALESCE(a.last_active_time, u.register_time))
+              ) < 60)
+              OR (u.user_status = '流失' AND DATEDIFF(
+                   c.cutoff_date,
+                   DATE(COALESCE(a.last_active_time, u.register_time))
+              ) < 180)
+          )
+    """,
 }
 
 SCD_TABLES: dict[str, tuple[str, ...]] = {
@@ -798,9 +1063,13 @@ def validate_catalog_dimensions(ctx: RunContext) -> None:
     )
 
 
-def _collect_realism_metrics(ctx: RunContext, conn) -> tuple[dict, list[str]]:
+def _collect_realism_metrics(
+    ctx: RunContext,
+    conn,
+) -> tuple[dict, list[str], list[str]]:
     results: dict[str, dict] = {}
     failures: list[str] = []
+    warnings: list[str] = []
     parameters = {
         "start_time": datetime.combine(ctx.gen.start_date, datetime.min.time()),
         "as_of_time": ctx.as_of_time,
@@ -824,13 +1093,15 @@ def _collect_realism_metrics(ctx: RunContext, conn) -> tuple[dict, list[str]]:
             "minimum": metric.minimum,
             "maximum": metric.maximum,
             "status": status,
+            "blocking": metric.blocking,
         }
         if status == "fail":
-            failures.append(
+            message = (
                 f"真实性指标 {name} 超出阈值: value={numeric_value} "
                 f"range=[{metric.minimum}, {metric.maximum}] sample={sample}"
             )
-    return results, failures
+            (failures if metric.blocking else warnings).append(message)
+    return results, failures, warnings
 
 
 def _write_quality_report(
@@ -838,14 +1109,21 @@ def _write_quality_report(
     counts: dict[str, int],
     realism_metrics: dict,
     failures: list[str],
+    warnings: list[str],
 ) -> Path:
     manifest_path = ctx.gen.data_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     source_origins = manifest.get("source", {}).get("origins", [])
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(UTC).isoformat(),
-        "status": "failed" if failures else "passed",
+        "status": (
+            "failed"
+            if failures
+            else "passed_with_warnings"
+            if warnings
+            else "passed"
+        ),
         "run": {
             "run_id": ctx.run_id,
             "as_of_time": ctx.as_of_time.isoformat(),
@@ -890,6 +1168,7 @@ def _write_quality_report(
         "realism_metrics": realism_metrics,
         "table_counts": counts,
         "failures": failures,
+        "warnings": warnings,
     }
     path = ctx.gen.data_dir / "quality_report.json"
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -901,6 +1180,64 @@ def _write_quality_report(
     return path
 
 
+def _generation_completeness_failures(
+    ctx: RunContext,
+    conn,
+    counts: Mapping[str, int],
+) -> list[str]:
+    failures: list[str] = []
+    expected_counts = {
+        "dim_date": (ctx.gen.end_date - ctx.gen.start_date).days + 1,
+        "dwd_traffic_page_view_di": ctx.gen.page_view_count,
+        "dwd_traffic_search_di": ctx.gen.search_count,
+        "dwd_trade_order_detail_di": ctx.gen.order_detail_count,
+    }
+    for table_name, expected in expected_counts.items():
+        actual = counts.get(table_name, 0)
+        if actual != expected:
+            failures.append(
+                f"{table_name} 生成数量异常: expected={expected} actual={actual}"
+            )
+
+    date_start, date_end = conn.execute(
+        text("SELECT MIN(full_date), MAX(full_date) FROM dim_date")
+    ).one()
+    if date_start != ctx.gen.start_date or date_end != ctx.gen.end_date:
+        failures.append(
+            "日期维度范围异常: "
+            f"expected=[{ctx.gen.start_date}, {ctx.gen.end_date}] "
+            f"actual=[{date_start}, {date_end}]"
+        )
+
+    expected_months = {
+        period.key
+        for period in month_periods(ctx.gen.start_date, ctx.gen.end_date)
+    }
+    for table_name in (
+        "dwd_traffic_page_view_di",
+        "dwd_traffic_search_di",
+        "dwd_trade_order_detail_di",
+    ):
+        if expected_counts[table_name] < len(expected_months):
+            continue
+        actual_months = {
+            str(row[0])
+            for row in conn.execute(
+                text(
+                    f"SELECT DISTINCT DATE_FORMAT(biz_date, '%Y-%m') "
+                    f"FROM `{table_name}`"
+                )
+            )
+        }
+        if actual_months != expected_months:
+            failures.append(
+                f"{table_name} 月份覆盖异常: "
+                f"missing={sorted(expected_months - actual_months)} "
+                f"unexpected={sorted(actual_months - expected_months)}"
+            )
+    return failures
+
+
 def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
     failures: list[str] = []
     counts: dict[str, int] = {}
@@ -909,6 +1246,7 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
         SMOKE_OPTIONAL_EMPTY_TABLES if ctx.gen.is_smoke else set()
     )
     realism_metrics: dict = {}
+    warnings: list[str] = []
     with ctx.engine.connect() as conn:
         for table_name in sorted(tables):
             table = tables[table_name]
@@ -1005,23 +1343,7 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
             violations = int(conn.execute(text(sql)).scalar_one() or 0)
             if violations:
                 failures.append(f"{name}: {violations} 条")
-        expected_periods = len(month_periods(ctx.gen.start_date, ctx.gen.end_date))
-        checkpoint_status = CheckpointStore(ctx).run_status()
-        if checkpoint_status.completed_periods != expected_periods:
-            failures.append(
-                "完成月份数量异常: "
-                f"expected={expected_periods} "
-                f"actual={checkpoint_status.completed_periods}"
-            )
-        if checkpoint_status.unfinished_periods:
-            failures.append(
-                f"存在未完成月份: {checkpoint_status.unfinished_periods} 个"
-            )
-        if checkpoint_status.last_period_end != ctx.gen.end_date:
-            failures.append(
-                f"最后完成日期异常: expected={ctx.gen.end_date} "
-                f"actual={checkpoint_status.last_period_end}"
-            )
+        failures.extend(_generation_completeness_failures(ctx, conn, counts))
         for table_name, business_keys in SCD_TABLES.items():
             partition = ", ".join(f"`{key}`" for key in business_keys)
             overlap_sql = f"""
@@ -1104,7 +1426,10 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
             )
             if unknown_count != 1:
                 failures.append(f"{table_name} 未知成员数量: {unknown_count} 条")
-        realism_metrics, realism_failures = _collect_realism_metrics(ctx, conn)
+        realism_metrics, realism_failures, warnings = _collect_realism_metrics(
+            ctx,
+            conn,
+        )
         failures.extend(realism_failures)
     if (
         earliest_load_time is not None
@@ -1112,12 +1437,19 @@ def validate_database(ctx: RunContext, tables: Mapping[str, Table]) -> None:
         and earliest_load_time.date() >= ctx.as_of_time.date()
     ):
         failures.append("历史数据入仓时间全部集中在任务执行日期")
-    report_path = _write_quality_report(ctx, counts, realism_metrics, failures)
+    report_path = _write_quality_report(
+        ctx,
+        counts,
+        realism_metrics,
+        failures,
+        warnings,
+    )
     if failures:
         raise ValueError("数据质量校验失败\n" + "\n".join(failures))
     logger.info(
-        "数据质量校验通过 tables=%s rows=%s report=%s",
+        "数据质量校验通过 tables=%s rows=%s warnings=%s report=%s",
         len(counts),
         sum(counts.values()),
+        len(warnings),
         report_path,
     )

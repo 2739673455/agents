@@ -9,7 +9,6 @@ from datetime import timedelta
 
 from src import quality, support
 from src.batches import behavior, commerce, dimensions, marketing, products, snapshots
-from src.checkpoint import CheckpointStore
 from src.reference import load_reference_data
 from src.settings import DorisConfig, GenerateConfig, RunContext
 from src.timeline import (
@@ -48,8 +47,6 @@ def run(ctx: RunContext, args: argparse.Namespace) -> None:
     tables = support.reflect_tables(ctx.engine)
 
     if args.validate_only:
-        checkpoints = CheckpointStore(ctx)
-        checkpoints.adopt_latest_run()
         quality.validate_database(ctx, tables)
         return
 
@@ -62,64 +59,39 @@ def run(ctx: RunContext, args: argparse.Namespace) -> None:
         logger.info("维度数据生成并校验完成 run_id=%s", ctx.run_id)
         return
 
-    checkpoints = CheckpointStore(ctx)
-    if checkpoints.adopt_resumable_run():
-        logger.info(
-            "发现未完成任务并采用原始时间边界 run_id=%s as_of_time=%s",
-            ctx.run_id,
-            ctx.as_of_time,
-        )
+    with ctx.engine.connect() as conn:
+        support.assert_empty(conn, tables)
     periods = month_periods(ctx.gen.start_date, ctx.gen.end_date)
     targets = build_period_targets(ctx.gen, periods, ctx.data_end_time)
-    checkpoint = checkpoints.latest_completed()
-
-    if checkpoint is None:
-        with ctx.engine.connect() as conn:
-            support.assert_empty(conn, tables)
-        checkpoints.start_initialization()
-        dimensions.run(ctx, tables)
-        products.run_dimensions(ctx, tables)
-        marketing.run(ctx, tables)
-        state = BusinessState()
-        checkpoints.complete_initialization(state)
-        last_period_key = "INIT"
-        logger.info("基础维度初始化完成 run_id=%s", ctx.run_id)
-    else:
-        state = checkpoint.state
-        last_period_key = checkpoint.period_key
-        logger.info(
-            "从检查点恢复 run_id=%s period=%s",
-            ctx.run_id,
-            last_period_key,
-        )
-
+    dimensions.run(ctx, tables)
+    products.run_dimensions(ctx, tables)
+    marketing.run(ctx, tables)
+    state = BusinessState()
+    logger.info("基础维度初始化完成 run_id=%s", ctx.run_id)
     refs = load_reference_data(ctx, tables)
-    pending_periods = [
-        period
-        for period in periods
-        if last_period_key == "INIT" or period.key > last_period_key
-    ]
-    for period in pending_periods:
+    for period in periods:
         period_targets = targets[period.key]
         views_by_day = day_targets(
             period_targets.page_views,
             period,
             ctx.gen.start_date,
+            "traffic",
             ctx.data_end_time,
         )
         searches_by_day = day_targets(
             period_targets.searches,
             period,
             ctx.gen.start_date,
+            "search",
             ctx.data_end_time,
         )
         details_by_day = day_targets(
             period_targets.order_details,
             period,
             ctx.gen.start_date,
+            "order",
             ctx.data_end_time,
         )
-        checkpoints.start_period(period)
         writer = support.TableWriter(
             ctx.loader,
             ctx.gen.batch_size,
@@ -166,7 +138,10 @@ def run(ctx: RunContext, args: argparse.Namespace) -> None:
                 refs,
                 state,
                 writer,
-                support.start_of_day(period.end_date + timedelta(days=1)),
+                min(
+                    support.start_of_day(period.end_date + timedelta(days=1)),
+                    ctx.data_end_time,
+                ),
                 batch_id,
             )
             if lifecycle_updates:
@@ -185,11 +160,6 @@ def run(ctx: RunContext, args: argparse.Namespace) -> None:
             )
             snapshot_seconds = time.perf_counter() - snapshot_started
             load_metrics = ctx.loader.take_metrics()
-            for table_name, count in row_counts.items():
-                state.generated_counts[table_name] = (
-                    state.generated_counts.get(table_name, 0) + count
-                )
-            checkpoints.complete_period(period, state, row_counts)
             refs = load_reference_data(ctx, tables)
             logger.info(
                 "业务月份生成完成 period=%s rows=%s total=%.2fs "
@@ -207,13 +177,11 @@ def run(ctx: RunContext, args: argparse.Namespace) -> None:
                 load_metrics.request_seconds,
                 load_metrics.parquet_bytes / 1024 / 1024,
             )
-        except Exception as error:
-            try:
-                checkpoints.fail_period(period, error)
-            except Exception:
-                logger.exception(
-                    "失败检查点写入失败，保留月份开始时的 RUNNING 检查点"
-                )
+        except Exception:
+            logger.exception(
+                "业务月份生成失败，请执行 make init_db 后重新生成 period=%s",
+                period.key,
+            )
             raise
 
     quality.validate_database(ctx, tables)

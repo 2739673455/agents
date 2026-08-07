@@ -167,7 +167,7 @@ def listing_date_for_spu(ctx: RunContext, index: int, spu_id: int) -> date:
 
 
 def warning_stock_qty_for_sku(sku_id: int) -> int:
-    return 8 + _stable_int(f"warning:{sku_id}") % 33
+    return 2 + _stable_int(f"warning:{sku_id}") % 8
 
 
 def _province_service_zone(province_code: str) -> str:
@@ -445,7 +445,14 @@ def _build_profile(
         brand=brand,
         listing_date=listing_date,
         warning_stock_qty=warning_stock_qty_for_sku(sku_id),
-        initial_stock_qty=20 + _stable_int(f"initial-stock:{sku_id}") % 181,
+        initial_stock_qty=(
+            max(
+                1,
+                warning_stock_qty_for_sku(sku_id)
+                - 2
+                + _stable_int(f"initial-stock:{sku_id}") % 6,
+            )
+        ),
         price_points=tuple(points),
     )
 

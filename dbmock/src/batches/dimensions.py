@@ -800,9 +800,12 @@ def generate_user_lifecycle_updates(
         if register_time is not None and register_time > effective_time:
             continue
         order_count = state.user_order_counts.get(user_id, 0)
-        session_count = state.user_session_counts.get(user_id, 0)
         spend_amount = state.user_spend_amounts.get(user_id, 0)
         last_active = state.user_last_active_at.get(user_id)
+        sessions_30d = state.activity_count(
+            user_id,
+            effective_time - timedelta(days=30),
+        )
         target_level = 1
         if order_count >= 2 or spend_amount >= 500:
             target_level = 2
@@ -820,8 +823,13 @@ def generate_user_lifecycle_updates(
         target_status = "正常"
         if inactive_days >= 180:
             target_status = "流失"
-        elif inactive_days >= 60 and session_count < 3:
+        elif inactive_days >= 60:
             target_status = "沉默"
+        elif (
+            str(current["user_status"]) in {"沉默", "流失"}
+            and sessions_30d > 0
+        ):
+            target_status = "召回"
         target_vip = int(target_level >= 3 or spend_amount >= 3_000)
         if (
             str(current["user_level"]) == str(target_level)
@@ -876,9 +884,16 @@ def generate_user_lifecycle_updates(
         if register_time > effective_time:
             continue
         order_count = state.user_order_counts.get(user_id, 0)
-        session_count = state.user_session_counts.get(user_id, 0)
         spend_amount = state.user_spend_amounts.get(user_id, 0)
         last_active = state.user_last_active_at.get(user_id)
+        sessions_30d = state.activity_count(
+            user_id,
+            effective_time - timedelta(days=30),
+        )
+        sessions_90d = state.activity_count(
+            user_id,
+            effective_time - timedelta(days=90),
+        )
         inactive_days = (
             (effective_time - last_active).days
             if last_active is not None
@@ -887,12 +902,15 @@ def generate_user_lifecycle_updates(
         desired_scores: dict[str, float] = {}
         if (effective_time - register_time).days <= 90:
             desired_scores["NEW_USER"] = 0.95
-        if inactive_days < 30 and session_count:
-            desired_scores["ACTIVE_USER"] = min(0.98, 0.65 + session_count / 200)
-            if str(current["user_status"]) in {"沉默", "流失"}:
+        if inactive_days < 30 and sessions_30d:
+            desired_scores["ACTIVE_USER"] = min(
+                0.98,
+                0.62 + sessions_30d / 80,
+            )
+            if str(current["user_status"]) in {"沉默", "流失", "召回"}:
                 desired_scores["RECALLED_USER"] = min(
                     0.98,
-                    0.70 + session_count / 300,
+                    0.68 + sessions_30d / 100,
                 )
         elif inactive_days >= 60:
             desired_scores["DORMANT_USER"] = min(0.98, 0.6 + inactive_days / 720)
@@ -910,7 +928,9 @@ def generate_user_lifecycle_updates(
             if category_tag is not None:
                 desired_scores[category_tag] = min(
                     0.98,
-                    0.58 + dominant_count / max(20, sum(category_counts.values())),
+                    0.58
+                    + min(dominant_count, sessions_90d)
+                    / max(20, min(sum(category_counts.values()), sessions_90d)),
                 )
         desired_codes = set(
             sorted(

@@ -16,7 +16,7 @@ from ..support import (
     fact_audit,
     version_at,
 )
-from ..timeline import BusinessState, ConversionIntent
+from ..timeline import BusinessState, CartPosition, ConversionIntent, SessionJourney
 
 
 def generate_day(
@@ -85,15 +85,33 @@ def generate_day(
             f"页面访问量不足以承载会话 day={day} "
             f"views={page_view_count} sessions={session_count}"
         )
-    conversion_indexes = sorted(rng.sample(range(session_count), len(line_counts)))
+    conversion_indexes = set(rng.sample(range(session_count), len(line_counts)))
+    cart_indexes = _cart_session_indexes(
+        session_count,
+        conversion_indexes,
+        rng,
+    )
+    search_counts = _search_counts(
+        search_count,
+        session_count,
+        conversion_indexes,
+        cart_indexes,
+        rng,
+    )
+    minimum_views = {
+        index: 5 if index in conversion_indexes else 3
+        for index in cart_indexes
+    }
     view_counts = _session_lengths(
         page_view_count,
         session_count,
-        set(conversion_indexes),
+        minimum_views,
+        search_counts,
         rng,
     )
-    search_counts = _search_counts(search_count, session_count, rng)
-    line_count_by_session = dict(zip(conversion_indexes, line_counts, strict=True))
+    line_count_by_session = dict(
+        zip(sorted(conversion_indexes), line_counts, strict=True)
+    )
     conversion_intents: list[ConversionIntent] = []
     day_active_users = refs.active_users(datetime.combine(day, datetime.min.time()))
     if not day_active_users:
@@ -110,7 +128,8 @@ def generate_day(
         session_fact_id = date_key(day) * 1_000_000 + session_local
         session_id = f"S{session_fact_id}"
         is_conversion = session_index in line_count_by_session
-        is_guest = not is_conversion and rng.random() < 0.27
+        has_cart = session_index in cart_indexes
+        is_guest = not has_cart and rng.random() < 0.27
         current_user = day_active_users[
             _long_tail_index(rng, len(day_active_users), 1.45)
         ]
@@ -119,11 +138,7 @@ def generate_day(
                 day_cutoff - datetime.combine(day, datetime.min.time())
             ).total_seconds()
         )
-        start_second = _session_start_second(rng, maximum_second)
-        session_start = datetime.combine(day, datetime.min.time()) + timedelta(
-            seconds=start_second
-        )
-        session_start = min(session_start, day_cutoff)
+        session_start = datetime.combine(day, datetime.min.time())
         user = (
             version_at(
                 refs.user_versions,
@@ -154,6 +169,40 @@ def generate_day(
                 f"{day} 没有可承载 {required_lines} 个订单行的商品"
             )
         profile = _choose_profile(eligible_profiles, day, rng)
+        pages = _page_sequence(
+            refs,
+            view_counts[session_index],
+            is_conversion,
+            has_cart,
+            search_counts[session_index] > 0,
+            rng,
+        )
+        stay_durations = [
+            _stay_duration(str(page["page_id"]), str(channel["channel_code"]), rng)
+            for page in pages
+        ]
+        planned_seconds = (
+            sum(min(duration, 180) for duration in stay_durations[:-1])
+            + search_counts[session_index] * 50
+            + (75 if is_conversion else 35 if has_cart else 15)
+        )
+        latest_start_second = max(0, maximum_second - planned_seconds)
+        start_second = _session_start_second(rng, latest_start_second)
+        session_start = datetime.combine(day, datetime.min.time()) + timedelta(
+            seconds=start_second
+        )
+        session_start = min(session_start, day_cutoff)
+        if user is not None:
+            user = version_at(
+                refs.user_versions,
+                int(current_user["user_id"]),
+                session_start,
+            )
+        region = (
+            refs.regions_by_district.get(str(user.get("district_code")))
+            if user and user.get("district_code") is not None
+            else None
+        )
         if user is not None:
             user_id = int(user["user_id"])
             state.user_session_counts[user_id] = (
@@ -162,7 +211,6 @@ def generate_day(
             root_category = str(profile.category["root_category_name"])
             category_counts = state.user_category_counts.setdefault(user_id, {})
             category_counts[root_category] = category_counts.get(root_category, 0) + 1
-            state.user_last_active_at[user_id] = session_start
         client = _client_attributes(str(channel["channel_code"]), rng)
         device_id = (
             f"USERDEV{user['user_id']}"
@@ -170,6 +218,7 @@ def generate_day(
             else f"GUESTDEV{date_key(day)}{session_local:06d}"
         )
         session_search_count = search_counts[session_index]
+        journey = SessionJourney(session_id, session_start, session_start)
         search_ids: list[int] = []
         previous_keyword: str | None = None
         for search_index in range(session_search_count):
@@ -178,6 +227,7 @@ def generate_day(
                 session_start + timedelta(seconds=20 + search_index * 35),
                 day_cutoff,
             )
+            journey.observe(search_time)
             keyword, is_no_result = _search_keyword(
                 profile,
                 rng,
@@ -223,6 +273,7 @@ def generate_day(
                     search_time + timedelta(seconds=5 + click_index * 9),
                     day_cutoff,
                 )
+                journey.observe(click_time)
                 writer.add(
                     "dwd_traffic_search_click_di",
                     {
@@ -254,21 +305,18 @@ def generate_day(
             search_local += 1
 
         session_view_count = view_counts[session_index]
-        pages = _page_sequence(
-            refs,
-            session_view_count,
-            is_conversion,
-            session_search_count > 0,
-            rng,
-        )
         last_page = None
+        page_time = session_start
         for view_index, page in enumerate(pages):
             page_view_id = date_key(day) * 1_000_000 + page_view_local
-            event_time = min(
-                session_start + timedelta(seconds=view_index * 35),
-                day_cutoff,
-            )
-            product_page = page["page_id"] in {"PRODUCT", "CART", "ORDER"}
+            event_time = min(page_time, day_cutoff)
+            journey.observe(event_time)
+            product_page = page["page_id"] in {
+                "PRODUCT",
+                "CART",
+                "ORDER",
+                "CHECKOUT",
+            }
             active_promotions = refs.active_promotions(event_time)
             promotion = active_promotions[0] if active_promotions else None
             writer.add(
@@ -321,7 +369,7 @@ def generate_day(
                     "os_type": client["os_type"],
                     "region_sk": region["region_sk"] if region else UNKNOWN_SK,
                     "region_code": region["region_code"] if region else None,
-                    "stay_duration_sec": 12 + rng.randrange(120),
+                    "stay_duration_sec": stay_durations[view_index],
                     "event_time": event_time,
                     "biz_date": day,
                 }
@@ -329,66 +377,126 @@ def generate_day(
             )
             page_view_local += 1
             last_page = page
-
-        duration_seconds = max(
-            8 if session_view_count == 1 else 20,
-            session_view_count * rng.randint(24, 58),
-            session_search_count * 55,
-        )
-        session_end = min(
-            session_start + timedelta(seconds=duration_seconds),
-            day_cutoff,
-        )
-        if is_conversion and user is not None:
-            cart_event_id = date_key(day) * 1_000_000 + cart_local
-            cart_time = max(session_start, session_end - timedelta(seconds=20))
-            price_point = profile.price_on(day)
-            writer.add(
-                "dwd_interaction_cart_event_di",
-                {
-                    "cart_event_id": cart_event_id,
-                    "event_no": f"CART{cart_event_id}",
-                    "event_date_key": date_key(day),
-                    "user_sk": user["user_sk"],
-                    "user_id": user["user_id"],
-                    "device_id": device_id,
-                    "session_id": session_id,
-                    "shop_sk": profile.shop["shop_sk"],
-                    "shop_id": profile.shop["shop_id"],
-                    "sku_sk": profile.sku["sku_sk"],
-                    "sku_id": profile.sku["sku_id"],
-                    "spu_sk": profile.spu["spu_sk"],
-                    "spu_id": profile.spu["spu_id"],
-                    "category_sk": profile.category["category_sk"],
-                    "category_id": profile.category["category_id"],
-                    "channel_sk": channel["channel_sk"],
-                    "channel_code": channel["channel_code"],
-                    "cart_event_type": "加入",
-                    "cart_source": "商品详情页",
-                    "sku_qty_delta": 1,
-                    "cart_sku_qty_after": 1,
-                    "sku_unit_price": price_point.sale_price,
-                    "currency_code": "CNY",
-                    "event_time": cart_time,
-                    "biz_date": day,
-                }
-                | fact_audit(f"cart:{cart_event_id}", batch_id),
+            page_time = event_time + timedelta(
+                seconds=min(stay_durations[view_index], 180)
             )
-            order_time = min(session_end + timedelta(seconds=30), day_cutoff)
+
+        cart_quantity = 0
+        if has_cart and user is not None:
+            cart_time = min(
+                day_cutoff,
+                journey.last_event_time + timedelta(seconds=rng.randint(3, 18)),
+            )
+            journey.observe(cart_time)
+            price_point = profile.price_on(day)
+            cart_key = (int(user["user_id"]), int(profile.sku["sku_id"]))
+            existing = state.cart_positions.get(cart_key)
+            before_quantity = existing.quantity if existing is not None else 0
+            add_quantity = rng.choices([1, 2], [86, 14], k=1)[0]
+            cart_quantity = before_quantity + add_quantity
+            _write_cart_event(
+                writer,
+                batch_id,
+                date_key(day) * 1_000_000 + cart_local,
+                user,
+                device_id,
+                session_id,
+                profile,
+                channel,
+                "加入",
+                add_quantity,
+                cart_quantity,
+                price_point.sale_price,
+                cart_time,
+            )
+            state.cart_positions[cart_key] = CartPosition(cart_quantity, cart_time)
+            cart_local += 1
+            if not is_conversion and rng.random() < 0.18:
+                mutation_time = min(
+                    day_cutoff,
+                    cart_time + timedelta(seconds=rng.randint(8, 90)),
+                )
+                journey.observe(mutation_time)
+                mutation = rng.choices(
+                    ["数量变更", "删除", "清空"],
+                    [58, 29, 13],
+                    k=1,
+                )[0]
+                delta = 0
+                if mutation == "数量变更":
+                    delta = 1 if rng.random() < 0.64 else -1
+                    if cart_quantity + delta <= 0:
+                        mutation = "删除"
+                if mutation in {"删除", "清空"}:
+                    delta = -cart_quantity
+                after_quantity = cart_quantity + delta
+                _write_cart_event(
+                    writer,
+                    batch_id,
+                    date_key(day) * 1_000_000 + cart_local,
+                    user,
+                    device_id,
+                    session_id,
+                    profile,
+                    channel,
+                    mutation,
+                    delta,
+                    after_quantity,
+                    price_point.sale_price,
+                    mutation_time,
+                )
+                cart_local += 1
+                cart_quantity = after_quantity
+                if after_quantity:
+                    state.cart_positions[cart_key] = CartPosition(
+                        after_quantity,
+                        mutation_time,
+                    )
+                else:
+                    state.cart_positions.pop(cart_key, None)
+        if is_conversion and user is not None:
+            order_time = min(
+                day_cutoff,
+                journey.last_event_time + timedelta(seconds=rng.randint(12, 75)),
+            )
+            journey.observe(order_time)
+            session_end = journey.close(day_cutoff, rng.randint(8, 45))
             conversion_intents.append(
                 ConversionIntent(
                     order_time=order_time,
+                    session_start_time=session_start,
+                    session_end_time=session_end,
                     session_id=session_id,
+                    device_id=device_id,
                     user=user,
                     channel=channel,
                     region=region,
                     primary_sku_id=int(profile.sku["sku_id"]),
+                    cart_quantity=cart_quantity,
                     line_count=line_count_by_session[session_index],
                 )
             )
-            cart_local += 1
-        elif user is not None and rng.random() < 0.08:
+        else:
+            session_end = journey.close(day_cutoff, rng.randint(5, 55))
+
+        if user is not None and not is_conversion and rng.random() < 0.08:
             favor_event_id = date_key(day) * 1_000_000 + favor_local
+            user_id = int(user["user_id"])
+            favorites = state.favorite_skus_by_user.setdefault(user_id, set())
+            favorite_profile = profile
+            cancel_favorite = bool(favorites) and rng.random() < 0.16
+            if cancel_favorite:
+                favorite_sku_id = rng.choice(tuple(favorites))
+                favorite_profile = refs.profile_by_sku[favorite_sku_id]
+                favorites.remove(favorite_sku_id)
+            else:
+                favorites.add(int(profile.sku["sku_id"]))
+            favor_time = min(
+                session_end,
+                journey.last_event_time + timedelta(seconds=rng.randint(2, 20)),
+            )
+            journey.observe(favor_time)
+            session_end = journey.close(day_cutoff, rng.randint(5, 55))
             writer.add(
                 "dwd_interaction_favor_event_di",
                 {
@@ -399,22 +507,25 @@ def generate_day(
                     "user_id": user["user_id"],
                     "device_id": device_id,
                     "session_id": session_id,
-                    "shop_sk": profile.shop["shop_sk"],
-                    "shop_id": profile.shop["shop_id"],
-                    "sku_sk": profile.sku["sku_sk"],
-                    "sku_id": profile.sku["sku_id"],
-                    "spu_sk": profile.spu["spu_sk"],
-                    "spu_id": profile.spu["spu_id"],
+                    "shop_sk": favorite_profile.shop["shop_sk"],
+                    "shop_id": favorite_profile.shop["shop_id"],
+                    "sku_sk": favorite_profile.sku["sku_sk"],
+                    "sku_id": favorite_profile.sku["sku_id"],
+                    "spu_sk": favorite_profile.spu["spu_sk"],
+                    "spu_id": favorite_profile.spu["spu_id"],
                     "channel_sk": channel["channel_sk"],
                     "channel_code": channel["channel_code"],
                     "favor_target_type": "商品",
-                    "favor_event_type": "收藏",
-                    "event_time": session_end,
+                    "favor_event_type": "取消收藏" if cancel_favorite else "收藏",
+                    "event_time": favor_time,
                     "biz_date": day,
                 }
                 | fact_audit(f"favor:{favor_event_id}", batch_id),
             )
             favor_local += 1
+
+        if user is not None:
+            state.record_activity(int(user["user_id"]), session_end)
 
         entry_page = pages[0]
         exit_page = pages[-1]
@@ -455,6 +566,54 @@ def generate_day(
     return conversion_intents
 
 
+def _write_cart_event(
+    writer: TableWriter,
+    batch_id: str,
+    cart_event_id: int,
+    user: dict,
+    device_id: str,
+    session_id: str,
+    profile,
+    channel: dict,
+    event_type: str,
+    quantity_delta: int,
+    quantity_after: int,
+    unit_price,
+    event_time: datetime,
+) -> None:
+    writer.add(
+        "dwd_interaction_cart_event_di",
+        {
+            "cart_event_id": cart_event_id,
+            "event_no": f"CART{cart_event_id}",
+            "event_date_key": date_key(event_time),
+            "user_sk": user["user_sk"],
+            "user_id": user["user_id"],
+            "device_id": device_id,
+            "session_id": session_id,
+            "shop_sk": profile.shop["shop_sk"],
+            "shop_id": profile.shop["shop_id"],
+            "sku_sk": profile.sku["sku_sk"],
+            "sku_id": profile.sku["sku_id"],
+            "spu_sk": profile.spu["spu_sk"],
+            "spu_id": profile.spu["spu_id"],
+            "category_sk": profile.category["category_sk"],
+            "category_id": profile.category["category_id"],
+            "channel_sk": channel["channel_sk"],
+            "channel_code": channel["channel_code"],
+            "cart_event_type": event_type,
+            "cart_source": "商品详情页" if event_type == "加入" else "购物车页",
+            "sku_qty_delta": quantity_delta,
+            "cart_sku_qty_after": quantity_after,
+            "sku_unit_price": unit_price,
+            "currency_code": "CNY",
+            "event_time": event_time,
+            "biz_date": event_time.date(),
+        }
+        | fact_audit(f"cart:{cart_event_id}", batch_id),
+    )
+
+
 def _order_line_counts(target: int, rng: random.Random) -> list[int]:
     counts: list[int] = []
     remaining = target
@@ -470,16 +629,20 @@ def _order_line_counts(target: int, rng: random.Random) -> list[int]:
 def _session_lengths(
     total: int,
     session_count: int,
-    conversion_indexes: set[int],
+    minimum_views: dict[int, int],
+    search_counts: list[int],
     rng: random.Random,
 ) -> list[int]:
-    values = [5 if index in conversion_indexes else 1 for index in range(session_count)]
+    values = [minimum_views.get(index, 1) for index in range(session_count)]
     remaining = total - sum(values)
     if remaining < 0:
-        raise ValueError("页面访问量不足以承载转化路径")
+        raise ValueError("页面访问量不足以承载会话行为路径")
     candidates = list(range(session_count))
     while remaining:
         index = rng.choice(candidates)
+        weight = min(0.96, 0.30 + search_counts[index] * 0.14 + values[index] * 0.08)
+        if rng.random() > weight:
+            continue
         values[index] += 1
         remaining -= 1
         if values[index] >= 12:
@@ -489,16 +652,48 @@ def _session_lengths(
     return values
 
 
-def _search_counts(total: int, session_count: int, rng: random.Random) -> list[int]:
+def _cart_session_indexes(
+    session_count: int,
+    conversion_indexes: set[int],
+    rng: random.Random,
+) -> set[int]:
+    target = min(
+        session_count,
+        max(
+            len(conversion_indexes),
+            round(len(conversion_indexes) * 2.35),
+            round(session_count * 0.04),
+        ),
+    )
+    result = set(conversion_indexes)
+    while len(result) < target:
+        result.add(rng.randrange(session_count))
+    return result
+
+
+def _search_counts(
+    total: int,
+    session_count: int,
+    conversion_indexes: set[int],
+    cart_indexes: set[int],
+    rng: random.Random,
+) -> list[int]:
     values = [0] * session_count
-    candidates = list(range(session_count))
-    for _ in range(total):
-        index = rng.choice(candidates)
-        values[index] += 1
+    assigned = 0
+    while assigned < total:
+        index = rng.randrange(session_count)
         if values[index] >= 5:
-            candidates.remove(index)
-            if not candidates and sum(values) < total:
-                raise ValueError("单会话搜索次数上限不足")
+            continue
+        acceptance = 0.28
+        if index in cart_indexes:
+            acceptance += 0.18
+        if index in conversion_indexes:
+            acceptance += 0.24
+        acceptance += values[index] * 0.06
+        if rng.random() > min(0.92, acceptance):
+            continue
+        values[index] += 1
+        assigned += 1
     return values
 
 
@@ -541,6 +736,7 @@ def _page_sequence(
     refs: ReferenceData,
     count: int,
     is_conversion: bool,
+    has_cart: bool,
     has_search: bool,
     rng: random.Random,
 ) -> list[dict]:
@@ -552,7 +748,18 @@ def _page_sequence(
             [16, 18 if has_search else 6, 54, 12],
             k=middle_count,
         )
-        page_ids = [entry, *middle, "PRODUCT", "CART", "ORDER", "CHECKOUT"]
+        page_ids = [entry, *middle, "PRODUCT", "CART", "CHECKOUT", "ORDER"]
+        return [refs.pages_by_id[page_id] for page_id in page_ids]
+
+    if has_cart:
+        entry = "SEARCH" if has_search else rng.choice(["HOME", "CATEGORY", "PRODUCT"])
+        middle_count = count - 3
+        middle = rng.choices(
+            ["CATEGORY", "SEARCH", "PRODUCT", "SHOP"],
+            [16, 20 if has_search else 7, 58, 13],
+            k=middle_count,
+        )
+        page_ids = [entry, *middle, "PRODUCT", "CART"]
         return [refs.pages_by_id[page_id] for page_id in page_ids]
 
     current = (
@@ -577,6 +784,29 @@ def _page_sequence(
         current = rng.choices(choices, weights=weights, k=1)[0]
         page_ids.append(current)
     return [refs.pages_by_id[page_id] for page_id in page_ids]
+
+
+def _stay_duration(
+    page_id: str,
+    channel_code: str,
+    rng: random.Random,
+) -> int:
+    parameters = {
+        "HOME": (3.75, 0.55),
+        "CATEGORY": (4.05, 0.62),
+        "SEARCH": (4.15, 0.64),
+        "PRODUCT": (4.65, 0.72),
+        "SHOP": (4.20, 0.65),
+        "CART": (3.85, 0.60),
+        "CHECKOUT": (4.10, 0.58),
+        "ORDER": (3.45, 0.52),
+    }
+    mean, sigma = parameters.get(page_id, (4.0, 0.65))
+    if channel_code == "PC":
+        mean += 0.10
+    elif channel_code in {"H5", "MINI_PROGRAM"}:
+        mean -= 0.08
+    return max(4, min(900, round(rng.lognormvariate(mean, sigma))))
 
 
 def _session_start_second(rng: random.Random, maximum_second: int) -> int:

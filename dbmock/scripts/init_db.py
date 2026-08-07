@@ -14,18 +14,6 @@ logger = logging.getLogger(__name__)
 ROOT_DIR = Path(__file__).parents[1]
 ENV_FILE = ROOT_DIR / ".env"
 SQL_DIR = ROOT_DIR / "scripts" / "sql"
-CHECKPOINT_FILE = ROOT_DIR / "data" / "generation_checkpoint.json"
-CHECKPOINT_TEMP_FILE = CHECKPOINT_FILE.with_name(f".{CHECKPOINT_FILE.name}.tmp")
-
-
-def clear_generation_checkpoint() -> None:
-    removed = False
-    for path in (CHECKPOINT_FILE, CHECKPOINT_TEMP_FILE):
-        if path.exists():
-            path.unlink()
-            removed = True
-    if removed:
-        logger.info("本地生成检查点清理成功")
 
 
 class DorisInitializer:
@@ -107,6 +95,5 @@ if __name__ == "__main__":
         password=os.environ["DB_PASSWORD"],
     )
     db_initializer.delete_db(db_name)
-    clear_generation_checkpoint()
     db_initializer.create_db(db_name)
     db_initializer.exec_sql_file(db_name, SQL_DIR / "ecommerce.sql")

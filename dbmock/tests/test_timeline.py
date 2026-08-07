@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from collections import defaultdict
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from src.support import END_OF_TIME, TableWriter
 from src.timeline import (
     BusinessState,
     ConversionIntent,
+    InventoryPosition,
     build_period_targets,
     month_periods,
 )
@@ -91,7 +93,7 @@ class TimelineTest(unittest.TestCase):
         self.assertEqual(len(rows["dwd_traffic_search_di"]), 20)
         self.assertEqual(len(rows["dwd_trade_order_detail_di"]), 12)
         sessions = {
-            row["session_id"] for row in rows["dwd_traffic_session_di"]
+            row["session_id"]: row for row in rows["dwd_traffic_session_di"]
         }
         carts = {
             (row["session_id"], row["sku_id"])
@@ -99,7 +101,15 @@ class TimelineTest(unittest.TestCase):
             if row["cart_event_type"] == "加入"
         }
         for detail in rows["dwd_trade_order_detail_di"]:
-            self.assertIn(detail["source_session_id"], sessions)
+            session = sessions[detail["source_session_id"]]
+            self.assertLessEqual(
+                session["session_start_time"],
+                detail["order_create_time"],
+            )
+            self.assertLessEqual(
+                detail["order_create_time"],
+                session["session_end_time"],
+            )
             self.assertIn(
                 (detail["source_session_id"], detail["sku_id"]),
                 carts,
@@ -113,6 +123,17 @@ class TimelineTest(unittest.TestCase):
             len(rows["dwd_inventory_change_di"]),
             len(refs.profiles),
         )
+        for table_name in (
+            "dwd_traffic_page_view_di",
+            "dwd_traffic_search_di",
+            "dwd_traffic_search_click_di",
+            "dwd_interaction_cart_event_di",
+            "dwd_interaction_favor_event_di",
+        ):
+            for row in rows[table_name]:
+                session = sessions[row["session_id"]]
+                self.assertLessEqual(session["session_start_time"], row["event_time"])
+                self.assertLessEqual(row["event_time"], session["session_end_time"])
 
     def test_behavior_events_stay_within_the_business_day(self) -> None:
         day = date(2026, 7, 31)
@@ -154,6 +175,63 @@ class TimelineTest(unittest.TestCase):
             for row in loader.rows[table_name]:
                 event_time = row.get("event_time") or row["session_end_time"]
                 self.assertEqual(event_time.date(), row["biz_date"])
+        cart_rows = loader.rows["dwd_interaction_cart_event_di"]
+        cart_sessions = {row["session_id"] for row in cart_rows}
+        order_sessions = {intent.session_id for intent in intents}
+        self.assertGreater(len(cart_sessions), len(order_sessions))
+        self.assertTrue(any(row["cart_event_type"] != "加入" for row in cart_rows))
+
+    def test_stockout_is_caused_by_failed_inventory_allocation(self) -> None:
+        day = date(2026, 8, 6)
+        ctx = _context(day)
+        refs = _references(day)
+        low_stock_profile = replace(
+            refs.profiles[0],
+            initial_stock_qty=1,
+            warning_stock_qty=1,
+        )
+        refs.profiles[0] = low_stock_profile
+        refs.profile_by_sku[1] = low_stock_profile
+        refs.profiles_by_listing_date[day][0] = low_stock_profile
+        state = BusinessState()
+        state.inventory[1] = InventoryPosition(
+            on_hand=1,
+            reserved=0,
+            in_transit=0,
+            unit_cost=Decimal("65"),
+        )
+        loader = FakeLoader()
+        writer = TableWriter(
+            cast(Any, loader),
+            10_000,
+            1,
+            day,
+            cast(Any, ctx).as_of_time,
+        )
+        intent = replace(
+            _conversion_intent(refs, datetime(2026, 8, 6, 10, 0)),
+            cart_quantity=3,
+        )
+
+        commerce.generate_day(
+            cast(RunContext, ctx),
+            refs,
+            state,
+            writer,
+            day,
+            "TEST-2026-08",
+            [intent],
+        )
+        writer.flush_all()
+
+        changes = loader.rows["dwd_inventory_change_di"]
+        self.assertTrue(
+            any(row["change_type"] == "ALLOCATION_FAILED" for row in changes)
+        )
+        self.assertFalse(any(row["change_type"] == "SALE_RESERVE" for row in changes))
+        statuses = loader.rows["dwd_trade_order_status_event_di"]
+        self.assertEqual(statuses[-1]["status_reason_code"], "OUT_OF_STOCK")
+        self.assertEqual(state.inventory[1].reserved, 0)
 
     def test_cross_month_facts_are_loaded_when_the_event_becomes_due(self) -> None:
         july_day = date(2026, 7, 31)
@@ -170,7 +248,7 @@ class TimelineTest(unittest.TestCase):
             july_day,
             as_of_time,
         )
-        intent = _conversion_intent(refs, datetime(2026, 7, 31, 23, 58))
+        intent = _conversion_intent(refs, datetime(2026, 7, 31, 23, 59, 58))
 
         commerce.generate_day(
             cast(RunContext, ctx),
@@ -295,11 +373,15 @@ def _conversion_intent(
 ) -> ConversionIntent:
     return ConversionIntent(
         order_time=order_time,
+        session_start_time=order_time - timedelta(minutes=5),
+        session_end_time=order_time + timedelta(minutes=1),
         session_id="CROSS-MONTH-SESSION",
+        device_id="USERDEV1",
         user=refs.current_users[0],
         channel=refs.channels[0],
         region=next(iter(refs.regions_by_district.values())),
         primary_sku_id=int(refs.profiles[0].sku["sku_id"]),
+        cart_quantity=1,
         line_count=1,
     )
 

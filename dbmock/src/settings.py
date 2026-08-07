@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ENV_FILE = ROOT_DIR / ".env"
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), "Asia/Shanghai")
-GENERATION_MODEL_VERSION = 3
+GENERATION_MODEL_VERSION = 4
 
 dotenv.load_dotenv(ENV_FILE)
 
@@ -170,8 +170,6 @@ class RunContext:
     as_of_time: datetime = field(default_factory=_now)
     execution_id: str = field(init=False)
     run_id: str = field(init=False)
-    catalog_hash: str = field(init=False)
-    config_hash: str = field(init=False)
     engine: Engine = field(init=False)
     loader: DorisStreamLoader = field(init=False)
     rng: random.Random = field(init=False)
@@ -184,7 +182,7 @@ class RunContext:
         manifest = json.loads(
             (self.gen.data_dir / "manifest.json").read_text(encoding="utf-8")
         )
-        self.catalog_hash = str(
+        catalog_hash = str(
             manifest.get("source", {}).get("origins", [{}])[0].get("sha256", "")
         )
         config_payload = {
@@ -200,13 +198,13 @@ class RunContext:
             "warehouse_count": self.gen.warehouse_count,
             "is_smoke": self.gen.is_smoke,
         }
-        self.config_hash = hashlib.sha256(
+        config_hash = hashlib.sha256(
             json.dumps(config_payload, sort_keys=True).encode()
         ).hexdigest()
         self.execution_id = f"dbmock-exec-{execution_stamp}"
         self.run_id = (
             f"dbmock-{self.gen.start_date:%Y%m%d}-{self.gen.end_date:%Y%m%d}"
-            f"-{self.catalog_hash[:12]}-{self.config_hash[:12]}"
+            f"-{catalog_hash[:12]}-{config_hash[:12]}"
         )
         self.engine = create_engine(
             self.db.sqlalchemy_url,
@@ -222,18 +220,6 @@ class RunContext:
 
     def period_batch_id(self, period_key: str) -> str:
         return f"{self.run_id}-{period_key}"
-
-    def adopt_run(
-        self,
-        run_id: str,
-        start_date: date,
-        end_date: date,
-        as_of_time: datetime,
-    ) -> None:
-        self.run_id = run_id
-        self.gen.start_date = start_date
-        self.gen.end_date = end_date
-        self.as_of_time = as_of_time
 
     @property
     def data_end_time(self) -> datetime:

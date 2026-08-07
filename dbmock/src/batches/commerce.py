@@ -9,6 +9,8 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
+import chinese_calendar
+
 from ..reference import ProductProfile, ReferenceData
 from ..settings import RunContext
 from ..support import (
@@ -25,6 +27,7 @@ from ..support import (
 )
 from ..timeline import (
     BusinessState,
+    CartPosition,
     ConversionIntent,
     InventoryPosition,
     ScheduledFact,
@@ -134,7 +137,19 @@ def generate_day(
     state.pending_inventory_events = future_events
     inventory_events.extend(due_events)
     inventory_events.extend(_replenishment_events(refs, state, day, plans, due_events))
+    inventory_events.sort(key=_inventory_event_sort_key)
     for order_index, plan in enumerate(plans, start=1):
+        due_before_order, inventory_events = _partition_inventory_events(
+            inventory_events,
+            plan.intent.order_time,
+        )
+        _apply_inventory_events(
+            refs,
+            state,
+            writer,
+            due_before_order,
+            batch_id,
+        )
         order_inventory_events = _write_order(
             ctx,
             refs,
@@ -152,6 +167,7 @@ def generate_day(
                 inventory_events.append(event)
             else:
                 state.pending_inventory_events.append(event)
+        inventory_events.sort(key=_inventory_event_sort_key)
 
     _apply_inventory_events(
         refs,
@@ -195,7 +211,7 @@ def _build_order_plans(
             primary = shop_profiles[
                 int(intent.primary_sku_id) % len(shop_profiles)
             ]
-        lines = [OrderLinePlan(primary, 1 + rng.randrange(2))]
+        lines = [OrderLinePlan(primary, max(1, min(3, intent.cart_quantity)))]
         used = {int(primary.sku["sku_id"])}
         while len(lines) < intent.line_count:
             candidate = shop_profiles[rng.randrange(len(shop_profiles))]
@@ -205,7 +221,7 @@ def _build_order_plans(
             used.add(sku_id)
             lines.append(OrderLinePlan(candidate, 1 + (len(lines) % 2)))
         plans.append(OrderPlan(intent, tuple(lines)))
-    return plans
+    return sorted(plans, key=lambda plan: plan.intent.order_time)
 
 
 def _inventory_opening_events(
@@ -233,7 +249,7 @@ def _inventory_opening_events(
                 profile.initial_stock_qty,
                 0,
                 profile.price_on(day).cost_price,
-                start_of_day(day) + timedelta(minutes=30),
+                start_of_day(day),
                 10,
             )
         )
@@ -252,6 +268,25 @@ def _take_due_inventory_events(
         else:
             future.append(event)
     return due, future
+
+
+def _inventory_event_sort_key(event: dict[str, Any]) -> tuple:
+    return (
+        event["event_time"],
+        event["priority"],
+        event["sku_id"],
+        str(event["biz_id"]),
+    )
+
+
+def _partition_inventory_events(
+    events: list[dict[str, Any]],
+    cutoff: datetime,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    boundary = 0
+    while boundary < len(events) and events[boundary]["event_time"] <= cutoff:
+        boundary += 1
+    return events[:boundary], events[boundary:]
 
 
 def _replenishment_events(
@@ -289,8 +324,8 @@ def _replenishment_events(
         )
         supply_factor = Decimal(85 + (sku_id + date_key(day)) % 36) / Decimal(100)
         receipt = max(target - projected_available, int(receipt * supply_factor))
-        order_time = start_of_day(day) + timedelta(minutes=40)
-        lead_days = 1 + (sku_id + date_key(day)) % 7
+        order_time = start_of_day(day) + timedelta(minutes=1)
+        lead_days = 2 + (sku_id + date_key(day)) % 8
         receipt_time = order_time + timedelta(
             days=lead_days,
             hours=2 + sku_id % 8,
@@ -367,13 +402,32 @@ def _write_order(
         _rule_discount(coupon, sale_total - activity_total),
         sale_total - activity_total,
     )
+    points_balance = state.user_points_balances.get(int(user["user_id"]), 0)
+    points_total = MONEY_ZERO
+    if points_balance >= 100 and rng.random() < 0.18:
+        points_total = money(
+            min(
+                Decimal(points_balance) / Decimal(100),
+                (sale_total - activity_total - coupon_total) * Decimal("0.05"),
+                Decimal("50"),
+            )
+        )
+    points_to_use = int(points_total * 100)
     activity_allocations = _allocate_money(activity_total, line_amounts)
     coupon_allocations = _allocate_money(coupon_total, line_amounts)
+    points_allocations = _allocate_money(points_total, line_amounts)
     freight_total = MONEY_ZERO if sale_total >= Decimal("99") else money("8")
     freight_allocations = _allocate_money(freight_total, line_amounts)
     is_first_order = int(state.user_order_counts.get(int(user["user_id"]), 0) == 0)
     details: list[dict[str, Any]] = []
     inventory_events: list[dict[str, Any]] = []
+    insufficient_lines = [
+        line
+        for line in plan.lines
+        if state.inventory[int(line.profile.sku["sku_id"])].available
+        < line.quantity
+    ]
+    has_stock = not insufficient_lines
 
     for line_index, line in enumerate(plan.lines, start=1):
         profile = line.profile
@@ -383,6 +437,7 @@ def _write_order(
         sale_amount = line_amounts[line_index - 1]
         activity_discount = activity_allocations[line_index - 1]
         coupon_discount = coupon_allocations[line_index - 1]
+        points_discount = points_allocations[line_index - 1]
         freight = freight_allocations[line_index - 1]
         tax = (
             money(sale_amount * Decimal("0.05"))
@@ -390,7 +445,12 @@ def _write_order(
             else MONEY_ZERO
         )
         receivable = money(
-            sale_amount - activity_discount - coupon_discount + freight + tax
+            sale_amount
+            - activity_discount
+            - coupon_discount
+            - points_discount
+            + freight
+            + tax
         )
         row = {
             "order_detail_id": detail_id,
@@ -438,7 +498,7 @@ def _write_order(
             "sale_amount": sale_amount,
             "activity_discount_amount": activity_discount,
             "coupon_discount_amount": coupon_discount,
-            "points_discount_amount": MONEY_ZERO,
+            "points_discount_amount": points_discount,
             "freight_amount": freight,
             "tax_amount": tax,
             "receivable_amount": receivable,
@@ -449,19 +509,20 @@ def _write_order(
         } | fact_audit(f"order-detail:{detail_id}", batch_id)
         writer.add("dwd_trade_order_detail_di", row)
         details.append(row | {"profile": profile, "quantity": line.quantity})
-        inventory_events.append(
-            _inventory_event(
-                profile,
-                "SALE_RESERVE",
-                "ORDER",
-                order_id,
-                0,
-                line.quantity,
-                point.cost_price,
-                intent.order_time,
-                40,
+        if has_stock:
+            inventory_events.append(
+                _inventory_event(
+                    profile,
+                    "SALE_RESERVE",
+                    "ORDER",
+                    order_id,
+                    0,
+                    line.quantity,
+                    point.cost_price,
+                    intent.order_time,
+                    40,
+                )
             )
-        )
         if activity_discount and promotion is not None:
             writer.add(
                 "dwd_trade_order_detail_activity_di",
@@ -496,7 +557,7 @@ def _write_order(
                     "event_date_key": date_key(cart_time),
                     "user_sk": user["user_sk"],
                     "user_id": user["user_id"],
-                    "device_id": f"USERDEV{user['user_id']}",
+                    "device_id": intent.device_id,
                     "session_id": intent.session_id,
                     "shop_sk": profile.shop["shop_sk"],
                     "shop_id": profile.shop["shop_id"],
@@ -519,6 +580,20 @@ def _write_order(
                 }
                 | fact_audit(f"cart:{cart_event_id}", batch_id),
             )
+            cart_key = (int(user["user_id"]), int(profile.sku["sku_id"]))
+            state.cart_positions[cart_key] = CartPosition(
+                line.quantity,
+                cart_time,
+            )
+
+    for line in plan.lines:
+        cart_key = (int(user["user_id"]), int(line.profile.sku["sku_id"]))
+        position = state.cart_positions.get(cart_key)
+        if position is None or position.quantity <= line.quantity:
+            state.cart_positions.pop(cart_key, None)
+        else:
+            position.quantity -= line.quantity
+            position.updated_at = intent.order_time
 
     _write_order_status(
         state,
@@ -535,7 +610,7 @@ def _write_order(
         intent.order_time,
         0,
     )
-    if rng.random() < 0.012:
+    if not has_stock:
         cancel_time = intent.order_time + timedelta(minutes=1)
         _write_order_status(
             state,
@@ -554,17 +629,16 @@ def _write_order(
             "OUT_OF_STOCK",
             "库存分配失败，订单自动关闭",
         )
-        for detail in details:
-            profile = detail["profile"]
+        for line in insufficient_lines:
             inventory_events.append(
                 _inventory_event(
-                    profile,
-                    "SALE_RELEASE",
-                    "STOCKOUT_CANCEL",
+                    line.profile,
+                    "ALLOCATION_FAILED",
+                    "ORDER",
                     order_id,
                     0,
-                    -int(detail["quantity"]),
-                    profile.price_on(day).cost_price,
+                    0,
+                    line.profile.price_on(day).cost_price,
                     cancel_time,
                     50,
                 )
@@ -581,10 +655,13 @@ def _write_order(
                 details,
                 coupon_allocations,
                 intent.order_time,
+                cancel_time,
                 False,
             )
         return inventory_events
-    pay_time = intent.order_time + timedelta(minutes=3)
+    pay_time = intent.order_time + timedelta(
+        seconds=_bounded_lognormal(rng, 4.25, 0.85, 8, 900)
+    )
     requested_amount = sum(
         (detail["receivable_amount"] for detail in details),
         MONEY_ZERO,
@@ -614,8 +691,15 @@ def _write_order(
     pay_result_time = pay_time
     successful_payment_detail_id: int | None = None
     for attempt_no, (attempt_payment, failure_reason) in enumerate(attempts, start=1):
-        attempt_time = pay_time + timedelta(minutes=(attempt_no - 1) * 3)
-        pay_result_time = attempt_time + timedelta(seconds=rng.randint(3, 18))
+        retry_delay = (
+            _bounded_lognormal(rng, 5.15, 0.70, 45, 1_800)
+            if attempt_no > 1
+            else 0
+        )
+        attempt_time = pay_time + timedelta(seconds=retry_delay)
+        pay_result_time = attempt_time + timedelta(
+            seconds=_bounded_lognormal(rng, 2.35, 0.62, 2, 120)
+        )
         pay_detail_id = order_id * 10 + attempt_no
         _write_payment_attempt(
             refs,
@@ -655,6 +739,7 @@ def _write_order(
             details,
             coupon_allocations,
             intent.order_time,
+            pay_result_time,
             paid_success,
         )
 
@@ -695,6 +780,12 @@ def _write_order(
     state.user_order_counts[int(user["user_id"])] = (
         state.user_order_counts.get(int(user["user_id"]), 0) + 1
     )
+    state.user_points_balances[int(user["user_id"])] = max(
+        0,
+        state.user_points_balances.get(int(user["user_id"]), 0)
+        - points_to_use
+        + int(requested_amount),
+    )
     state.user_spend_amounts[int(user["user_id"])] = money(
         state.user_spend_amounts.get(int(user["user_id"]), MONEY_ZERO)
         + requested_amount
@@ -715,24 +806,37 @@ def _write_order(
         0,
     )
     delivery_create_time = pay_result_time + timedelta(
-        hours=2 + rng.randrange(10),
+        seconds=_bounded_lognormal(rng, 8.90, 0.75, 1_800, 86_400)
+    )
+    delivery_create_time = _move_out_of_quiet_fulfillment_hours(
+        delivery_create_time,
+        rng,
     )
     ship_time = delivery_create_time + timedelta(
-        hours=6 + rng.randrange(24),
+        seconds=_bounded_lognormal(rng, 10.35, 0.62, 7_200, 259_200)
     )
-    signed_time = ship_time + timedelta(days=1 + rng.randrange(4))
     warehouse = refs.warehouse_for_profile(primary)
     logistics = refs.logistics[order_index % len(refs.logistics)]
+    signed_time = ship_time + timedelta(
+        seconds=_delivery_transit_seconds(
+            rng,
+            warehouse,
+            intent.region,
+            logistics,
+        )
+    )
     delivery_groups = [details]
     if len(details) > 1 and rng.random() < 0.14:
         delivery_groups = [details[:-1], details[-1:]]
     detail_ship_times: dict[int, datetime] = {}
+    final_ship_time = ship_time
     final_signed_time = signed_time
     for group_index, delivery_details in enumerate(delivery_groups, start=1):
         group_delay = timedelta(days=(group_index - 1) * rng.randint(1, 3))
         group_create_time = delivery_create_time + group_delay
         group_ship_time = ship_time + group_delay
         group_signed_time = signed_time + group_delay
+        final_ship_time = max(final_ship_time, group_ship_time)
         final_signed_time = max(final_signed_time, group_signed_time)
         delivery_id = order_id * 10 + group_index
         _write_forward_delivery(
@@ -768,7 +872,7 @@ def _write_order(
         "PAID",
         "SHIPPED",
         "SHIP",
-        ship_time,
+        final_ship_time,
         0,
     )
     _write_order_status(
@@ -880,6 +984,59 @@ def _choose_payment(
     if not any(weights):
         raise ValueError("没有适用于当前订单的支付方式")
     return rng.choices(refs.payments, weights=weights, k=1)[0]
+
+
+def _bounded_lognormal(
+    rng: random.Random,
+    mean: float,
+    sigma: float,
+    minimum: int,
+    maximum: int,
+) -> int:
+    return max(minimum, min(maximum, round(rng.lognormvariate(mean, sigma))))
+
+
+def _move_out_of_quiet_fulfillment_hours(
+    moment: datetime,
+    rng: random.Random,
+) -> datetime:
+    if moment.hour < 7:
+        return moment.replace(
+            hour=7,
+            minute=rng.randrange(60),
+            second=rng.randrange(60),
+        )
+    if moment.hour >= 22:
+        next_day = moment + timedelta(days=1)
+        return next_day.replace(
+            hour=7,
+            minute=rng.randrange(60),
+            second=rng.randrange(60),
+        )
+    if not chinese_calendar.is_workday(moment.date()):
+        return moment + timedelta(minutes=rng.randint(60, 360))
+    return moment
+
+
+def _delivery_transit_seconds(
+    rng: random.Random,
+    warehouse: dict[str, Any],
+    region: dict[str, Any] | None,
+    logistics: dict[str, Any],
+) -> int:
+    base = _bounded_lognormal(rng, 11.55, 0.48, 43_200, 604_800)
+    warehouse_province = str(warehouse.get("province_code") or "")
+    receiver_province = str(region.get("province_code") or "") if region else ""
+    distance_factor = 0.72 if warehouse_province == receiver_province else 1.15
+    remote_prefixes = {"15", "54", "62", "63", "64", "65"}
+    if receiver_province[:2] in remote_prefixes:
+        distance_factor *= 1.28
+    company_id = int(logistics["logistics_company_id"])
+    company_factor = 0.92 + company_id % 5 * 0.04
+    return max(
+        43_200,
+        min(604_800, round(base * distance_factor * company_factor)),
+    )
 
 
 def _payment_failure_reason(
@@ -1021,6 +1178,7 @@ def _write_coupon_lifecycle(
     details: list[dict[str, Any]],
     allocations: list[Decimal],
     order_time: datetime,
+    resolution_time: datetime,
     paid_success: bool,
 ) -> None:
     receive_time = max(
@@ -1036,7 +1194,7 @@ def _write_coupon_lifecycle(
             "USED" if paid_success else "RELEASED",
             "使用" if paid_success else "释放",
             order_id,
-            order_time + timedelta(minutes=4),
+            resolution_time,
         ),
     ]
     for seq_no, before, after, event_type, related_order_id, event_time in statuses:
@@ -1071,6 +1229,7 @@ def _write_coupon_lifecycle(
         if not amount:
             continue
         detail_id = int(detail["order_detail_id"])
+        coupon_use_time = resolution_time if paid_success else order_time
         _schedule_fact(
             state,
             writer,
@@ -1078,7 +1237,7 @@ def _write_coupon_lifecycle(
             batch_id,
             "dwd_trade_order_detail_coupon_di",
             f"order-coupon:{detail_id}",
-            order_time,
+            coupon_use_time,
             {
                 "order_detail_coupon_id": detail_id,
                 "order_detail_id": detail_id,
@@ -1091,10 +1250,10 @@ def _write_coupon_lifecycle(
                 "coupon_discount_amount": amount,
                 "coupon_batch_no": f"CB{date_key(order_time)}",
                 "coupon_receive_time": receive_time,
-                "coupon_use_time": order_time,
+                "coupon_use_time": coupon_use_time,
                 "currency_code": "CNY",
                 "order_create_time": order_time,
-                "biz_date": order_time.date(),
+                "biz_date": coupon_use_time.date(),
             },
         )
 
@@ -1857,15 +2016,7 @@ def _apply_inventory_events(
     events: list[dict[str, Any]],
     batch_id: str,
 ) -> None:
-    events.sort(
-        key=lambda event: (
-            event["event_time"],
-            event["priority"],
-            event["sku_id"],
-            str(event["biz_id"]),
-        )
-    )
-    local_by_day: dict[date, int] = defaultdict(int)
+    events.sort(key=_inventory_event_sort_key)
     for event in events:
         sku_id = int(event["sku_id"])
         profile = refs.profile_by_sku[sku_id]
@@ -1890,8 +2041,9 @@ def _apply_inventory_events(
         position.in_transit = after_in_transit
         position.unit_cost = price(event["unit_cost"])
         event_day = event["event_time"].date()
-        local_by_day[event_day] += 1
-        event_id = date_key(event_day) * 1_000_000 + local_by_day[event_day]
+        sequence = state.inventory_event_sequences.get(event_day, 0) + 1
+        state.inventory_event_sequences[event_day] = sequence
+        event_id = date_key(event_day) * 1_000_000 + sequence
         warehouse = refs.warehouse_for_profile(profile)
         row = {
             "inventory_change_id": event_id,
@@ -1975,6 +2127,7 @@ def _write_order_status(
     reason_description: str | None = None,
 ) -> None:
     event_id = order_id * 10 + seq_no
+    system_cancel = after == "CANCELLED" and reason_code == "OUT_OF_STOCK"
     _schedule_fact(
         state,
         writer,
@@ -1997,10 +2150,18 @@ def _write_order_status(
             "status_event_type": event_type,
             "status_reason_code": reason_code,
             "status_reason_description": reason_description,
-            "cancel_stage": "待支付" if after == "CANCELLED" else None,
+            "cancel_stage": (
+                "库存分配"
+                if system_cancel
+                else "待支付"
+                if after == "CANCELLED"
+                else None
+            ),
             "is_terminal_status": terminal,
-            "operator_id": str(user["user_id"]),
-            "operator_type": "USER" if after == "CANCELLED" else "SYSTEM",
+            "operator_id": "SYSTEM" if system_cancel else str(user["user_id"]),
+            "operator_type": (
+                "SYSTEM" if system_cancel or after != "CANCELLED" else "USER"
+            ),
             "event_time": event_time,
             "biz_date": event_time.date(),
         },
@@ -2121,7 +2282,7 @@ def _eligible_coupon(
     amount: Decimal,
     rng: random.Random,
 ) -> dict[str, Any] | None:
-    if rng.random() >= 0.28:
+    if rng.random() >= 0.46:
         return None
     return next(
         (

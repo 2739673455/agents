@@ -30,7 +30,12 @@ def _rule_audit(rule: dict, ctx: RunContext) -> dict:
     }
 
 
-def _campaign_window(ctx: RunContext, index: int, total: int) -> tuple[datetime, datetime]:
+def _campaign_window(
+    ctx: RunContext,
+    index: int,
+    total: int,
+    rule_kind: str,
+) -> tuple[datetime, datetime]:
     span_days = max(1, (ctx.gen.end_date - ctx.gen.start_date).days)
     offset = min(span_days, span_days * index // max(total, 1))
     anchor = ctx.gen.start_date + timedelta(days=offset)
@@ -46,7 +51,12 @@ def _campaign_window(ctx: RunContext, index: int, total: int) -> tuple[datetime,
     ]
     if index % 4 == 0 and valid_specials:
         anchor = min(valid_specials, key=lambda day: abs((day - anchor).days))
-    duration = 3 + index % 12
+    if rule_kind == "promotion":
+        duration = 10 + index % 19
+    elif rule_kind == "coupon":
+        duration = 7 + index % 15
+    else:
+        raise ValueError(f"不支持的营销规则类型: {rule_kind}")
     start = start_of_day(max(ctx.gen.start_date, anchor - timedelta(days=1)))
     end_date = min(ctx.gen.end_date + timedelta(days=1), anchor + timedelta(days=duration))
     return start, start_of_day(end_date)
@@ -81,10 +91,11 @@ def _promotion_rows(ctx: RunContext):
             ctx,
             index,
             ctx.gen.promotion_count,
+            "promotion",
         )
         promotion_type = types[index % len(types)]
         threshold = Decimal((index % 6 + 1) * 50)
-        discount = Decimal((index % 5 + 1) * 5)
+        discount = Decimal((index % 5 + 1) * 10)
         rule = {
             "promotion_id": 30_000_001 + index,
             "rule_version_no": 1,
@@ -99,7 +110,7 @@ def _promotion_rows(ctx: RunContext):
             "rule_description": f"满 {threshold} 元享活动优惠",
             "threshold_amount": threshold,
             "discount_amount": discount if promotion_type != "折扣" else None,
-            "discount_rate": Decimal("0.900000")
+            "discount_rate": Decimal("0.880000")
             if promotion_type == "折扣"
             else None,
             "max_discount_amount": Decimal("100.00")
@@ -135,14 +146,19 @@ def _coupon_rows(ctx: RunContext):
     }
     yield unknown | _rule_audit(unknown, ctx)
     for index in range(ctx.gen.coupon_count):
-        use_start, use_end = _campaign_window(ctx, index, ctx.gen.coupon_count)
+        use_start, use_end = _campaign_window(
+            ctx,
+            index,
+            ctx.gen.coupon_count,
+            "coupon",
+        )
         issue_start = max(
             start_of_day(ctx.gen.start_date),
             use_start - timedelta(days=3),
         )
         is_discount = index % 4 == 3
         threshold = Decimal((index % 6 + 1) * 50)
-        discount = Decimal((index % 5 + 1) * 5)
+        discount = Decimal((index % 4 + 1) * 10)
         rule = {
             "coupon_template_id": 40_000_001 + index,
             "rule_version_no": 1,
@@ -150,7 +166,7 @@ def _coupon_rows(ctx: RunContext):
             "coupon_type": "折扣券" if is_discount else "满减券",
             "threshold_amount": threshold,
             "discount_amount": None if is_discount else discount,
-            "discount_rate": Decimal("0.950000") if is_discount else None,
+            "discount_rate": Decimal("0.920000") if is_discount else None,
             "max_discount_amount": Decimal("50.00") if is_discount else None,
             "issue_start_time": issue_start,
             "issue_end_time": use_end,
@@ -238,7 +254,7 @@ def _scope(
     categories: list[dict],
     shops: list[dict],
 ) -> tuple[str, str]:
-    if index % 5 == 0:
+    if index % 5 in {0, 3}:
         return "ALL", "*"
     if index % 5 == 1:
         return "SHOP", str(shops[index % len(shops)]["shop_id"])

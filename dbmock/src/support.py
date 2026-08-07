@@ -33,6 +33,7 @@ AUDIT_TIME_FIELDS = (
     "apply_time",
     "delivery_create_time",
     "pay_request_time",
+    "coupon_use_time",
     "order_create_time",
     "change_time",
     "price_effective_time",
