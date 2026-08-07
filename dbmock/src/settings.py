@@ -20,8 +20,6 @@ if TYPE_CHECKING:
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ENV_FILE = ROOT_DIR / ".env"
 BUSINESS_TIMEZONE = timezone(timedelta(hours=8), "Asia/Shanghai")
-GENERATION_MODEL_VERSION = 4
-
 dotenv.load_dotenv(ENV_FILE)
 
 
@@ -148,13 +146,6 @@ class GenerateConfig:
         manifest = json.loads(
             (self.data_dir / "manifest.json").read_text(encoding="utf-8")
         )
-        if (
-            int(manifest.get("schema_version", 0)) != 7
-            or manifest.get("source", {}).get("dataset_name") != "苏宁易购公开商品页"
-        ):
-            raise ValueError(
-                "商品目录来源已过期，请重新执行 uv run python -m collection"
-            )
         catalog_spu_count = int(manifest.get("counts", {}).get("spus", 0))
         if catalog_spu_count < self.spu_count:
             raise ValueError(
@@ -186,7 +177,6 @@ class RunContext:
             manifest.get("source", {}).get("origins", [{}])[0].get("sha256", "")
         )
         config_payload = {
-            "generation_model_version": GENERATION_MODEL_VERSION,
             "seed": self.gen.seed,
             "user_count": self.gen.user_count,
             "spu_count": self.gen.spu_count,

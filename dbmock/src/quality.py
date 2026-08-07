@@ -12,7 +12,7 @@ from collections.abc import Mapping
 
 from sqlalchemy import Table, text
 
-from .settings import GENERATION_MODEL_VERSION, RunContext
+from .settings import RunContext
 from .support import doris_unique_key_columns, iter_jsonl_rows
 from .timeline import month_periods
 
@@ -346,17 +346,14 @@ GENERATION_FIELD_LINEAGE = {
     "dwd_traffic_*": {
         "classification": "synthetic",
         "model": "session_path_model",
-        "version": GENERATION_MODEL_VERSION,
     },
     "dwd_trade_*": {
         "classification": "synthetic",
         "model": "commerce_lifecycle_model",
-        "version": GENERATION_MODEL_VERSION,
     },
     "dwd_inventory_*": {
         "classification": "synthetic",
         "model": "inventory_conservation_model",
-        "version": GENERATION_MODEL_VERSION,
     },
     "dim_spu_info_zip.weight_kg": {
         "classification": "normalized",
@@ -367,17 +364,14 @@ GENERATION_FIELD_LINEAGE = {
         "classification": "synthetic",
         "model": "sale_price * deterministic_margin_ratio",
         "parameters": {"margin_ratio_range": [0.58, 0.80]},
-        "version": GENERATION_MODEL_VERSION,
     },
     "dim_spu_info_zip.on_shelf_time": {
         "classification": "synthetic",
         "model": "deterministic_listing_lifecycle",
-        "version": GENERATION_MODEL_VERSION,
     },
     "dim_warehouse_info_zip.address": {
         "classification": "synthetic",
         "model": "real_administrative_region_with_masked_logistics_park",
-        "version": GENERATION_MODEL_VERSION,
     },
 }
 
@@ -1113,9 +1107,7 @@ def _write_quality_report(
 ) -> Path:
     manifest_path = ctx.gen.data_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    source_origins = manifest.get("source", {}).get("origins", [])
     report = {
-        "schema_version": 2,
         "generated_at": datetime.now(UTC).isoformat(),
         "status": (
             "failed"
@@ -1129,13 +1121,10 @@ def _write_quality_report(
             "as_of_time": ctx.as_of_time.isoformat(),
             "data_start_date": ctx.gen.start_date.isoformat(),
             "data_end_date": ctx.gen.end_date.isoformat(),
-            "generation_model_version": GENERATION_MODEL_VERSION,
             "seed": ctx.gen.seed,
             "is_smoke": ctx.gen.is_smoke,
         },
         "catalog": {
-            "schema_version": manifest.get("schema_version"),
-            "source": manifest.get("source", {}).get("dataset_name"),
             "counts": manifest.get("counts", {}),
             "selection_quality": {
                 key: manifest.get("selection", {}).get(key)
@@ -1143,7 +1132,6 @@ def _write_quality_report(
                     "rejected_products",
                     "rejected_records",
                     "rejection_reason_distribution",
-                    "cleaning_rule_version",
                     "removed_ui_artifact_specs",
                     "derived_single_sku_specs",
                     "self_operated_spu_share",
@@ -1151,11 +1139,6 @@ def _write_quality_report(
                     "largest_store_spu_share",
                 )
             },
-            "raw_response_coverage": sum(
-                int(origin.get("raw_response_coverage", 0))
-                for origin in source_origins
-                if isinstance(origin, dict)
-            ),
             "field_lineage": manifest.get("lineage", {}).get("field_lineage", {}),
             "validation_metrics": {
                 "core_field_completeness_rate": 1.0,

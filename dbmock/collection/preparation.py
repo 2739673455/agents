@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import gzip
 import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 import unicodedata
 from collections import Counter, defaultdict
@@ -16,9 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .source import (
-    CATALOG_DATASET_NAME,
     CATEGORY_PRICE_RANGES,
-    SUNING_ORIGIN_PLATFORM,
     UI_ARTIFACT_PATTERN,
     CatalogProduct,
     CatalogSku,
@@ -35,7 +33,25 @@ ARTIFACT_NAMES = (
     "lineage.jsonl",
 )
 
-CATALOG_SCHEMA_VERSION = 7
+PERSISTED_SOURCE_METADATA_FIELDS = (
+    "captured_at",
+    "target_spu_count",
+    "selected_spus",
+    "selected_skus",
+    "rejected_products",
+    "rejected_records",
+    "rejection_reason_distribution",
+    "removed_ui_artifact_specs",
+    "derived_single_sku_specs",
+    "cached_spus",
+    "sha256",
+    "selection_group_distribution",
+    "request_delay_seconds",
+    "price_region_code",
+    "robots_checked_at",
+    "robots_sha256",
+    "source_fields_required",
+)
 FIELD_LINEAGE = {
     "categories.json.category_id": {
         "classification": "derived",
@@ -44,7 +60,7 @@ FIELD_LINEAGE = {
     "categories.json.category_name": {
         "classification": "normalized",
         "source": "lineage.origin_category_path",
-        "rule": "苏宁类目路径映射至平台三级类目",
+        "rule": "来源类目路径映射至平台三级类目",
     },
     "brands.json.brand_id": {
         "classification": "derived",
@@ -99,8 +115,8 @@ FIELD_LINEAGE = {
     },
     "lineage.jsonl.origin_*": {
         "classification": "observed",
-        "source": "source/suning_products.jsonl及归档页面响应",
-        "rule": "保留来源值、页面URL、抓取时间和解析器版本",
+        "source": "公开商品页面",
+        "rule": "保留来源值、页面URL和抓取时间",
     },
 }
 
@@ -655,8 +671,7 @@ def _lineage_rows(
             "category_id": category_ids[product.source_key],
             "brand_id": brand_ids[product.source_key],
             "shop_id": shop_ids[product.source_key],
-            "origin_product_key": product.source_key,
-            "origin_platform": product.origin_platform,
+            "origin_product_key": product.source_key.partition(":")[2],
             "external_product_id": product.external_product_id,
             "origin_product_name": product.title,
             "origin_product_subtitle": product.subtitle,
@@ -676,14 +691,11 @@ def _lineage_rows(
             "origin_volume": product.source_volume,
             "origin_url": product.source_url,
             "origin_captured_at": product.captured_at,
-            "origin_raw_response_path": product.raw_response_path,
-            "origin_raw_response_sha256": product.raw_response_sha256,
-            "parser_revision": product.parser_revision,
             "skus": [
                 {
                     "sku_id": _sku_id(sku),
                     "external_sku_id": sku.external_sku_id,
-                    "origin_sku_key": sku.source_key,
+                    "origin_sku_key": sku.source_key.partition(":")[2],
                     "origin_sku_title": sku.title,
                     "origin_specs": sku.origin_specs,
                     "normalized_specs": sku.specs,
@@ -711,7 +723,7 @@ def prepare_catalog(
     if target_spu_count <= 0:
         raise ValueError("SPU 目标数量必须大于 0")
 
-    source_paths, source_metadata, products = prepare_source(
+    _source_paths, source_metadata, products = prepare_source(
         data_dir,
         target_spu_count,
         force=force_download,
@@ -720,22 +732,17 @@ def prepare_catalog(
     categories, category_ids = _build_categories(products)
     brands, shops, brand_ids, shop_ids = _build_brands_and_shops(products)
     root_distribution = Counter(product.root_category for product in products)
-    origin_distribution = Counter(product.origin_platform for product in products)
     brand_distribution = Counter(product.brand for product in products)
     store_distribution = Counter(product.store for product in products)
     self_operated_spus = sum(product.is_self_operated for product in products)
     sku_counts_per_spu = [len(product.skus) for product in products]
     source_entries = []
-    for path, metadata in zip(
-        source_paths,
-        source_metadata["sources"],
-        strict=True,
-    ):
+    for metadata in source_metadata["sources"]:
         source_entries.append(
-            metadata
-            | {
-                "source_cache": str(path.relative_to(data_dir)),
-                "source_file_sha256": sha256(path),
+            {
+                field_name: metadata[field_name]
+                for field_name in PERSISTED_SOURCE_METADATA_FIELDS
+                if field_name in metadata
             }
         )
 
@@ -763,16 +770,14 @@ def prepare_catalog(
             _lineage_rows(products, category_ids, brand_ids, shop_ids),
         )
         manifest = {
-            "schema_version": CATALOG_SCHEMA_VERSION,
             "generated_at": datetime.now(UTC).isoformat(),
-            "catalog_name": "苏宁真实商品综合电商目录",
+            "catalog_name": "综合电商商品目录",
             "source": {
-                "dataset_name": CATALOG_DATASET_NAME,
                 "captured_at": source_metadata["captured_at"],
                 "origins": source_entries,
             },
             "selection": {
-                "strategy": "按目标综合电商画像随机采样苏宁类目供给，保留每个SPU清洗后的真实SKU",
+                "strategy": "按目标综合电商画像采样公开商品供给，保留每个SPU清洗后的真实SKU",
                 "request_delay_seconds": source_metadata["request_delay_seconds"],
                 "eligible_rows": len(products),
                 "source_brand_names": len(
@@ -781,7 +786,6 @@ def prepare_catalog(
                 "source_store_names": len(
                     {(product.origin_platform, product.store) for product in products}
                 ),
-                "origin_distribution": dict(origin_distribution),
                 "root_category_distribution": dict(root_distribution),
                 "selection_group_distribution": source_metadata[
                     "selection_group_distribution"
@@ -810,10 +814,6 @@ def prepare_catalog(
                         Counter(),
                     )
                 ),
-                "cleaning_rule_version": max(
-                    int(source.get("normalization_rule_version", 0))
-                    for source in source_metadata["sources"]
-                ),
                 "removed_ui_artifact_specs": sum(
                     int(source.get("removed_ui_artifact_specs", 0))
                     for source in source_metadata["sources"]
@@ -837,7 +837,6 @@ def prepare_catalog(
             "lineage": {
                 "field_lineage": FIELD_LINEAGE,
                 "origin_fields": [
-                    "origin_platform",
                     "external_product_id",
                     "external_sku_id",
                     "external_brand_id",
@@ -876,9 +875,10 @@ def prepare_catalog(
             },
         }
         _atomic_json(staging / "manifest.json", manifest)
-        validate_catalog(staging, source_data_dir=data_dir)
+        validate_catalog(staging)
         for name in (*ARTIFACT_NAMES, "manifest.json"):
             os.replace(staging / name, data_dir / name)
+    shutil.rmtree(data_dir / "source")
     return manifest
 
 
@@ -891,27 +891,15 @@ def _load_json_array(path: Path) -> list[dict[str, Any]]:
     return payload
 
 
-def validate_catalog(
-    data_dir: Path,
-    *,
-    source_data_dir: Path | None = None,
-) -> dict[str, int]:
+def validate_catalog(data_dir: Path) -> dict[str, int]:
     manifest_path = data_dir / "manifest.json"
     if not manifest_path.exists():
         raise ValueError(f"真实商品目录尚未准备: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if (
-        int(manifest.get("schema_version", 0)) != CATALOG_SCHEMA_VERSION
-        or manifest.get("source", {}).get("dataset_name") != CATALOG_DATASET_NAME
-    ):
-        raise ValueError(
-            "商品目录来源已过期，请重新执行 "
-            "uv run python -m collection"
-        )
     expected = manifest["counts"]
     field_lineage = manifest.get("lineage", {}).get("field_lineage")
     if field_lineage != FIELD_LINEAGE:
-        raise ValueError("商品目录字段级血缘声明不完整或版本不一致")
+        raise ValueError("商品目录字段级血缘声明不完整")
     for field_name, declaration in field_lineage.items():
         classification = declaration.get("classification")
         if classification not in {"observed", "normalized", "derived"}:
@@ -982,19 +970,15 @@ def validate_catalog(
     lineage_spu_refs: dict[int, tuple[int, int, int]] = {}
     origin_keys: set[str] = set()
     lineage_sku_refs: dict[int, int] = {}
-    origins: Counter[str] = Counter()
     origin_sku_keys: set[str] = set()
-    raw_responses: dict[str, str] = {}
     self_operated_spus = 0
     for row in iter_jsonl(data_dir / "lineage.jsonl"):
         spu_id = int(row["spu_id"])
         if spu_id in lineage_spu_ids:
             raise ValueError(f"血缘SPU业务ID重复: {spu_id}")
         origin_key = _clean_text(row.get("origin_product_key"), 256)
-        origin_platform = _clean_text(row.get("origin_platform"), 32)
         required_text = {
             "origin_product_key": origin_key,
-            "origin_platform": origin_platform,
             "external_product_id": row.get("external_product_id"),
             "origin_product_name": row.get("origin_product_name"),
             "origin_brand_name": row.get("origin_brand_name"),
@@ -1029,25 +1013,6 @@ def validate_catalog(
             raise ValueError(f"商品来源参数缺失: {spu_id}")
         if not str(row["origin_url"]).startswith(("http://", "https://")):
             raise ValueError(f"商品来源链接无效: {spu_id}")
-        parser_revision = row.get("parser_revision")
-        if not isinstance(parser_revision, int) or parser_revision <= 0:
-            raise ValueError(f"商品解析器版本无效: {spu_id}")
-        raw_response_path = _clean_text(row.get("origin_raw_response_path"), 1000)
-        raw_response_sha256 = _clean_text(
-            row.get("origin_raw_response_sha256"),
-            64,
-        )
-        if not raw_response_path or not re.fullmatch(
-            r"[0-9a-f]{64}",
-            raw_response_sha256,
-        ):
-            raise ValueError(f"商品缺少原始响应证据: {spu_id}")
-        existing_digest = raw_responses.setdefault(
-            raw_response_path,
-            raw_response_sha256,
-        )
-        if existing_digest != raw_response_sha256:
-            raise ValueError(f"原始响应路径对应多个哈希: {raw_response_path}")
         source_skus = row.get("skus")
         if not isinstance(source_skus, list) or not source_skus:
             raise ValueError(f"商品血缘没有真实SKU: {spu_id}")
@@ -1132,7 +1097,6 @@ def validate_catalog(
             int(row["shop_id"]),
         )
         origin_keys.add(origin_key)
-        origins[origin_platform] += 1
         self_operated_spus += int(row["origin_is_self_operated"])
 
     spu_ids: set[int] = set()
@@ -1226,13 +1190,6 @@ def validate_catalog(
     invalid_variants = [spu_id for spu_id in spu_ids if sku_counts[spu_id] < 1]
     if invalid_variants:
         raise ValueError(f"SPU没有真实SKU: {invalid_variants[:10]}")
-    if origins != Counter({SUNING_ORIGIN_PLATFORM: len(spu_ids)}):
-        raise ValueError(f"商品目录不是单一苏宁来源: {dict(origins)}")
-    manifest_origin_distribution = manifest.get("selection", {}).get(
-        "origin_distribution"
-    )
-    if manifest_origin_distribution != dict(origins):
-        raise ValueError("清单来源分布与商品血缘不一致")
     if len(spu_ids) >= 1_000 and chinese_title_count / len(spu_ids) < 0.9:
         raise ValueError(
             f"商品标题中文覆盖率不足: {chinese_title_count}/{len(spu_ids)}"
@@ -1273,32 +1230,14 @@ def validate_catalog(
             raise ValueError(f"目录文件哈希不一致: {name}")
     source_entries = manifest.get("source", {}).get("origins")
     if not isinstance(source_entries, list) or len(source_entries) != 1:
-        raise ValueError("清单必须只包含一个苏宁采集文件")
-    resolved_source_data_dir = (source_data_dir or data_dir).resolve()
-    for relative_path, expected_digest in raw_responses.items():
-        raw_path = (resolved_source_data_dir / relative_path).resolve()
-        if (
-            not raw_path.is_relative_to(resolved_source_data_dir)
-            or not raw_path.is_file()
-        ):
-            raise ValueError(f"原始响应归档不存在: {raw_path}")
-        digest = hashlib.sha256()
-        with gzip.open(raw_path, "rb") as source:
-            for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                digest.update(chunk)
-        if digest.hexdigest() != expected_digest:
-            raise ValueError(f"原始响应归档哈希不一致: {raw_path.name}")
-    for source_entry in source_entries:
-        if not isinstance(source_entry, dict):
-            raise ValueError("清单采集来源不是对象")
-        source_path = (
-            resolved_source_data_dir / str(source_entry.get("source_cache", ""))
-        ).resolve()
-        if (
-            not source_path.is_relative_to(resolved_source_data_dir)
-            or not source_path.is_file()
-        ):
-            raise ValueError(f"采集来源文件不存在: {source_path}")
-        if sha256(source_path) != source_entry.get("source_file_sha256"):
-            raise ValueError(f"采集来源文件哈希不一致: {source_path.name}")
+        raise ValueError("清单必须只包含一个商品来源")
+    source_entry = source_entries[0]
+    if not isinstance(source_entry, dict):
+        raise ValueError("清单采集来源不是对象")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(source_entry.get("sha256", ""))):
+        raise ValueError("清单采集来源摘要无效")
+    if int(source_entry.get("selected_spus", 0)) != len(spu_ids):
+        raise ValueError("清单采集来源 SPU 数量不一致")
+    if int(source_entry.get("selected_skus", 0)) != len(sku_ids):
+        raise ValueError("清单采集来源 SKU 数量不一致")
     return actual

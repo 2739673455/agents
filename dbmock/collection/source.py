@@ -27,11 +27,7 @@ from scrapling.parser import Selector
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-CATALOG_DATASET_NAME = "苏宁易购公开商品页"
-SUNING_DATASET_NAME = "苏宁易购公开商品页"
-SUNING_DATASET_URL = "https://www.suning.com/"
 SUNING_REPOSITORY_URL = "https://search.suning.com/"
-SUNING_REVISION = "live"
 SUNING_ORIGIN_PLATFORM = "SUNING"
 SOURCE_CACHE = Path("source") / "suning_products.jsonl"
 SOURCE_CACHE_METADATA = Path("source") / "suning_products.meta.json"
@@ -49,9 +45,6 @@ USER_AGENT = (
 SEARCH_PAGE_LIMIT = 50
 MAX_SOURCE_SKUS_PER_SPU = 40
 CRAWL_WORKERS = 32
-VARIANT_PARSER_REVISION = 2
-SOURCE_SCHEMA_VERSION = 13
-NORMALIZATION_RULE_VERSION = 1
 VARIANT_REFRESH_CHECKPOINT = 512
 SPU_DISCRIMINATOR_AXES = ("型号", "系列", "段位")
 
@@ -556,7 +549,6 @@ class CatalogProduct:
     skus: tuple[CatalogSku, ...]
     raw_response_path: str | None = None
     raw_response_sha256: str | None = None
-    parser_revision: int = VARIANT_PARSER_REVISION
 
 
 @dataclass(frozen=True, slots=True)
@@ -670,9 +662,7 @@ def _target_quotas(target_count: int) -> dict[str, int]:
     groups = [
         group for group, weight in DISCOVERY_GROUP_WEIGHTS.items() if weight > 0
     ]
-    rng = random.Random(
-        f"supply-profile:{target_count}:{NORMALIZATION_RULE_VERSION}"
-    )
+    rng = random.Random(f"supply-profile:{target_count}")
     sampled = Counter(
         rng.choices(
             groups,
@@ -1429,11 +1419,7 @@ def _cache_valid(
     except (json.JSONDecodeError, OSError):
         return False
     return (
-        int(metadata.get("schema_version", 0)) == SOURCE_SCHEMA_VERSION
-        and int(metadata.get("variant_parser_revision", 0)) == VARIANT_PARSER_REVISION
-        and int(metadata.get("normalization_rule_version", 0))
-        == NORMALIZATION_RULE_VERSION
-        and int(metadata.get("target_spu_count", 0)) == target_spu_count
+        int(metadata.get("target_spu_count", 0)) == target_spu_count
         and int(metadata.get("selected_spus", 0)) == target_spu_count
         and int(metadata.get("cached_spus", 0)) == target_spu_count
         and int(metadata.get("selected_skus", 0)) >= target_spu_count
@@ -1653,8 +1639,6 @@ def _load_variant_refresh_state(path: Path) -> set[str]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as error:
         raise ValueError(f"SKU关系刷新状态文件无效: {path}") from error
-    if int(payload.get("parser_revision", 0)) != VARIANT_PARSER_REVISION:
-        return set()
     values = payload.get("refreshed_source_keys", [])
     if not isinstance(values, list):
         raise ValueError(f"SKU关系刷新状态不是列表: {path}")
@@ -1772,8 +1756,6 @@ def _refresh_cached_variant_relations(
             _atomic_json(
                 state_path,
                 {
-                    "schema_version": 1,
-                    "parser_revision": VARIANT_PARSER_REVISION,
                     "refreshed_source_keys": sorted(refreshed),
                     "scanned_count": scanned_count,
                     "upgraded_count": upgraded_count,
@@ -1904,8 +1886,6 @@ def _prepare_suning_source(
         _atomic_json(
             variant_state_path,
             {
-                "schema_version": 1,
-                "parser_revision": VARIANT_PARSER_REVISION,
                 "refreshed_source_keys": sorted(
                     refreshed & {product.source_key for product in products}
                 ),
@@ -1982,7 +1962,6 @@ def _prepare_suning_source(
                 _atomic_json(
                     state_path,
                     {
-                        "schema_version": 1,
                         "next_pages": next_pages,
                         "attempted": sorted(attempted),
                         "selected_spus": len(products),
@@ -2063,7 +2042,6 @@ def _prepare_suning_source(
             _atomic_json(
                 state_path,
                 {
-                    "schema_version": 1,
                     "next_pages": next_pages,
                     "attempted": sorted(attempted),
                     "selected_spus": len(products),
@@ -2121,13 +2099,6 @@ def _prepare_suning_source(
     }
     rejection_reasons = Counter(str(row["reason"]) for row in rejections)
     metadata = {
-        "schema_version": SOURCE_SCHEMA_VERSION,
-        "variant_parser_revision": VARIANT_PARSER_REVISION,
-        "normalization_rule_version": NORMALIZATION_RULE_VERSION,
-        "dataset": SUNING_DATASET_NAME,
-        "dataset_url": SUNING_DATASET_URL,
-        "repository_url": SUNING_REPOSITORY_URL,
-        "revision": SUNING_REVISION,
         "captured_at": datetime.now(UTC).isoformat(),
         "target_spu_count": target_spu_count,
         "selected_spus": len(selected_products),
@@ -2193,15 +2164,11 @@ def prepare_source(
     ]
     if invalid_origins:
         raise ValueError(f"商品包含非苏宁来源: {invalid_origins[:10]}")
-    origin_distribution = Counter(product.origin_platform for product in products)
     return (
         [path],
         {
-            "schema_version": 3,
-            "dataset_name": CATALOG_DATASET_NAME,
             "captured_at": datetime.now(UTC).isoformat(),
             "request_delay_seconds": delay_seconds,
-            "origin_distribution": dict(origin_distribution),
             "selection_group_distribution": dict(
                 Counter(product.selection_group for product in products)
             ),
